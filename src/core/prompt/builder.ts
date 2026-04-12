@@ -4,15 +4,18 @@ import type { PromptBuildOptions, PromptRuntimeContext } from "./types.js";
 
 const ADDITIONAL_INSTRUCTIONS_TITLE = "# Additional Instructions";
 
+// 过滤空段落，避免最终提示词出现多余空块。
 function nonEmpty(value: string | null | undefined): value is string {
   return typeof value === "string" && value.trim().length > 0;
 }
 
+// 构建默认 system prompt：静态段 + 边界标记 + 动态段。
 export async function buildDefaultSystemPrompt(
   runtimeContext: PromptRuntimeContext,
   options: PromptBuildOptions,
   resolver: PromptSectionResolver
 ): Promise<string> {
+  // 静态段和动态段可并行解析，降低单轮等待时间。
   const [staticParts, dynamicParts] = await Promise.all([
     resolver.resolve(STATIC_PROMPT_SECTIONS, runtimeContext, options),
     resolver.resolve(DYNAMIC_PROMPT_SECTIONS, runtimeContext, options)

@@ -6,6 +6,7 @@ import { asString, parsePositiveInt, truncate } from "../internal/values.js";
 
 const MAX_READ_LINES = 300;
 
+// list_files 工具：列出指定目录下的文件与子目录。
 export async function listFiles(args: JsonRecord, context: ToolExecutionContext) {
   const target = resolveWorkspacePath(context.workspaceRoot, asString(args.path) ?? ".");
   const entries = await fs.readdir(target, { withFileTypes: true });
@@ -20,6 +21,7 @@ export async function listFiles(args: JsonRecord, context: ToolExecutionContext)
   };
 }
 
+// read_file 工具：按行区间读取文本，默认最多返回 300 行。
 export async function readFile(args: JsonRecord, context: ToolExecutionContext) {
   const requestedPath = asString(args.path);
   if (!requestedPath) {
@@ -33,6 +35,7 @@ export async function readFile(args: JsonRecord, context: ToolExecutionContext) 
   const startLine = parsePositiveInt(args.startLine, 1);
   const endLine = parsePositiveInt(args.endLine, Math.min(lines.length, startLine + MAX_READ_LINES - 1));
 
+  // 显式校验区间关系，避免出现反向切片。
   if (endLine < startLine) {
     throw new Error("endLine must be >= startLine");
   }
@@ -51,6 +54,7 @@ export async function readFile(args: JsonRecord, context: ToolExecutionContext) 
   };
 }
 
+// write_file 工具：支持覆盖和追加两种写入模式，并走人工审批。
 export async function writeFile(args: JsonRecord, context: ToolExecutionContext) {
   const requestedPath = asString(args.path);
   if (!requestedPath) {
@@ -76,6 +80,7 @@ export async function writeFile(args: JsonRecord, context: ToolExecutionContext)
 
   await fs.mkdir(path.dirname(target), { recursive: true });
 
+  // 先确保目录存在，再按模式执行写入。
   if (append) {
     await fs.appendFile(target, content, "utf8");
   } else {

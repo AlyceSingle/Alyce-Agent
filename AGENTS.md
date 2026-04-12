@@ -21,6 +21,7 @@
 - src/cli/：命令解析与上下文预览
 - src/config/runtime.ts：环境变量与参数解析
 - src/core/agent/runAgentTurn.ts：单轮多步工具调用执行器
+- src/core/memory/：Memory 分层（会话记忆 + 持久记忆 + 服务编排）
 - src/core/prompt/：系统提示词分段与组装
 - src/tools/registry.ts：工具 schema 注册
 - src/tools/executeToolCall.ts：工具调度入口
@@ -56,6 +57,13 @@
 - 使用“静态段 + 动态段 + 边界标记”结构组织提示词。
 - 会话级稳定段落可缓存；按轮变化段落应按 turn 计算。
 - 自定义系统提示词可整段覆盖，追加提示词用于策略扩展。
+- Memory 内容通过动态段注入，注入内容应简洁并可核验。
+
+## Memory 设计策略
+
+- 会话记忆用于当前会话短期上下文，不落盘。
+- 持久记忆使用工作区内 markdown 文件，方便人工审查。
+- Memory 是“辅助线索”，不能覆盖文件与工具的实时事实。
 
 ## 代码风格建议
 

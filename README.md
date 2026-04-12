@@ -2,6 +2,12 @@
 
 一个基于 TypeScript 的终端 Agent，用于和 AI 多轮对话，并在会话中执行工具调用（列目录、读文件、写文件、执行命令）。
 
+默认显示策略：
+
+- thinking 输出使用灰色 `assistant.thinking>` 前缀
+- 正文输出使用青色 `assistant>` 前缀
+- 在不支持颜色的终端会自动降级为纯文本输出
+
 
 ## 当前目录骨架
 
@@ -21,6 +27,11 @@ src/
 	core/
 		agent/
 			runAgentTurn.ts          # 单轮多步工具调用主循环
+		memory/
+			types.ts                 # Memory 类型定义
+			sessionMemoryStore.ts    # 会话记忆存储
+			persistentMemoryStore.ts # 持久记忆存储（文件）
+			memoryService.ts         # Memory 统一服务入口
 		prompt/
 			types.ts                 # 提示词段落类型定义
 			sections.ts              # 静态/动态段定义
@@ -87,11 +98,21 @@ npm run dev -- --model gpt-4.1-mini --cwd . --yolo
 - AGENT_LANGUAGE：可选，语言偏好（会写入系统提示词）
 - AGENT_SYSTEM_PROMPT：可选，覆盖默认系统提示词
 - AGENT_APPEND_SYSTEM_PROMPT：可选，在默认提示词后追加指令
+- AGENT_MEMORY_DIR：可选，持久记忆目录，默认 .alyce/memory
+- AGENT_MEMORY_FILE：可选，持久记忆文件名，默认 MEMORY.md
+- AGENT_MEMORY_MAX_SESSION：可选，会话记忆条目上限
+- AGENT_MEMORY_MAX_PERSISTENT：可选，持久记忆条目上限
+- AGENT_MEMORY_MAX_PROMPT：可选，注入提示词的记忆条目上限
 
 ## 对话命令
 
 - /help：查看命令帮助
 - /clear：清空历史并重建系统提示词
+- /remember <text>：写入会话记忆 + 持久记忆
+- /remember --session <text>：仅写入会话记忆
+- /memory：查看当前记忆快照
+- /memory clear：清空会话记忆
+- /memory clear --all：清空会话记忆和持久记忆
 - /context [text]：预览下一轮完整请求上下文（可选附带下一句用户输入）
 - /model <name>：切换模型并刷新系统提示词
 - /exit：退出

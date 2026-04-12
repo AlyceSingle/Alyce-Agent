@@ -1,5 +1,6 @@
 import OpenAI from "openai";
 
+// 声明可供模型调用的函数工具及其参数 schema。
 export const TOOL_SCHEMAS: OpenAI.Chat.Completions.ChatCompletionTool[] = [
   {
     type: "function",
@@ -94,6 +95,7 @@ export const TOOL_SCHEMAS: OpenAI.Chat.Completions.ChatCompletionTool[] = [
   }
 ];
 
+// 仅暴露工具名列表，用于提示词动态段展示可用能力。
 export function getRegisteredToolNames() {
   return TOOL_SCHEMAS.map((schema) => schema.function.name).sort((a, b) => a.localeCompare(b));
 }

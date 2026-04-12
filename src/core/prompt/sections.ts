@@ -1,11 +1,14 @@
 import type { PromptSection } from "./types.js";
 
+// 静态段与动态段之间的边界标记，便于调试和后续处理。
 export const SYSTEM_PROMPT_DYNAMIC_BOUNDARY = "__SYSTEM_PROMPT_DYNAMIC_BOUNDARY__";
 
+// 统一将数组渲染为 markdown 列表。
 function bullets(items: string[]) {
   return items.map((item) => `- ${item}`).join("\n");
 }
 
+// 静态段：会话期间通常不变，适合 session 级缓存。
 export const STATIC_PROMPT_SECTIONS: PromptSection[] = [
   {
     name: "intro",
@@ -13,7 +16,7 @@ export const STATIC_PROMPT_SECTIONS: PromptSection[] = [
     build: () =>
       [
         "# Identity",
-        "You are a terminal coding agent focused on software engineering tasks.",
+        "You are Alyce, a terminal coding agent focused on software engineering tasks.",
         "You should make practical progress, use tools when needed, and report results accurately."
       ].join("\n")
   },
@@ -60,6 +63,7 @@ export const STATIC_PROMPT_SECTIONS: PromptSection[] = [
   }
 ];
 
+// 动态段：按运行时上下文或用户配置生成。
 export const DYNAMIC_PROMPT_SECTIONS: PromptSection[] = [
   {
     name: "runtime_context",
@@ -79,6 +83,7 @@ export const DYNAMIC_PROMPT_SECTIONS: PromptSection[] = [
     name: "tooling",
     cacheScope: "session",
     build: (runtimeContext) => {
+      // 没有可用工具时省略该段，减少无效提示。
       if (runtimeContext.availableTools.length === 0) {
         return null;
       }
@@ -92,9 +97,38 @@ export const DYNAMIC_PROMPT_SECTIONS: PromptSection[] = [
     }
   },
   {
+    name: "memory",
+    cacheScope: "turn",
+    build: (runtimeContext) => {
+      const sessionNotes = runtimeContext.memory?.sessionNotes ?? [];
+      const persistentNotes = runtimeContext.memory?.persistentNotes ?? [];
+
+      // 无记忆可用时不注入该段，避免无意义上下文噪声。
+      if (sessionNotes.length === 0 && persistentNotes.length === 0) {
+        return null;
+      }
+
+      const lines: string[] = [
+        "# Memory",
+        "Use memory as durable context hints, but always verify against latest files and tool outputs."
+      ];
+
+      if (sessionNotes.length > 0) {
+        lines.push("", "## Session Memory", bullets(sessionNotes));
+      }
+
+      if (persistentNotes.length > 0) {
+        lines.push("", "## Persistent Memory", bullets(persistentNotes));
+      }
+
+      return lines.join("\n");
+    }
+  },
+  {
     name: "language",
     cacheScope: "session",
     build: (_runtimeContext, options) => {
+      // 未指定语言偏好时不强加语言约束。
       if (!options.languagePreference) {
         return null;
       }

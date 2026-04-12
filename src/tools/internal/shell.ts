@@ -1,5 +1,6 @@
 import { spawn } from "node:child_process";
 
+// 根据平台选择 shell 调用方式，统一命令执行入口。
 function getShellInvocation(command: string): { executable: string; args: string[] } {
   if (process.platform === "win32") {
     return {
@@ -14,6 +15,7 @@ function getShellInvocation(command: string): { executable: string; args: string
   };
 }
 
+// 执行命令并采集标准输出/错误输出，超时后强制终止子进程。
 export async function runShellCommand(command: string, cwd: string, timeoutMs: number) {
   const shell = getShellInvocation(command);
 
@@ -28,6 +30,7 @@ export async function runShellCommand(command: string, cwd: string, timeoutMs: n
       let stderr = "";
       let timedOut = false;
 
+      // 超时保护：防止外部命令长期阻塞代理。
       const timer = setTimeout(() => {
         timedOut = true;
         child.kill();
