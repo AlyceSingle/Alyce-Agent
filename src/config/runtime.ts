@@ -13,6 +13,13 @@ export interface MemoryRuntimeConfig {
   maxSessionEntries: number;
   maxPersistentEntries: number;
   maxPromptEntries: number;
+  autoSummary: {
+    enabled: boolean;
+    minMessagesToInit: number;
+    messagesBetweenUpdates: number;
+    windowMessages: number;
+    maxCharsPerMessage: number;
+  };
 }
 
 // 运行时配置：统一收口环境变量与命令行参数解析结果。
@@ -74,7 +81,14 @@ export function parseRuntimeConfig(argv: string[], env: NodeJS.ProcessEnv): Runt
       fileName: env.AGENT_MEMORY_FILE || "MEMORY.md",
       maxSessionEntries: parsePositiveInt(env.AGENT_MEMORY_MAX_SESSION, 30),
       maxPersistentEntries: parsePositiveInt(env.AGENT_MEMORY_MAX_PERSISTENT, 200),
-      maxPromptEntries: parsePositiveInt(env.AGENT_MEMORY_MAX_PROMPT, 20)
+      maxPromptEntries: parsePositiveInt(env.AGENT_MEMORY_MAX_PROMPT, 20),
+      autoSummary: {
+        enabled: parseBoolean(env.AGENT_MEMORY_AUTO_SUMMARY, true),
+        minMessagesToInit: parsePositiveInt(env.AGENT_MEMORY_SUMMARY_MIN_MESSAGES, 8),
+        messagesBetweenUpdates: parsePositiveInt(env.AGENT_MEMORY_SUMMARY_INTERVAL_MESSAGES, 6),
+        windowMessages: parsePositiveInt(env.AGENT_MEMORY_SUMMARY_WINDOW_MESSAGES, 28),
+        maxCharsPerMessage: parsePositiveInt(env.AGENT_MEMORY_SUMMARY_MAX_CHARS_PER_MESSAGE, 1000)
+      }
     }
   };
 }
@@ -135,4 +149,21 @@ function parsePositiveInt(value: string | undefined, fallback: number): number {
 
   // 统一截断为不小于 1 的整数，避免 0/负数导致配置失效。
   return Math.max(1, Math.trunc(parsed));
+}
+
+function parseBoolean(value: string | undefined, fallback: boolean): boolean {
+  if (value === undefined) {
+    return fallback;
+  }
+
+  const normalized = value.trim().toLowerCase();
+  if (normalized === "1" || normalized === "true" || normalized === "yes" || normalized === "on") {
+    return true;
+  }
+
+  if (normalized === "0" || normalized === "false" || normalized === "no" || normalized === "off") {
+    return false;
+  }
+
+  return fallback;
 }

@@ -16,6 +16,7 @@ import type { ToolExecutionContext } from "./tools/types.js";
 const ANSI_RESET = "\u001b[0m";
 const ANSI_THINKING = "\u001b[38;5;244m";
 const ANSI_ANSWER = "\u001b[38;5;81m";
+const ANSI_ERROR = "\u001b[38;5;203m";
 
 // 输出可用 REPL 命令清单。
 function printHelp(currentModel: string) {
@@ -58,6 +59,14 @@ function colorizeAnswer(text: string) {
   return `${ANSI_ANSWER}${text}${ANSI_RESET}`;
 }
 
+function colorizeError(text: string) {
+  if (!supportsColorOutput()) {
+    return text;
+  }
+
+  return `${ANSI_ERROR}${text}${ANSI_RESET}`;
+}
+
 function formatWithPrefix(prefix: string, text: string) {
   return text
     .split(/\r?\n/)
@@ -73,6 +82,15 @@ function isReadlineClosedError(error: unknown) {
 function printMemorySnapshot(snapshot: MemorySnapshot, persistentPath: string) {
   console.log("\n=== Memory Snapshot ===");
   console.log("Persistent file: " + persistentPath);
+
+  if (!snapshot.autoSummaryEnabled) {
+    console.log("Auto summary: (disabled)");
+  } else if (!snapshot.autoSummary) {
+    console.log("Auto summary: (not initialized yet)");
+  } else {
+    console.log("Auto summary (updated at " + snapshot.autoSummary.updatedAt + "):");
+    console.log(snapshot.autoSummary.markdown);
+  }
 
   if (snapshot.session.length === 0) {
     console.log("Session memory: (empty)");
@@ -191,6 +209,11 @@ async function main() {
     const parsedCommand = parseReplCommand(userInput);
     if (parsedCommand.type !== "none") {
       // 命令分支只处理本地控制逻辑，不写入模型对话历史。
+      if (parsedCommand.type === "command-error") {
+        console.error(colorizeError(`command> ${parsedCommand.message} (${parsedCommand.input})`));
+        continue;
+      }
+
       if (parsedCommand.type === "exit") {
         break;
       }
@@ -293,6 +316,17 @@ async function main() {
       }
 
       console.log(colorizeAnswer("assistant> " + reply));
+
+      const summaryUpdated = await memoryService.maybeRefreshAutoSummary({
+        client,
+        model: currentModel,
+        messages
+      });
+
+      if (summaryUpdated) {
+        await resetSystemMessage();
+        console.log(colorizeThinking("assistant.memory> auto session summary updated"));
+      }
     } catch (error) {
       // 运行时错误统一收口为可读文本，避免未处理异常中断 REPL。
       const message = error instanceof Error ? error.message : String(error);

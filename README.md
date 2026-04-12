@@ -103,6 +103,11 @@ npm run dev -- --model gpt-4.1-mini --cwd . --yolo
 - AGENT_MEMORY_MAX_SESSION：可选，会话记忆条目上限
 - AGENT_MEMORY_MAX_PERSISTENT：可选，持久记忆条目上限
 - AGENT_MEMORY_MAX_PROMPT：可选，注入提示词的记忆条目上限
+- AGENT_MEMORY_AUTO_SUMMARY：可选，是否启用自动会话摘要
+- AGENT_MEMORY_SUMMARY_MIN_MESSAGES：可选，首次触发摘要所需最小消息数
+- AGENT_MEMORY_SUMMARY_INTERVAL_MESSAGES：可选，两次摘要之间最小消息增量
+- AGENT_MEMORY_SUMMARY_WINDOW_MESSAGES：可选，摘要使用的最近消息窗口大小
+- AGENT_MEMORY_SUMMARY_MAX_CHARS_PER_MESSAGE：可选，单条消息进入摘要前的截断上限
 
 ## 对话命令
 
@@ -110,12 +115,23 @@ npm run dev -- --model gpt-4.1-mini --cwd . --yolo
 - /clear：清空历史并重建系统提示词
 - /remember <text>：写入会话记忆 + 持久记忆
 - /remember --session <text>：仅写入会话记忆
-- /memory：查看当前记忆快照
+- /memory：查看当前记忆快照（含 AI 自动会话摘要）
 - /memory clear：清空会话记忆
 - /memory clear --all：清空会话记忆和持久记忆
 - /context [text]：预览下一轮完整请求上下文（可选附带下一句用户输入）
 - /model <name>：切换模型并刷新系统提示词
 - /exit：退出
+
+命令交互规则：
+
+- 任何以 / 开头但不合法的命令都会直接报错。
+- 以 / 开头的输入不会发送给 AI 模型。
+
+## 自动摘要机制
+
+- 参考 Claude Code 的 SessionMemory 思路：不每轮都摘要，而是达到阈值后自动更新。
+- 自动摘要会在每轮回复后按阈值尝试更新，并注入 system prompt 的 Memory 动态段。
+- 你可以用 /memory 查看当前自动摘要内容与更新时间。
 
 ## 后续建议
 

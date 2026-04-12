@@ -100,11 +100,12 @@ export const DYNAMIC_PROMPT_SECTIONS: PromptSection[] = [
     name: "memory",
     cacheScope: "turn",
     build: (runtimeContext) => {
+      const sessionSummary = runtimeContext.memory?.sessionSummary?.trim();
       const sessionNotes = runtimeContext.memory?.sessionNotes ?? [];
       const persistentNotes = runtimeContext.memory?.persistentNotes ?? [];
 
       // 无记忆可用时不注入该段，避免无意义上下文噪声。
-      if (sessionNotes.length === 0 && persistentNotes.length === 0) {
+      if (!sessionSummary && sessionNotes.length === 0 && persistentNotes.length === 0) {
         return null;
       }
 
@@ -112,6 +113,10 @@ export const DYNAMIC_PROMPT_SECTIONS: PromptSection[] = [
         "# Memory",
         "Use memory as durable context hints, but always verify against latest files and tool outputs."
       ];
+
+      if (sessionSummary) {
+        lines.push("", "## Auto Session Summary", sessionSummary);
+      }
 
       if (sessionNotes.length > 0) {
         lines.push("", "## Session Memory", bullets(sessionNotes));
