@@ -13,6 +13,7 @@ export interface PromptRuntimeContext {
 // 提示词构建可选覆盖项：语言偏好、整段覆盖、追加指令。
 export interface PromptBuildOptions {
   languagePreference?: string;
+  aiPersonalityPrompt?: string;
   customSystemPrompt?: string;
   appendSystemPrompt?: string;
 }

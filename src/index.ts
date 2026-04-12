@@ -185,6 +185,9 @@ async function main() {
   console.log("Workspace: " + config.workspaceRoot);
   console.log("Model: " + currentModel);
   console.log("Mode: " + (config.autoApprove ? "auto-approve" : "approval required"));
+  if (config.requestPatches.length > 0) {
+    console.log("Request patch operations: " + config.requestPatches.length);
+  }
   printHelp(currentModel);
 
   // 终端 REPL 主循环。
@@ -300,6 +303,7 @@ async function main() {
         model: currentModel,
         maxSteps: config.maxSteps,
         context: toolContext,
+        requestPatches: config.requestPatches,
         onThinking: (thinking) => {
           const normalized = thinking.trim();
           if (!normalized) {

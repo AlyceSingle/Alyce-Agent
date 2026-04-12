@@ -1,5 +1,7 @@
 import OpenAI from "openai";
 import { executeToolCall, TOOL_SCHEMAS, type ToolExecutionContext } from "../../tools.js";
+import { sendChatCompletion } from "../api/sendChatCompletion.js";
+import type { RequestPatchOperation } from "../api/requestPatch.js";
 
 type MessageParam = OpenAI.Chat.Completions.ChatCompletionMessageParam;
 
@@ -9,6 +11,7 @@ export interface AgentTurnOptions {
   model: string;
   maxSteps: number;
   context: ToolExecutionContext;
+  requestPatches?: RequestPatchOperation[];
   onThinking?: (content: string) => void;
 }
 
@@ -20,12 +23,13 @@ export async function runAgentTurn(
 ): Promise<string> {
   // 循环上限用于防止工具调用链无限增长。
   for (let step = 0; step < options.maxSteps; step += 1) {
-    const response = await client.chat.completions.create({
+    const response = await sendChatCompletion(client, {
       model: options.model,
       messages,
       tools: TOOL_SCHEMAS,
-      tool_choice: "auto",
-      temperature: 0.2
+      toolChoice: "auto",
+      temperature: 0.2,
+      requestPatches: options.requestPatches
     });
 
     const next = response.choices[0]?.message;

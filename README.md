@@ -25,6 +25,9 @@ src/
 		runtime.ts                 # 环境变量与命令行参数解析
 
 	core/
+		api/
+			requestPatch.ts          # JSON Patch 解析与请求改写
+			sendChatCompletion.ts    # 模型请求标准化与发送封装
 		agent/
 			runAgentTurn.ts          # 单轮多步工具调用主循环
 		memory/
@@ -40,6 +43,7 @@ src/
 
 	tools/
 		types.ts                   # ToolExecutionContext / JsonRecord
+		definitions.ts             # 工具定义（zod schema + 执行函数）
 		registry.ts                # Tool schema 注册
 		executeToolCall.ts         # 工具调度入口
 		builtin/
@@ -82,10 +86,13 @@ npm run dev -- --model gpt-4.1-mini --cwd . --yolo
 可选扩展参数：
 
 - --lang zh-CN
+- --persona "冷静、直接、偏工程实践"
 - --system-prompt "自定义系统提示词"
 - --system-prompt-file ./prompt.txt
 - --append-system-prompt "额外规则"
 - --append-system-prompt-file ./append.txt
+- --request-patch "[{\"op\":\"replace\",\"path\":\"/temperature\",\"value\":0.1}]"
+- --request-patch-file ./request-patch.json
 
 ## 环境变量
 
@@ -95,7 +102,10 @@ npm run dev -- --model gpt-4.1-mini --cwd . --yolo
 - AGENT_WORKSPACE：可选，工作区根目录
 - AGENT_MAX_STEPS：可选，单轮最大工具调用步数
 - AGENT_COMMAND_TIMEOUT_MS：可选，命令工具超时毫秒
+- AGENT_OPENAI_REQUEST_PATCH：可选，JSON Patch 字符串，用于改写每次模型请求
+- AGENT_OPENAI_REQUEST_PATCH_FILE：可选，JSON Patch 文件路径
 - AGENT_LANGUAGE：可选，语言偏好（会写入系统提示词）
+- AGENT_AI_PERSONALITY：可选，自定义 AI 性格提示词，会叠加在默认人格模板后
 - AGENT_SYSTEM_PROMPT：可选，覆盖默认系统提示词
 - AGENT_APPEND_SYSTEM_PROMPT：可选，在默认提示词后追加指令
 - AGENT_MEMORY_DIR：可选，持久记忆目录，默认 .alyce/memory
@@ -132,6 +142,17 @@ npm run dev -- --model gpt-4.1-mini --cwd . --yolo
 - 参考 Claude Code 的 SessionMemory 思路：不每轮都摘要，而是达到阈值后自动更新。
 - 自动摘要会在每轮回复后按阈值尝试更新，并注入 system prompt 的 Memory 动态段。
 - 你可以用 /memory 查看当前自动摘要内容与更新时间。
+
+## 工程化工具调用链
+
+- 工具 schema 由 zod 声明，并自动导出为 OpenAI function tools JSON Schema。
+- 模型工具参数会先做 zod safeParse 校验，再执行具体工具逻辑。
+- 工具执行返回统一结构：ok/result 或 ok=false/error，便于模型稳定处理。
+- 模型发送链路集中在 core/api：先标准化消息，再应用 JSON Patch，最后发送请求。
+
+## 人格模板
+
+- 系统提示词内置 AI Personality 段，并支持通过 AGENT_AI_PERSONALITY 或 --persona 叠加自定义人格描述。
 
 ## 后续建议
 

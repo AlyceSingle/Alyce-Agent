@@ -1,8 +1,13 @@
 import { readFileSync } from "node:fs";
 import path from "node:path";
+import {
+  parseRequestPatchOperations,
+  type RequestPatchOperation
+} from "../core/api/requestPatch.js";
 
 export interface PromptOverrideConfig {
   languagePreference?: string;
+  aiPersonalityPrompt?: string;
   customSystemPrompt?: string;
   appendSystemPrompt?: string;
 }
@@ -30,6 +35,7 @@ export interface RuntimeConfig {
   workspaceRoot: string;
   maxSteps: number;
   commandTimeoutMs: number;
+  requestPatches: RequestPatchOperation[];
   autoApprove: boolean;
   prompt: PromptOverrideConfig;
   memory: MemoryRuntimeConfig;
@@ -61,6 +67,9 @@ export function parseRuntimeConfig(argv: string[], env: NodeJS.ProcessEnv): Runt
   });
 
   const languagePreference = getArgValue(argv, "--lang") || env.AGENT_LANGUAGE || undefined;
+  const aiPersonalityPrompt =
+    getArgValue(argv, "--persona") || env.AGENT_AI_PERSONALITY || undefined;
+  const requestPatches = resolveRequestPatches(argv, env);
 
   // 参数优先级：CLI 参数 > 环境变量 > 默认值。
   return {
@@ -70,9 +79,11 @@ export function parseRuntimeConfig(argv: string[], env: NodeJS.ProcessEnv): Runt
     workspaceRoot: path.resolve(getArgValue(argv, "--cwd") || env.AGENT_WORKSPACE || "."),
     maxSteps: parsePositiveInt(env.AGENT_MAX_STEPS, 8),
     commandTimeoutMs: parsePositiveInt(env.AGENT_COMMAND_TIMEOUT_MS, 120_000),
+    requestPatches,
     autoApprove: hasFlag(argv, "--yolo"),
     prompt: {
       languagePreference,
+      aiPersonalityPrompt,
       customSystemPrompt,
       appendSystemPrompt
     },
@@ -91,6 +102,38 @@ export function parseRuntimeConfig(argv: string[], env: NodeJS.ProcessEnv): Runt
       }
     }
   };
+}
+
+function resolveRequestPatches(
+  argv: string[],
+  env: NodeJS.ProcessEnv
+): RequestPatchOperation[] {
+  const directValue = getArgValue(argv, "--request-patch") ?? env.AGENT_OPENAI_REQUEST_PATCH;
+  const fileValue = getArgValue(argv, "--request-patch-file") ?? env.AGENT_OPENAI_REQUEST_PATCH_FILE;
+
+  if (directValue && fileValue) {
+    throw new Error("Cannot use --request-patch and --request-patch-file at the same time.");
+  }
+
+  if (!directValue && !fileValue) {
+    return [];
+  }
+
+  if (fileValue) {
+    const absolutePath = path.resolve(fileValue);
+    try {
+      const raw = readFileSync(absolutePath, "utf8");
+      return parseRequestPatchOperations(raw, absolutePath);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      throw new Error(`Failed to read request patch file: ${absolutePath}. ${message}`);
+    }
+  }
+
+  return parseRequestPatchOperations(
+    directValue!,
+    "--request-patch or AGENT_OPENAI_REQUEST_PATCH"
+  );
 }
 
 function resolvePromptText(options: {
