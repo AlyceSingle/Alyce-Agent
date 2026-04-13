@@ -18,6 +18,7 @@ export class MemoryService {
   private readonly persistentStore: PersistentMemoryStore;
   private autoSummary: MemoryAutoSummary | null = null;
   private autoSummaryUpdating = false;
+  private autoSummaryEnabled: boolean;
 
   constructor(private readonly config: MemoryServiceConfig) {
     this.sessionStore = new SessionMemoryStore(config.maxSessionEntries);
@@ -27,6 +28,7 @@ export class MemoryService {
       config.fileName,
       config.maxPersistentEntries
     );
+    this.autoSummaryEnabled = config.autoSummary.enabled;
   }
 
   async initialize() {
@@ -60,7 +62,7 @@ export class MemoryService {
       session: this.sessionStore.list(),
       persistent,
       autoSummary: this.autoSummary,
-      autoSummaryEnabled: this.config.autoSummary.enabled
+      autoSummaryEnabled: this.autoSummaryEnabled
     };
   }
 
@@ -71,7 +73,10 @@ export class MemoryService {
     ]);
 
     return {
-      sessionSummary: this.autoSummary ? trimSummaryForPrompt(this.autoSummary.markdown) : undefined,
+      sessionSummary:
+        this.autoSummaryEnabled && this.autoSummary
+          ? trimSummaryForPrompt(this.autoSummary.markdown)
+          : undefined,
       summaryUpdatedAt: this.autoSummary?.updatedAt,
       sessionNotes: session.map((entry) => formatPromptNote(entry.createdAt, entry.content)),
       persistentNotes: persistent.map((entry) => formatPromptNote(entry.createdAt, entry.content))
@@ -84,7 +89,7 @@ export class MemoryService {
     model: string;
     messages: MessageParam[];
   }): Promise<boolean> {
-    if (!this.config.autoSummary.enabled) {
+    if (!this.autoSummaryEnabled) {
       return false;
     }
 
@@ -123,6 +128,13 @@ export class MemoryService {
 
   getPersistentFilePath() {
     return this.persistentStore.getRelativeFilePath();
+  }
+
+  setAutoSummaryEnabled(enabled: boolean) {
+    this.autoSummaryEnabled = enabled;
+    if (!enabled) {
+      this.autoSummaryUpdating = false;
+    }
   }
 
   private shouldRefreshAutoSummary(messageCount: number) {

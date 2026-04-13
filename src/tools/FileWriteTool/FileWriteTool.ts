@@ -33,9 +33,13 @@ export async function executeFileWrite(
   const mode: FileWriteResult["type"] = exists ? "update" : "create";
   const byteSize = Buffer.byteLength(input.content, "utf8");
 
-  const approved = await context.requestApproval(
-    `${FILE_WRITE_TOOL_NAME.toLowerCase()} ${relativePath} (${mode}, ${byteSize} bytes)`
-  );
+  const approved = await context.requestApproval({
+    kind: "file-write",
+    toolName: FILE_WRITE_TOOL_NAME,
+    title: `${mode === "create" ? "Create" : "Update"} file`,
+    summary: relativePath,
+    details: [`Mode: ${mode}`, `Size: ${byteSize} bytes`]
+  });
   if (!approved) {
     throw new Error("User rejected Write tool request");
   }

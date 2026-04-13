@@ -51,9 +51,13 @@ export async function executeFileEdit(
   }
 
   // 编辑落盘前走审批，确保高风险变更可中断。
-  const approved = await context.requestApproval(
-    `edit ${relativePath} with ${FILE_EDIT_TOOL_NAME} (${matchCount} match${matchCount > 1 ? "es" : ""})`
-  );
+  const approved = await context.requestApproval({
+    kind: "file-write",
+    toolName: FILE_EDIT_TOOL_NAME,
+    title: "Edit file",
+    summary: relativePath,
+    details: [`Matches: ${matchCount}`, `Replace all: ${input.replace_all ? "yes" : "no"}`]
+  });
   if (!approved) {
     throw new Error("User rejected Edit tool request");
   }

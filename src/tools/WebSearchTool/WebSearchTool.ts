@@ -43,7 +43,13 @@ export async function executeWebSearchTool(
   input: z.infer<typeof WebSearchInputSchema>,
   context: ToolExecutionContext
 ): Promise<WebSearchResult> {
-  const approved = await context.requestApproval(`search web: ${input.query}`);
+  const approved = await context.requestApproval({
+    kind: "web",
+    toolName: WEB_SEARCH_TOOL_NAME,
+    title: "Search the web",
+    summary: input.query,
+    details: [`Max results: ${input.max_results ?? DEFAULT_MAX_RESULTS}`]
+  });
   if (!approved) {
     throw new Error("User rejected WebSearch tool request");
   }

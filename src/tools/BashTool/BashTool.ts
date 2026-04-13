@@ -57,9 +57,16 @@ export async function executeBashTool(
   const timeoutMs = normalizeTimeout(input.timeout_ms, context.commandTimeoutMs);
 
   // 命令执行属于高风险动作，统一在运行前请求用户确认。
-  const approved = await context.requestApproval(
-    `run shell command in ${toWorkspaceRelative(context.workspaceRoot, workingDirectory)}: ${summarizeCommand(input.command)}`
-  );
+  const approved = await context.requestApproval({
+    kind: "command",
+    toolName: BASH_TOOL_NAME,
+    title: "Run shell command",
+    summary: summarizeCommand(input.command),
+    details: [
+      `Working directory: ${toWorkspaceRelative(context.workspaceRoot, workingDirectory)}`,
+      `Timeout: ${timeoutMs} ms`
+    ]
+  });
 
   if (!approved) {
     throw new Error("User rejected Bash tool request");

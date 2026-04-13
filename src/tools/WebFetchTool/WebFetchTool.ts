@@ -43,7 +43,13 @@ export async function executeWebFetchTool(
   const maxChars = input.max_chars ?? DEFAULT_MAX_CHARS;
   const timeoutMs = Math.max(1, context.commandTimeoutMs);
 
-  const approved = await context.requestApproval(`fetch web content: ${normalizedUrl}`);
+  const approved = await context.requestApproval({
+    kind: "web",
+    toolName: WEB_FETCH_TOOL_NAME,
+    title: "Fetch web content",
+    summary: normalizedUrl,
+    details: [`Max chars: ${maxChars}`, `Prompt filter: ${input.prompt ? "yes" : "no"}`]
+  });
   if (!approved) {
     throw new Error("User rejected WebFetch tool request");
   }

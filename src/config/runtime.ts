@@ -1,12 +1,15 @@
-import { readFileSync } from "node:fs";
+import { promises as fs, readFileSync } from "node:fs";
 import path from "node:path";
+import { z } from "zod";
 import {
   parseRequestPatchOperations,
   type RequestPatchOperation
 } from "../core/api/requestPatch.js";
+import { getBuiltinPersonaPresetNames } from "../core/prompt/fragments/personaPresets.js";
 
 export interface PromptOverrideConfig {
   languagePreference?: string;
+  personaPreset?: string;
   aiPersonalityPrompt?: string;
   customSystemPrompt?: string;
   appendSystemPrompt?: string;
@@ -27,66 +30,96 @@ export interface MemoryRuntimeConfig {
   };
 }
 
-// 运行时配置：统一收口环境变量与命令行参数解析结果。
-export interface RuntimeConfig {
+export interface ConnectionConfig {
   apiKey: string;
   baseURL?: string;
   model: string;
-  workspaceRoot: string;
+}
+
+export type ApprovalMode = "manual" | "auto";
+
+export interface SessionSettings extends PromptOverrideConfig {
+  approvalMode: ApprovalMode;
   maxSteps: number;
   commandTimeoutMs: number;
+  autoSummaryEnabled: boolean;
+}
+
+export interface RuntimePaths {
+  workspaceRoot: string;
+  alyceDirectory: string;
+  connectionConfigPath: string;
+  settingsConfigPath: string;
+}
+
+export interface RuntimeConfig {
+  paths: RuntimePaths;
+  connection: ConnectionConfig;
+  settings: SessionSettings;
   requestPatches: RequestPatchOperation[];
-  autoApprove: boolean;
-  prompt: PromptOverrideConfig;
   memory: MemoryRuntimeConfig;
 }
 
-export function parseRuntimeConfig(argv: string[], env: NodeJS.ProcessEnv): RuntimeConfig {
-  const apiKey = env.OPENAI_API_KEY;
-  // 启动即校验 API Key，避免进入主流程后才报错。
-  if (!apiKey) {
-    throw new Error("OPENAI_API_KEY is required. Copy .env.example to .env and set it.");
-  }
+const ConnectionConfigFileSchema = z
+  .object({
+    apiKey: z.string().optional(),
+    baseURL: z.string().optional(),
+    model: z.string().optional()
+  })
+  .strict();
 
-  // system prompt 支持「命令行直传 / 文件路径 / 环境变量」三种来源。
-  const customSystemPrompt = resolvePromptText({
-    argv,
-    directFlag: "--system-prompt",
-    fileFlag: "--system-prompt-file",
-    envValue: env.AGENT_SYSTEM_PROMPT,
-    label: "system prompt"
-  });
+const SessionSettingsFileSchema = z
+  .object({
+    approvalMode: z.union([z.literal("manual"), z.literal("auto")]).optional(),
+    maxSteps: z.number().int().positive().optional(),
+    commandTimeoutMs: z.number().int().positive().optional(),
+    autoSummaryEnabled: z.boolean().optional(),
+    languagePreference: z.string().optional(),
+    personaPreset: z.string().optional(),
+    aiPersonalityPrompt: z.string().optional(),
+    customSystemPrompt: z.string().optional(),
+    appendSystemPrompt: z.string().optional()
+  })
+  .strict();
 
-  // append system prompt 与主 system prompt 保持一致的解析规则。
-  const appendSystemPrompt = resolvePromptText({
-    argv,
-    directFlag: "--append-system-prompt",
-    fileFlag: "--append-system-prompt-file",
-    envValue: env.AGENT_APPEND_SYSTEM_PROMPT,
-    label: "append system prompt"
-  });
+export async function loadRuntimeConfig(
+  argv: string[],
+  env: NodeJS.ProcessEnv
+): Promise<RuntimeConfig> {
+  const workspaceRoot = path.resolve(getArgValue(argv, "--cwd") || env.AGENT_WORKSPACE || ".");
+  const paths = getRuntimePaths(workspaceRoot);
+  const [savedConnection, savedSettings] = await Promise.all([
+    readJsonConfig(paths.connectionConfigPath, ConnectionConfigFileSchema),
+    readJsonConfig(paths.settingsConfigPath, SessionSettingsFileSchema)
+  ]);
 
-  const languagePreference = getArgValue(argv, "--lang") || env.AGENT_LANGUAGE || undefined;
-  const aiPersonalityPrompt =
-    getArgValue(argv, "--persona") || env.AGENT_AI_PERSONALITY || undefined;
-  const requestPatches = resolveRequestPatches(argv, env);
-
-  // 参数优先级：CLI 参数 > 环境变量 > 默认值。
-  return {
-    apiKey,
+  const envConnection: Partial<ConnectionConfig> = {
+    apiKey: env.OPENAI_API_KEY ?? "",
     baseURL: env.OPENAI_BASE_URL || undefined,
-    model: getArgValue(argv, "--model") || env.OPENAI_MODEL || "gemini-3-flash-preview",
-    workspaceRoot: path.resolve(getArgValue(argv, "--cwd") || env.AGENT_WORKSPACE || "."),
-    maxSteps: parsePositiveInt(env.AGENT_MAX_STEPS, 8),
-    commandTimeoutMs: parsePositiveInt(env.AGENT_COMMAND_TIMEOUT_MS, 120_000),
-    requestPatches,
-    autoApprove: hasFlag(argv, "--yolo"),
-    prompt: {
-      languagePreference,
-      aiPersonalityPrompt,
-      customSystemPrompt,
-      appendSystemPrompt
-    },
+    model: env.OPENAI_MODEL || "gpt-4.1-mini"
+  };
+  const cliConnection = compactObject<ConnectionConfig>({
+    model: getArgValue(argv, "--model") || undefined
+  });
+
+  const envSettings = resolveSettingsFromInputs(argv, env);
+  const cliSettings = compactObject<SessionSettings>({
+    approvalMode: hasFlag(argv, "--yolo") ? "auto" : undefined
+  });
+
+  return {
+    paths,
+    connection: normalizeConnectionConfig({
+      ...envConnection,
+      ...savedConnection,
+      ...cliConnection
+    }),
+    settings: normalizeSessionSettings({
+      ...envSettings,
+      ...savedSettings,
+      ...cliSettings
+    }),
+    requestPatches: resolveRequestPatches(argv, env),
     memory: {
       directory: env.AGENT_MEMORY_DIR || ".alyce/memory",
       fileName: env.AGENT_MEMORY_FILE || "MEMORY.md",
@@ -102,6 +135,44 @@ export function parseRuntimeConfig(argv: string[], env: NodeJS.ProcessEnv): Runt
       }
     }
   };
+}
+
+export function getRuntimePaths(workspaceRoot: string): RuntimePaths {
+  const alyceDirectory = path.join(workspaceRoot, ".alyce");
+  return {
+    workspaceRoot,
+    alyceDirectory,
+    connectionConfigPath: path.join(alyceDirectory, "config.json"),
+    settingsConfigPath: path.join(alyceDirectory, "settings.json")
+  };
+}
+
+export async function saveConnectionConfig(
+  paths: RuntimePaths,
+  connection: ConnectionConfig
+): Promise<void> {
+  await writeJsonConfig(paths.connectionConfigPath, {
+    apiKey: connection.apiKey,
+    baseURL: connection.baseURL || undefined,
+    model: connection.model
+  });
+}
+
+export async function saveSessionSettings(
+  paths: RuntimePaths,
+  settings: SessionSettings
+): Promise<void> {
+  await writeJsonConfig(paths.settingsConfigPath, {
+    approvalMode: settings.approvalMode,
+    maxSteps: settings.maxSteps,
+    commandTimeoutMs: settings.commandTimeoutMs,
+    autoSummaryEnabled: settings.autoSummaryEnabled,
+    languagePreference: settings.languagePreference || undefined,
+    personaPreset: settings.personaPreset || undefined,
+    aiPersonalityPrompt: settings.aiPersonalityPrompt || undefined,
+    customSystemPrompt: settings.customSystemPrompt || undefined,
+    appendSystemPrompt: settings.appendSystemPrompt || undefined
+  });
 }
 
 function resolveRequestPatches(
@@ -146,7 +217,6 @@ function resolvePromptText(options: {
   const directValue = getArgValue(options.argv, options.directFlag);
   const fileValue = getArgValue(options.argv, options.fileFlag);
 
-  // 直传内容和文件输入语义冲突，显式禁止同时使用。
   if (directValue && fileValue) {
     throw new Error(`Cannot use ${options.directFlag} and ${options.fileFlag} at the same time.`);
   }
@@ -157,7 +227,6 @@ function resolvePromptText(options: {
       return readFileSync(absolutePath, "utf8");
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
-      // 保留原始错误信息，便于定位路径权限或文件不存在问题。
       throw new Error(`Failed to read ${options.label} file: ${absolutePath}. ${message}`);
     }
   }
@@ -171,13 +240,27 @@ function getArgValue(argv: string[], flag: string): string | undefined {
     return undefined;
   }
 
-  // 仅支持 "--flag value" 形式；缺失 value 时返回 undefined。
   return argv[index + 1];
 }
 
 function hasFlag(argv: string[], flag: string): boolean {
-  // 仅判断标记是否存在，不解析后续值。
   return argv.includes(flag);
+}
+
+function resolvePersonaPreset(value: string | undefined): string | undefined {
+  const normalized = value?.trim();
+  if (!normalized) {
+    return undefined;
+  }
+
+  const builtinPresets = getBuiltinPersonaPresetNames();
+  if (!builtinPresets.includes(normalized as (typeof builtinPresets)[number])) {
+    throw new Error(
+      `Unknown persona preset: ${normalized}. Available presets: ${builtinPresets.join(", ")}`
+    );
+  }
+
+  return normalized;
 }
 
 function parsePositiveInt(value: string | undefined, fallback: number): number {
@@ -190,7 +273,6 @@ function parsePositiveInt(value: string | undefined, fallback: number): number {
     return fallback;
   }
 
-  // 统一截断为不小于 1 的整数，避免 0/负数导致配置失效。
   return Math.max(1, Math.trunc(parsed));
 }
 
@@ -209,4 +291,114 @@ function parseBoolean(value: string | undefined, fallback: boolean): boolean {
   }
 
   return fallback;
+}
+
+function normalizeConnectionConfig(input: Partial<ConnectionConfig>): ConnectionConfig {
+  return {
+    apiKey: input.apiKey?.trim() ?? "",
+    baseURL: normalizeOptionalText(input.baseURL),
+    model: input.model?.trim() || "gpt-4.1-mini"
+  };
+}
+
+function normalizeSessionSettings(input: Partial<SessionSettings>): SessionSettings {
+  return {
+    approvalMode: input.approvalMode === "auto" ? "auto" : "manual",
+    maxSteps: clampPositiveInt(input.maxSteps, 8),
+    commandTimeoutMs: clampPositiveInt(input.commandTimeoutMs, 120_000),
+    autoSummaryEnabled: input.autoSummaryEnabled ?? true,
+    languagePreference: normalizeOptionalText(input.languagePreference),
+    personaPreset: resolvePersonaPreset(normalizeOptionalText(input.personaPreset)),
+    aiPersonalityPrompt: normalizeOptionalText(input.aiPersonalityPrompt),
+    customSystemPrompt: normalizeOptionalText(input.customSystemPrompt),
+    appendSystemPrompt: normalizeOptionalText(input.appendSystemPrompt)
+  };
+}
+
+function resolveSettingsFromInputs(
+  argv: string[],
+  env: NodeJS.ProcessEnv
+): Partial<SessionSettings> {
+  return {
+    maxSteps: parsePositiveInt(env.AGENT_MAX_STEPS, 8),
+    commandTimeoutMs: parsePositiveInt(env.AGENT_COMMAND_TIMEOUT_MS, 120_000),
+    autoSummaryEnabled: parseBoolean(env.AGENT_MEMORY_AUTO_SUMMARY, true),
+    languagePreference: getArgValue(argv, "--lang") || env.AGENT_LANGUAGE || undefined,
+    personaPreset: resolvePersonaPreset(
+      getArgValue(argv, "--persona-preset") || env.AGENT_PERSONA_PRESET || undefined
+    ),
+    aiPersonalityPrompt: getArgValue(argv, "--persona") || env.AGENT_AI_PERSONALITY || undefined,
+    customSystemPrompt: resolvePromptText({
+      argv,
+      directFlag: "--system-prompt",
+      fileFlag: "--system-prompt-file",
+      envValue: env.AGENT_SYSTEM_PROMPT,
+      label: "system prompt"
+    }),
+    appendSystemPrompt: resolvePromptText({
+      argv,
+      directFlag: "--append-system-prompt",
+      fileFlag: "--append-system-prompt-file",
+      envValue: env.AGENT_APPEND_SYSTEM_PROMPT,
+      label: "append system prompt"
+    })
+  };
+}
+
+async function readJsonConfig<T>(
+  filePath: string,
+  schema: z.ZodSchema<T>
+): Promise<Partial<T>> {
+  try {
+    const raw = await fs.readFile(filePath, "utf8");
+    const parsed = JSON.parse(raw) as unknown;
+    return schema.parse(parsed);
+  } catch (error) {
+    if (isMissingFileError(error)) {
+      return {};
+    }
+
+    if (error instanceof z.ZodError) {
+      const details = error.issues
+        .map((issue) => `${issue.path.join(".") || "(root)"}: ${issue.message}`)
+        .join("; ");
+      throw new Error(`Invalid config file ${filePath}: ${details}`);
+    }
+
+    const message = error instanceof Error ? error.message : String(error);
+    throw new Error(`Failed to read config file ${filePath}: ${message}`);
+  }
+}
+
+async function writeJsonConfig(filePath: string, value: object): Promise<void> {
+  await fs.mkdir(path.dirname(filePath), { recursive: true });
+  await fs.writeFile(filePath, JSON.stringify(value, null, 2) + "\n", "utf8");
+}
+
+function isMissingFileError(error: unknown): boolean {
+  return Boolean(
+    error &&
+      typeof error === "object" &&
+      "code" in error &&
+      (error as { code?: string }).code === "ENOENT"
+  );
+}
+
+function clampPositiveInt(value: number | undefined, fallback: number): number {
+  if (!Number.isFinite(value)) {
+    return fallback;
+  }
+
+  return Math.max(1, Math.trunc(value!));
+}
+
+function normalizeOptionalText(value: string | undefined): string | undefined {
+  const normalized = value?.trim();
+  return normalized ? normalized : undefined;
+}
+
+function compactObject<T extends object>(value: Partial<T>): Partial<T> {
+  return Object.fromEntries(
+    Object.entries(value).filter(([, entryValue]) => entryValue !== undefined)
+  ) as Partial<T>;
 }

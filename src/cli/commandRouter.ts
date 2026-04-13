@@ -4,6 +4,7 @@ export type ParsedCommand =
   | { type: "help" }
   | { type: "clear" }
   | { type: "exit" }
+  | { type: "open-settings"; section: "connection" | "session" }
   | { type: "command-error"; input: string; message: string }
   | { type: "remember"; note: string; persist: boolean }
   | { type: "memory-view" }
@@ -32,6 +33,14 @@ export function parseReplCommand(input: string): ParsedCommand {
 
   if (input === "/exit") {
     return { type: "exit" };
+  }
+
+  if (input === "/settings") {
+    return { type: "open-settings", section: "session" };
+  }
+
+  if (input === "/setup") {
+    return { type: "open-settings", section: "connection" };
   }
 
   const memoryCommand = parseMemoryCommand(input);

@@ -1,7 +1,17 @@
+export type ToolPermissionKind = "command" | "file-write" | "web";
+
+export interface ToolApprovalRequest {
+  kind: ToolPermissionKind;
+  toolName: string;
+  title: string;
+  summary: string;
+  details: string[];
+}
+
 // 工具执行上下文：由主程序注入工作区、超时和审批能力。
 export interface ToolExecutionContext {
   workspaceRoot: string;
-  requestApproval: (action: string) => Promise<boolean>;
+  requestApproval: (request: ToolApprovalRequest) => Promise<boolean>;
   commandTimeoutMs: number;
 }
 

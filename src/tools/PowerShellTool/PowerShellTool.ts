@@ -56,12 +56,16 @@ export async function executePowerShellTool(
   const timeoutMs = normalizeTimeout(input.timeout_ms, context.commandTimeoutMs);
 
   // PowerShell 命令执行同样走审批，保证危险操作可被显式拦截。
-  const approved = await context.requestApproval(
-    `run powershell command in ${toWorkspaceRelative(
-      context.workspaceRoot,
-      workingDirectory
-    )}: ${summarizeCommand(input.command)}`
-  );
+  const approved = await context.requestApproval({
+    kind: "command",
+    toolName: POWERSHELL_TOOL_NAME,
+    title: "Run PowerShell command",
+    summary: summarizeCommand(input.command),
+    details: [
+      `Working directory: ${toWorkspaceRelative(context.workspaceRoot, workingDirectory)}`,
+      `Timeout: ${timeoutMs} ms`
+    ]
+  });
 
   if (!approved) {
     throw new Error("User rejected PowerShell tool request");

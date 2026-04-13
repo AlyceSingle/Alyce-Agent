@@ -13,6 +13,8 @@ export interface AgentTurnOptions {
   context: ToolExecutionContext;
   requestPatches?: RequestPatchOperation[];
   onThinking?: (content: string) => void;
+  onToolCallStart?: (toolName: string, rawArguments: string) => void;
+  onToolCallResult?: (toolName: string, result: string) => void;
 }
 
 // 执行单轮对话：允许模型在本轮内多次调用工具后再产出最终文本。
@@ -61,7 +63,9 @@ export async function runAgentTurn(
         continue;
       }
 
+      options.onToolCallStart?.(toolCall.function.name, toolCall.function.arguments);
       const result = await executeToolCall(toolCall.function.name, toolCall.function.arguments, options.context);
+      options.onToolCallResult?.(toolCall.function.name, result);
 
       // 将工具结果追加到消息历史，供模型继续推理。
       messages.push({
