@@ -78,7 +78,7 @@ export class MemoryService {
     };
   }
 
-  // 按阈值更新会话自动摘要，思路参考 CC 的 SessionMemory：不每轮都触发。
+  // 按阈值更新会话自动摘要，不每轮都触发。
   async maybeRefreshAutoSummary(options: {
     client: OpenAI;
     model: string;

@@ -1,9 +1,33 @@
 import type OpenAI from "openai";
 import { z } from "zod";
 import { zodToJsonSchema } from "zod-to-json-schema";
-import { runCommand } from "./builtin/commandTool.js";
-import { listFiles, readFile, writeFile } from "./builtin/fsTools.js";
-import type { JsonRecord, ToolExecutionContext } from "./types.js";
+import {
+  BASH_TOOL_DESCRIPTION,
+  BASH_TOOL_NAME,
+  BashInputSchema,
+  executeBashTool
+} from "./BashTool/BashTool.js";
+import { FILE_EDIT_TOOL_DESCRIPTION, executeFileEdit, FileEditInputSchema } from "./FileEditTool/FileEditTool.js";
+import { executeFileRead, FileReadInputSchema } from "./FileReadTool/FileReadTool.js";
+import { DESCRIPTION, FILE_READ_TOOL_NAME } from "./FileReadTool/prompt.js";
+import {
+  executeFileWrite,
+  FILE_WRITE_TOOL_DESCRIPTION,
+  FileWriteInputSchema
+} from "./FileWriteTool/FileWriteTool.js";
+import {
+  executeWebFetchTool,
+  WEB_FETCH_TOOL_DESCRIPTION,
+  WEB_FETCH_TOOL_NAME,
+  WebFetchInputSchema
+} from "./WebFetchTool/WebFetchTool.js";
+import {
+  executeWebSearchTool,
+  WEB_SEARCH_TOOL_DESCRIPTION,
+  WEB_SEARCH_TOOL_NAME,
+  WebSearchInputSchema
+} from "./WebSearchTool/WebSearchTool.js";
+import type { ToolExecutionContext } from "./types.js";
 
 type AnyZodSchema = z.ZodTypeAny;
 
@@ -18,59 +42,42 @@ export interface AgentTool<TInputSchema extends AnyZodSchema = AnyZodSchema> {
   execute: (input: z.infer<TInputSchema>, context: ToolExecutionContext) => Promise<unknown>;
 }
 
-const ListFilesInputSchema = z
-  .object({
-    path: z.string().optional().describe("Workspace-relative path, defaults to '.'")
-  })
-  .strict();
-
-const ReadFileInputSchema = z
-  .object({
-    path: z.string().describe("Workspace-relative file path"),
-    startLine: z.number().int().positive().optional().describe("1-based start line"),
-    endLine: z.number().int().positive().optional().describe("1-based end line")
-  })
-  .strict();
-
-const WriteFileInputSchema = z
-  .object({
-    path: z.string().describe("Workspace-relative file path"),
-    content: z.string().describe("Text content to write"),
-    append: z.boolean().optional().describe("If true, append instead of overwrite")
-  })
-  .strict();
-
-const RunCommandInputSchema = z
-  .object({
-    command: z.string().describe("Shell command to execute"),
-    cwd: z.string().optional().describe("Optional workspace-relative cwd")
-  })
-  .strict();
-
 export const REGISTERED_TOOLS: AgentTool[] = [
   {
-    name: "list_files",
-    description: "List files and directories under a workspace path.",
-    inputSchema: ListFilesInputSchema,
-    execute: (input, context) => listFiles(input as JsonRecord, context)
+    name: FILE_READ_TOOL_NAME,
+    description: DESCRIPTION,
+    inputSchema: FileReadInputSchema,
+    execute: (input, context) => executeFileRead(input, context)
   },
   {
-    name: "read_file",
-    description: "Read a text file from the workspace.",
-    inputSchema: ReadFileInputSchema,
-    execute: (input, context) => readFile(input as JsonRecord, context)
+    name: "Edit",
+    description: FILE_EDIT_TOOL_DESCRIPTION,
+    inputSchema: FileEditInputSchema,
+    execute: (input, context) => executeFileEdit(input, context)
   },
   {
-    name: "write_file",
-    description: "Write text content to a workspace file.",
-    inputSchema: WriteFileInputSchema,
-    execute: (input, context) => writeFile(input as JsonRecord, context)
+    name: "Write",
+    description: FILE_WRITE_TOOL_DESCRIPTION,
+    inputSchema: FileWriteInputSchema,
+    execute: (input, context) => executeFileWrite(input, context)
   },
   {
-    name: "run_command",
-    description: "Run a shell command in the workspace.",
-    inputSchema: RunCommandInputSchema,
-    execute: (input, context) => runCommand(input as JsonRecord, context)
+    name: BASH_TOOL_NAME,
+    description: BASH_TOOL_DESCRIPTION,
+    inputSchema: BashInputSchema,
+    execute: (input, context) => executeBashTool(input, context)
+  },
+  {
+    name: WEB_FETCH_TOOL_NAME,
+    description: WEB_FETCH_TOOL_DESCRIPTION,
+    inputSchema: WebFetchInputSchema,
+    execute: (input, context) => executeWebFetchTool(input, context)
+  },
+  {
+    name: WEB_SEARCH_TOOL_NAME,
+    description: WEB_SEARCH_TOOL_DESCRIPTION,
+    inputSchema: WebSearchInputSchema,
+    execute: (input, context) => executeWebSearchTool(input, context)
   }
 ];
 

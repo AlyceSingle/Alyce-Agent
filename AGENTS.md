@@ -4,7 +4,7 @@
 
 ## 项目目标
 
-- 构建一个类 Claude Code 的 TypeScript 终端 Agent。
+- 构建一个 TypeScript 终端 Agent。
 - 支持多轮对话与工具调用（文件系统与命令执行）。
 - 在易用性的前提下，优先保障安全与可控。
 

@@ -1,6 +1,6 @@
-# Alyce Code Agent
+# Alyce Agent
 
-一个基于 TypeScript 的终端 Agent，用于和 AI 多轮对话，并在会话中执行工具调用（列目录、读文件、写文件、执行命令）。
+一个基于 TypeScript 的终端 Agent，用于和 AI 多轮对话，并在会话中执行工具调用。
 
 默认显示策略：
 
@@ -46,12 +46,31 @@ src/
 		definitions.ts             # 工具定义（zod schema + 执行函数）
 		registry.ts                # Tool schema 注册
 		executeToolCall.ts         # 工具调度入口
-		builtin/
-			fsTools.ts               # list_files / read_file / write_file
-			commandTool.ts           # run_command
+		BashTool/
+			BashTool.ts              # Bash 工具执行实现
+			prompt.ts                # Bash 工具描述模板
+			toolName.ts              # Bash 工具名常量
+		FileReadTool/
+			FileReadTool.ts          # Read 工具执行实现
+			limits.ts                # Read 工具默认限制
+			prompt.ts                # Read 工具描述模板
+		FileEditTool/
+			FileEditTool.ts          # Edit 工具执行实现
+			constants.ts             # Edit 工具常量
+			types.ts                 # Edit 工具输入输出 schema
+			utils.ts                 # Edit 工具替换与补丁辅助
+			prompt.ts                # Edit 工具描述模板
+		FileWriteTool/
+			FileWriteTool.ts         # Write 工具执行实现
+			prompt.ts                # Write 工具描述模板
+		WebFetchTool/
+			WebFetchTool.ts          # WebFetch 工具执行实现
+			prompt.ts                # WebFetch 工具描述模板
+		WebSearchTool/
+			WebSearchTool.ts         # WebSearch 工具执行实现
+			prompt.ts                # WebSearch 工具描述模板
 		internal/
 			pathSandbox.ts           # 工作区路径沙箱
-			shell.ts                 # 子进程命令执行与超时
 			values.ts                # 参数解析与输出截断
 ```
 
@@ -145,7 +164,7 @@ npm run dev -- --model gpt-4.1-mini --cwd . --yolo
 
 ## 工程化工具调用链
 
-- 工具 schema 由 zod 声明，并自动导出为 OpenAI function tools JSON Schema。
+- 工具 schema 由 zod 声明，并自动导出为 OpenAI function tools JSON Schema（当前工具名：Read、Edit、Write、Bash、WebFetch、WebSearch）。
 - 模型工具参数会先做 zod safeParse 校验，再执行具体工具逻辑。
 - 工具执行返回统一结构：ok/result 或 ok=false/error，便于模型稳定处理。
 - 模型发送链路集中在 core/api：先标准化消息，再应用 JSON Patch，最后发送请求。

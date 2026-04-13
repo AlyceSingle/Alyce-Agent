@@ -25,7 +25,7 @@ const SUMMARY_TEMPLATE = [
   ""
 ].join("\n");
 
-// 基于当前会话窗口生成自动摘要，风格参考 CC 的 SessionMemory 更新路径。
+// 基于当前会话窗口生成自动摘要。
 export async function buildAutoSessionSummary(
   client: OpenAI,
   options: AutoSummaryOptions
