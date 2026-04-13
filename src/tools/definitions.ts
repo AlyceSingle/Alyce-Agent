@@ -16,6 +16,12 @@ import {
   FileWriteInputSchema
 } from "./FileWriteTool/FileWriteTool.js";
 import {
+  executePowerShellTool,
+  POWERSHELL_TOOL_DESCRIPTION,
+  POWERSHELL_TOOL_NAME,
+  PowerShellInputSchema
+} from "./PowerShellTool/PowerShellTool.js";
+import {
   executeWebFetchTool,
   WEB_FETCH_TOOL_DESCRIPTION,
   WEB_FETCH_TOOL_NAME,
@@ -66,6 +72,12 @@ export const REGISTERED_TOOLS: AgentTool[] = [
     description: BASH_TOOL_DESCRIPTION,
     inputSchema: BashInputSchema,
     execute: (input, context) => executeBashTool(input, context)
+  },
+  {
+    name: POWERSHELL_TOOL_NAME,
+    description: POWERSHELL_TOOL_DESCRIPTION,
+    inputSchema: PowerShellInputSchema,
+    execute: (input, context) => executePowerShellTool(input, context)
   },
   {
     name: WEB_FETCH_TOOL_NAME,

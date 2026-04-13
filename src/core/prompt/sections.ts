@@ -93,6 +93,10 @@ function getUsingToolsSection(runtimeContext: PromptRuntimeContext) {
     capabilityHints.push("Use Bash for shell commands that cannot be completed by Read/Edit/Write.");
   }
 
+  if (hasTool(runtimeContext, "PowerShell")) {
+    capabilityHints.push("Use PowerShell when command semantics depend on PowerShell cmdlets or object pipelines.");
+  }
+
   if (hasTool(runtimeContext, "WebFetch")) {
     capabilityHints.push("Use WebFetch to retrieve and inspect public web page content.");
   }
@@ -150,6 +154,10 @@ function getSessionSpecificGuidanceSection(runtimeContext: PromptRuntimeContext)
 
   if (hasTool(runtimeContext, "Bash")) {
     items.push("Use Bash only when dedicated tools are insufficient, and keep each command narrowly scoped.");
+  }
+
+  if (hasTool(runtimeContext, "PowerShell")) {
+    items.push("Use PowerShell for Windows-native automation, and keep each command explicit and auditable.");
   }
 
   if (hasTool(runtimeContext, "WebFetch") || hasTool(runtimeContext, "WebSearch")) {

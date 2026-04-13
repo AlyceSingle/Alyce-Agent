@@ -50,6 +50,10 @@ src/
 			BashTool.ts              # Bash 工具执行实现
 			prompt.ts                # Bash 工具描述模板
 			toolName.ts              # Bash 工具名常量
+		PowerShellTool/
+			PowerShellTool.ts        # PowerShell 工具执行实现
+			prompt.ts                # PowerShell 工具描述模板
+			toolName.ts              # PowerShell 工具名常量
 		FileReadTool/
 			FileReadTool.ts          # Read 工具执行实现
 			limits.ts                # Read 工具默认限制
@@ -164,7 +168,7 @@ npm run dev -- --model gpt-4.1-mini --cwd . --yolo
 
 ## 工程化工具调用链
 
-- 工具 schema 由 zod 声明，并自动导出为 OpenAI function tools JSON Schema（当前工具名：Read、Edit、Write、Bash、WebFetch、WebSearch）。
+- 工具 schema 由 zod 声明，并自动导出为 OpenAI function tools JSON Schema（当前工具名：Read、Edit、Write、Bash、PowerShell、WebFetch、WebSearch）。
 - 模型工具参数会先做 zod safeParse 校验，再执行具体工具逻辑。
 - 工具执行返回统一结构：ok/result 或 ok=false/error，便于模型稳定处理。
 - 模型发送链路集中在 core/api：先标准化消息，再应用 JSON Patch，最后发送请求。
