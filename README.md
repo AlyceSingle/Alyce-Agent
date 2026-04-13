@@ -8,6 +8,18 @@
 - 正文输出使用青色 `assistant>` 前缀
 - 在不支持颜色的终端会自动降级为纯文本输出
 
+## 项目定位与核心能力
+
+这个项目不是“单次问答脚本”，而是一个可持续执行任务的终端 Agent 运行时，目标是把以下能力放在同一条可控链路中：
+
+- 多轮对话：保留完整消息历史，支持持续上下文。
+- 工具编排：模型可在单轮内多次调用工具，再给出最终答案。
+- 可控执行：工具审批、命令超时、路径沙箱、输出截断。
+- 记忆增强：会话记忆 + 持久记忆 + 自动会话摘要，按阈值更新。
+- 提示词工程化：静态段/动态段分离、会话级缓存、可覆盖/可追加。
+
+一句话概括：Alyce Agent = REPL 外层循环 + Agent 单轮多步循环 + 工具安全执行层 + Memory/Prompt 动态注入层。
+
 
 ## 当前目录骨架
 
@@ -160,6 +172,105 @@ npm run dev -- --model gpt-4.1-mini --cwd . --yolo
 - 任何以 / 开头但不合法的命令都会直接报错。
 - 以 / 开头的输入不会发送给 AI 模型。
 
+## AI 运行逻辑（循环逻辑）
+
+核心是“双层循环”：
+
+- 外层循环：终端 REPL 循环（持续读取用户输入）。
+- 内层循环：单轮 Agent 循环（一次用户输入内最多 N 步工具调用）。
+
+### 1. 启动阶段（一次）
+
+1. 解析运行时配置（环境变量 + CLI 参数）。
+2. 初始化 MemoryService（会话记忆 + 持久记忆）。
+3. 构建首条 system prompt 并写入消息历史 `messages[0]`。
+4. 创建 OpenAI 客户端、readline 实例、工具执行上下文（审批/超时/工作区）。
+
+### 2. 外层 REPL 循环（`src/index.ts`）
+
+每次循环处理一个用户输入：
+
+1. 读取输入并 trim；空输入直接继续下一轮。
+2. 先走命令路由（`/help`、`/clear`、`/memory`、`/model` 等），命令只做本地控制，不进入模型。
+3. 若是普通对话输入：
+	 - 追加一条 `role=user` 消息。
+	 - 调用 `runAgentTurn(...)` 进入内层循环。
+	 - 输出 thinking 与最终答案。
+4. 本轮完成后尝试自动摘要；若摘要更新成功，重建 system prompt（仅替换 `messages[0]`）。
+
+### 3. 内层单轮多步循环（`src/core/agent/runAgentTurn.ts`）
+
+`runAgentTurn` 是“单次用户输入”的核心执行器：
+
+1. 从 `step = 0` 开始，最多执行到 `maxSteps - 1`。
+2. 每一步请求模型：
+	 - 传入完整消息历史。
+	 - 传入 `TOOL_SCHEMAS`，`tool_choice=auto`。
+	 - 经过 `sendChatCompletion` 的消息标准化 + 可选 JSON Patch 改写。
+3. 解析模型返回：
+	 - 抽取 thinking 文本块并回调输出。
+	 - 先把 assistant 消息写回历史。
+4. 分支判断：
+	 - 无工具调用：本轮结束，返回最终自然语言答案。
+	 - 有工具调用：逐个执行工具，把每个工具结果以 `role=tool` 追加到历史，再进入下一步。
+5. 若步数用尽仍未结束，抛出 `Max tool steps reached`，避免无限循环。
+
+### 4. 工具调用与错误兜底
+
+`executeToolCall` 统一处理工具执行链：
+
+1. 按名称查找工具定义，不存在则返回 `unknown_tool`。
+2. 解析 JSON 参数，失败返回 `invalid_json_arguments`。
+3. 通过 zod 做 schema 校验，失败返回 `invalid_tool_arguments`。
+4. 执行工具，成功返回 `{ ok: true, result }`。
+5. 捕获工具异常并返回 `{ ok: false, error: tool_execution_error }`。
+
+这保证了“工具失败不会打断整轮推理”，模型仍可读取结构化错误并继续决策。
+
+### 5. 自动摘要触发逻辑（阈值型）
+
+自动摘要不是每轮都生成，而是按计数阈值触发：
+
+- 首次触发：可见消息数 >= `minMessagesToInit`。
+- 增量触发：相对上次摘要新增消息数 >= `messagesBetweenUpdates`。
+- 摘要窗口：仅使用最近 `windowMessages` 条非 system 消息。
+
+更新成功后，会把摘要注入 Memory 动态段，并刷新 system prompt，下一轮立即生效。
+
+### 6. 运行安全边界与终止条件
+
+- 命令执行超时：`AGENT_COMMAND_TIMEOUT_MS`。
+- 单轮步数上限：`AGENT_MAX_STEPS`。
+- 路径沙箱：拒绝访问工作区外路径。
+- 输出截断：防止超长工具输出淹没上下文。
+- 审批模式：默认审批，`--yolo` 可自动放行。
+
+简化伪代码如下：
+
+```text
+bootstrap()
+while (REPL alive):
+	input = readUserInput()
+	if command(input):
+		handleLocally()
+		continue
+
+	messages.push(user)
+	for step in [0..maxSteps):
+		assistant = model(messages, tools)
+		messages.push(assistant)
+		if no tool_calls:
+			print(final answer)
+			break
+		for call in tool_calls:
+			toolResult = executeToolCall(call)
+			messages.push(toolResult)
+
+	maybeRefreshAutoSummary()
+	if summaryUpdated:
+		rebuildSystemPrompt(messages[0])
+```
+
 ## 自动摘要机制
 
 - 参考 Claude Code 的 SessionMemory 思路：不每轮都摘要，而是达到阈值后自动更新。
@@ -171,7 +282,7 @@ npm run dev -- --model gpt-4.1-mini --cwd . --yolo
 - 工具 schema 由 zod 声明，并自动导出为 OpenAI function tools JSON Schema（当前工具名：Read、Edit、Write、Bash、PowerShell、WebFetch、WebSearch）。
 - 模型工具参数会先做 zod safeParse 校验，再执行具体工具逻辑。
 - 工具执行返回统一结构：ok/result 或 ok=false/error，便于模型稳定处理。
-- 模型发送链路集中在 core/api：先标准化消息，再应用 JSON Patch，最后发送请求。
+- 模型发送链路集中在 core/api：先标准化消息（例如 tool 空输出占位、assistant tool_calls content 归一化），再应用 JSON Patch，最后发送请求。
 
 ## 人格模板
 
