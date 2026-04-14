@@ -4,7 +4,7 @@
 
 ## 核心特性
 
-- UI-only：统一走 React + Ink 终端界面，旧的 text mode 入口只保留兼容占位。
+- UI-only：统一走 React + Ink 终端界面。
 - 多步 Agent Turn：模型可在单轮内连续调用多个工具，再汇总输出最终回复。
 - 工具权限控制：命令执行、文件写入、Web 访问都能按会话策略审批。
 - Prompt 工程化：静态段、动态段、persona、附加 system prompt 都通过 builder 统一组装。
@@ -48,7 +48,6 @@ npm start
 
 - 应用必须运行在交互式 TTY 终端中，否则 `startReactUiMode()` 会直接报错。
 - 当前 `npm run dev` 实际执行的是先构建、再运行 `dist/index.js`，不是热更新式 dev server。
-- `src/cli/startTextMode.ts` 只会抛出 “Text mode has been removed”，当前正式入口只有 React 终端 UI。
 
 ## 分层架构
 
@@ -78,7 +77,6 @@ npm start
 │  │  ├─ sessionRuntime.ts              # 会话级 runtime，整合配置、消息、记忆、文件回滚
 │  │  ├─ commandRouter.ts               # /help /memory /model 等命令解析
 │  │  ├─ contextPreview.ts              # 预览下一轮发给模型的上下文
-│  │  └─ startTextMode.ts               # 已移除 text mode 的兼容占位
 │  ├─ config/
 │  │  └─ runtime.ts                     # 读取 .alyce / ~/.alyce / env / CLI，归一化运行时配置
 │  ├─ core/

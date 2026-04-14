@@ -23,9 +23,11 @@ type RenderedMessageEntry = {
   isSelected: boolean;
   headerLabel: string;
   headerColor: string;
+  headerTitle?: string;
   sections: RenderedSection[];
   metadataLine?: string;
   hintLine?: string;
+  leadingSpacingRows: number;
   rowCount: number;
 };
 
@@ -92,17 +94,22 @@ function buildRenderedMessageEntries(
   selectedMessageId: string | null,
   contentWidth: number
 ): RenderedMessageEntry[] {
-  return messages.map((message) => {
+  return messages.map((message, index) => {
     const isSelected = message.id === selectedMessageId;
     const badge = getMessageBadge(message.kind);
     const sections = renderSections(
       message.blocks,
       message.kind === "tool" ? contentWidth - 2 : contentWidth
     );
+    const headerTitle =
+      message.kind === "user" || message.kind === "assistant"
+        ? undefined
+        : message.title;
     const metadataLine = message.metadata.length > 0 ? message.metadata.join(" | ") : undefined;
     const hintLine = message.isTruncated
       ? "Full output available. Press Ctrl+O to open reader."
       : undefined;
+    const leadingSpacingRows = index === 0 ? 0 : 1;
     const sectionRowCount = sections.reduce((sum, section) => {
       return sum + section.lines.length + (section.label ? 1 : 0);
     }, 0);
@@ -112,10 +119,17 @@ function buildRenderedMessageEntries(
       isSelected,
       headerLabel: badge.label,
       headerColor: badge.color,
+      headerTitle,
       sections,
       metadataLine,
       hintLine,
-      rowCount: 1 + sectionRowCount + (metadataLine ? 1 : 0) + (hintLine ? 1 : 0) + 1
+      leadingSpacingRows,
+      rowCount:
+        leadingSpacingRows +
+        1 +
+        sectionRowCount +
+        (metadataLine ? 1 : 0) +
+        (hintLine ? 1 : 0)
     };
   });
 }
@@ -238,7 +252,7 @@ const MessageListImpl = forwardRef<MessageListHandle, {
         {" | "}
         {props.messages.length} {pluralizeMessages(props.messages.length)}
       </Text>
-      <Box marginTop={1} flexDirection="column" flexGrow={1} overflow="hidden" paddingX={1} width="100%">
+      <Box flexDirection="column" flexGrow={1} overflow="hidden" paddingX={1} width="100%">
         <ScrollBox
           ref={scrollRef}
           flexDirection="column"
@@ -247,7 +261,7 @@ const MessageListImpl = forwardRef<MessageListHandle, {
           width="100%"
         >
           {props.messages.length === 0 ? (
-            <Box flexDirection="column" marginTop={1} width="100%">
+            <Box flexDirection="column" width="100%">
               <Text color={terminalUiTheme.colors.muted}>No messages yet.</Text>
               <Text color={terminalUiTheme.colors.subtle}>
                 Type a prompt below, or open settings before the first model request.
@@ -261,7 +275,12 @@ const MessageListImpl = forwardRef<MessageListHandle, {
               });
 
               return (
-                <Box key={entry.message.id} flexDirection="column" marginTop={1} width="100%">
+                <Box
+                  key={entry.message.id}
+                  flexDirection="column"
+                  marginTop={entry.leadingSpacingRows}
+                  width="100%"
+                >
                   {props.unseenDividerMessageId === entry.message.id ? (
                     <Text color={terminalUiTheme.colors.warning} wrap="truncate-end">
                       -- {props.unseenMessageCount} new message{props.unseenMessageCount === 1 ? "" : "s"} --
@@ -275,8 +294,12 @@ const MessageListImpl = forwardRef<MessageListHandle, {
                     {entry.isSelected ? ">" : " "}
                     {" "}
                     {entry.headerLabel}
-                    {" · "}
-                    {entry.message.title}
+                    {entry.headerTitle ? (
+                      <>
+                        {" · "}
+                        {entry.headerTitle}
+                      </>
+                    ) : null}
                     {" · "}
                     {timestamp}
                   </Text>
