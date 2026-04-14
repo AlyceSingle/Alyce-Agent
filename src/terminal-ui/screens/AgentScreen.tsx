@@ -1,7 +1,7 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { useApp, useStdout } from "../runtime/ink.js";
-import { Layout } from "../components/Layout.js";
-import { MessageList } from "../components/MessageList.js";
+import { useApp, useStdout, Text } from "../runtime/ink.js";
+import { FullscreenLayout } from "../components/FullscreenLayout.js";
+import { MessageList, type MessageListHandle } from "../components/MessageList.js";
 import { MessageReaderScreen } from "../components/MessageReaderScreen.js";
 import { PromptInput } from "../components/PromptInput.js";
 import { StatusBar } from "../components/StatusBar.js";
@@ -10,40 +10,47 @@ import { SettingsDialog } from "../components/SettingsDialog.js";
 import type { SessionController } from "../adapters/sessionController.js";
 import { useIsOverlayActive } from "../context/overlayContext.js";
 import { useKeybindings } from "../keybindings/useKeybindings.js";
+import { getBindingDisplayText } from "../keybindings/shortcutDisplay.js";
 import { useTerminalInput } from "../runtime/input.js";
-import { setSelectedMessageId } from "../state/actions.js";
+import { getActiveDialog, setTranscriptSticky } from "../state/actions.js";
 import { useTerminalUiSelector, useTerminalUiStore } from "../state/store.js";
+import { terminalUiTheme } from "../theme/theme.js";
 
-const BODY_CHROME_ROWS = 15;
-const MESSAGE_SCROLL_PAGE = 5;
-const MIN_MESSAGE_VIEWPORT_ROWS = 8;
 const EXIT_CONFIRMATION_STATUS = "Press Ctrl+C again to quit";
+const OPEN_DETAIL_SHORTCUT = getBindingDisplayText("conversation:openDetail", "Global") ?? "Ctrl+O";
+const PAGE_UP_SHORTCUT = getBindingDisplayText("scroll:pageUp", "Scroll") ?? "PgUp";
+const PAGE_DOWN_SHORTCUT = getBindingDisplayText("scroll:pageDown", "Scroll") ?? "PgDn";
+const LAST_MESSAGE_SHORTCUT = getBindingDisplayText("scroll:bottom", "Scroll") ?? "End";
 
-const ConversationPane = React.memo(function ConversationPane(props: {
+const ConversationPane = React.memo(React.forwardRef<MessageListHandle, {
   terminalWidth: number;
-  viewportHeight: number;
-  autoFollow: boolean;
-}) {
+  transcriptSticky: boolean;
+  unseenDividerMessageId: string | null;
+  unseenMessageCount: number;
+  onStickyChange: (sticky: boolean) => void;
+}>(function ConversationPane(props, ref) {
   const messages = useTerminalUiSelector((value) => value.messages);
   const selectedMessageId = useTerminalUiSelector((value) => value.selectedMessageId);
 
   return (
     <MessageList
+      ref={ref}
       messages={messages}
       selectedMessageId={selectedMessageId}
       viewportWidth={props.terminalWidth}
-      viewportHeight={props.viewportHeight}
-      autoFollow={props.autoFollow}
+      transcriptSticky={props.transcriptSticky}
+      unseenDividerMessageId={props.unseenDividerMessageId}
+      unseenMessageCount={props.unseenMessageCount}
+      onStickyChange={props.onStickyChange}
     />
   );
-});
+}));
 
 export function AgentScreen(props: { controller: SessionController }) {
   const { exit } = useApp();
   const { stdout } = useStdout();
   const store = useTerminalUiStore();
-  const dialog = useTerminalUiSelector((value) => value.dialog);
-  const readerMessageId = useTerminalUiSelector((value) => value.readerMessageId);
+  const dialogQueue = useTerminalUiSelector((value) => value.dialogQueue);
   const connection = useTerminalUiSelector((value) => value.connection);
   const connectionState = useTerminalUiSelector((value) => value.connectionState);
   const settings = useTerminalUiSelector((value) => value.settings);
@@ -56,31 +63,27 @@ export function AgentScreen(props: { controller: SessionController }) {
   const isLoading = useTerminalUiSelector((value) => value.isLoading);
   const draftInput = useTerminalUiSelector((value) => value.draftInput);
   const selectedMessageId = useTerminalUiSelector((value) => value.selectedMessageId);
-  const messagesLength = useTerminalUiSelector((value) => value.messages.length);
-  const autoFollowMessages = useTerminalUiSelector((value) => value.autoFollowMessages);
-  const selectedMessageIndex = useTerminalUiSelector((value) => {
-    if (value.messages.length === 0) {
-      return -1;
-    }
-
-    const currentIndex = value.messages.findIndex((message) => message.id === value.selectedMessageId);
-    return currentIndex >= 0 ? currentIndex : value.messages.length - 1;
-  });
-  const readerMessage = useTerminalUiSelector((value) => {
-    if (!readerMessageId) {
-      return null;
-    }
-
-    return value.messages.find((message) => message.id === readerMessageId) ?? null;
-  });
+  const transcriptSticky = useTerminalUiSelector((value) => value.transcriptSticky);
+  const unseenDividerMessageId = useTerminalUiSelector((value) => value.unseenDividerMessageId);
+  const unseenMessageCount = useTerminalUiSelector((value) => value.unseenMessageCount);
+  const messages = useTerminalUiSelector((value) => value.messages);
   const clearOnCtrlCRef = useRef(false);
+  const transcriptRef = useRef<MessageListHandle | null>(null);
   const [exitConfirmationPending, setExitConfirmationPending] = useState(false);
   const terminalWidth = stdout.columns || 120;
   const terminalHeight = stdout.rows || 36;
-  const messageViewportHeight = Math.max(MIN_MESSAGE_VIEWPORT_ROWS, terminalHeight - BODY_CHROME_ROWS);
-  const hasDialog = dialog !== null;
-  const isReaderOpen = Boolean(readerMessage);
+  const activeDialog = dialogQueue[0] ?? null;
+  const hasDialog = activeDialog !== null;
+  const isReaderOpen = activeDialog?.type === "reader";
   const hasActiveOverlay = useIsOverlayActive();
+
+  const readerMessage = useMemo(() => {
+    if (activeDialog?.type !== "reader") {
+      return null;
+    }
+
+    return messages.find((message) => message.id === activeDialog.messageId) ?? null;
+  }, [activeDialog, messages]);
 
   useEffect(() => {
     props.controller.setExitHandler(() => exit());
@@ -97,14 +100,8 @@ export function AgentScreen(props: { controller: SessionController }) {
     setExitConfirmationPending(false);
   }, []);
 
-  const focusMessageByIndex = useCallback((nextIndex: number) => {
-    const currentState = store.getState();
-    const nextMessage = currentState.messages[nextIndex];
-    if (!nextMessage) {
-      return;
-    }
-
-    store.updateState((state) => setSelectedMessageId(state, nextMessage.id));
+  const syncTranscriptSticky = useCallback((sticky: boolean) => {
+    store.updateState((state) => setTranscriptSticky(state, sticky));
   }, [store]);
 
   const keybindingHandlers = useMemo(() => ({
@@ -125,53 +122,51 @@ export function AgentScreen(props: { controller: SessionController }) {
       }
     },
     "conversation:openDetail": () => {
-      if (selectedMessageId) {
-        props.controller.openMessageReader(selectedMessageId);
+      const detailTargetMessageId =
+        transcriptRef.current?.getDetailTargetMessageId() ??
+        selectedMessageId ??
+        messages.at(-1)?.id ??
+        null;
+
+      if (detailTargetMessageId) {
+        props.controller.openMessageReader(detailTargetMessageId);
       }
     },
     "conversation:previousMessage": () => {
-      if (draftInput.length === 0) {
-        focusMessageByIndex(Math.max(0, selectedMessageIndex - 1));
-      }
+      transcriptRef.current?.scrollBy(-1);
     },
     "conversation:nextMessage": () => {
-      if (draftInput.length === 0) {
-        focusMessageByIndex(Math.min(messagesLength - 1, selectedMessageIndex + 1));
-      }
+      transcriptRef.current?.scrollBy(1);
     },
-    "conversation:pageUp": () => {
-      if (draftInput.length === 0) {
-        focusMessageByIndex(Math.max(0, selectedMessageIndex - MESSAGE_SCROLL_PAGE));
-      }
+    "scroll:lineUp": () => {
+      transcriptRef.current?.scrollBy(-3);
     },
-    "conversation:pageDown": () => {
-      if (draftInput.length === 0) {
-        focusMessageByIndex(Math.min(messagesLength - 1, selectedMessageIndex + MESSAGE_SCROLL_PAGE));
-      }
+    "scroll:lineDown": () => {
+      transcriptRef.current?.scrollBy(3);
     },
-    "conversation:firstMessage": () => {
-      if (draftInput.length === 0) {
-        focusMessageByIndex(0);
-      }
+    "scroll:pageUp": () => {
+      transcriptRef.current?.scrollPage(-1);
     },
-    "conversation:lastMessage": () => {
-      if (draftInput.length === 0) {
-        focusMessageByIndex(Math.max(0, messagesLength - 1));
-      }
+    "scroll:pageDown": () => {
+      transcriptRef.current?.scrollPage(1);
+    },
+    "scroll:top": () => {
+      transcriptRef.current?.scrollToTop();
+    },
+    "scroll:bottom": () => {
+      transcriptRef.current?.scrollToBottom();
     }
   }), [
     connection.apiKey,
     draftInput,
-    focusMessageByIndex,
     isLoading,
-    messagesLength,
+    messages,
     props.controller,
-    selectedMessageId,
-    selectedMessageIndex
+    selectedMessageId
   ]);
 
   useKeybindings(keybindingHandlers, {
-    contexts: ["Conversation", "Global"],
+    contexts: ["Scroll", "Conversation", "Global"],
     isActive: !hasDialog && !hasActiveOverlay && !isReaderOpen
   });
 
@@ -179,16 +174,32 @@ export function AgentScreen(props: { controller: SessionController }) {
     const normalizedInput = input.toLowerCase();
     const isCtrlC = key.ctrl && normalizedInput === "c";
 
+    if (!hasDialog && !isReaderOpen) {
+      if (key.wheelUp) {
+        transcriptRef.current?.scrollBy(-3);
+        return;
+      }
+
+      if (key.wheelDown) {
+        transcriptRef.current?.scrollBy(3);
+        return;
+      }
+
+      if (key.ctrl && (input === "0" || key.raw === "\x00")) {
+        transcriptRef.current?.scrollToTop();
+        return;
+      }
+    }
+
     if (!isCtrlC && exitConfirmationPending) {
       resetExitConfirmation();
     }
 
-    if (key.escape && dialog?.type === "permission") {
+    if (key.escape && activeDialog?.type === "permission") {
       props.controller.respondToApproval("reject-once");
       return;
     }
 
-    // Only hijack Ctrl+C when there is no editable input to clear.
     if (isCtrlC && !clearOnCtrlCRef.current) {
       if (exitConfirmationPending) {
         resetExitConfirmation();
@@ -197,7 +208,6 @@ export function AgentScreen(props: { controller: SessionController }) {
       }
 
       setExitConfirmationPending(true);
-      return;
     }
   }, { isActive: !isReaderOpen });
 
@@ -226,16 +236,16 @@ export function AgentScreen(props: { controller: SessionController }) {
   const displayedStatusText = exitConfirmationPending ? EXIT_CONFIRMATION_STATUS : statusText;
 
   const overlay =
-    dialog?.type === "permission" ? (
+    activeDialog?.type === "permission" ? (
       <ApprovalDialog
-        request={dialog.request}
+        request={activeDialog.request}
         onDecision={(decision) => props.controller.respondToApproval(decision)}
       />
-    ) : dialog?.type === "settings" ? (
+    ) : activeDialog?.type === "settings" ? (
       <SettingsDialog
         visible
-        initialSection={dialog.section}
-        reason={dialog.reason}
+        initialSection={activeDialog.section}
+        reason={activeDialog.reason}
         connection={connection}
         connectionState={connectionState}
         settings={settings}
@@ -248,61 +258,68 @@ export function AgentScreen(props: { controller: SessionController }) {
       />
     ) : null;
 
-  if (readerMessage) {
-    return (
-      <MessageReaderScreen
-        message={readerMessage}
-        terminalWidth={terminalWidth}
-        terminalHeight={terminalHeight}
-        onClose={() => props.controller.closeMessageReader()}
-      />
-    );
-  }
+  const modal = readerMessage ? (
+    <MessageReaderScreen
+      message={readerMessage}
+      terminalWidth={terminalWidth}
+      terminalHeight={terminalHeight}
+      onClose={() => props.controller.closeMessageReader()}
+    />
+  ) : null;
+
+  const pill =
+    !transcriptSticky && unseenMessageCount > 0 ? (
+      <Text color={terminalUiTheme.colors.warning} wrap="truncate-end">
+        {unseenMessageCount} new message{unseenMessageCount === 1 ? "" : "s"} | {LAST_MESSAGE_SHORTCUT} jump to bottom | {PAGE_UP_SHORTCUT}/{PAGE_DOWN_SHORTCUT} scroll | {OPEN_DETAIL_SHORTCUT} reader
+      </Text>
+    ) : null;
 
   return (
-    <Layout
+    <FullscreenLayout
       header={
         <StatusBar
           connection={connection}
           settings={settings}
-          workspaceRoot={workspaceRoot}
           sessionApprovalMode={sessionApprovalMode}
           sessionAllowedKinds={sessionAllowedKinds}
           requestPatchCount={requestPatchCount}
           statusText={displayedStatusText}
         />
       }
-      body={
-        hasDialog
-          ? null
-          : (
-              <ConversationPane
-                terminalWidth={terminalWidth}
-                viewportHeight={messageViewportHeight}
-                autoFollow={autoFollowMessages}
-              />
-            )
+      transcript={
+        <ConversationPane
+          ref={transcriptRef}
+          terminalWidth={terminalWidth}
+          transcriptSticky={transcriptSticky}
+          unseenDividerMessageId={unseenDividerMessageId}
+          unseenMessageCount={unseenMessageCount}
+          onStickyChange={syncTranscriptSticky}
+        />
       }
-      footer={
-        hasDialog
-          ? null
-          : (
-              <PromptInput
-                value={draftInput}
-                viewportWidth={terminalWidth}
-                disabled={isLoading}
-                disabledReason={isLoading ? "Input locked while Alyce is working. Press ESC to interrupt." : undefined}
-                sublineText={`${connection.model} · ${workspaceRoot}`}
-                onChange={(value) => props.controller.setDraftInput(value)}
-                onCtrlCCaptureChange={setCtrlCCapture}
-                onSubmit={async (value) => {
-                  resetExitConfirmation();
-                  await props.controller.submit(value);
-                }}
-              />
-            )
-      }
+      pill={pill}
       overlay={overlay}
+      modal={modal}
+      bottom={
+        <PromptInput
+          value={draftInput}
+          viewportWidth={terminalWidth}
+          disabled={isLoading || hasDialog}
+          disabledReason={
+            hasDialog
+              ? `${getActiveDialog(store.getState())?.type === "permission" ? "Resolve the permission request above" : "Resolve the active panel above"} before typing.`
+              : isLoading
+                ? "Input locked while Alyce is working. Press ESC to interrupt."
+                : undefined
+          }
+          sublineText={`${connection.model} | ${workspaceRoot}`}
+          onChange={(value) => props.controller.setDraftInput(value)}
+          onCtrlCCaptureChange={setCtrlCCapture}
+          onSubmit={async (value) => {
+            resetExitConfirmation();
+            await props.controller.submit(value);
+          }}
+        />
+      }
     />
   );
 }

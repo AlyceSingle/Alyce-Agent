@@ -17,6 +17,8 @@ type BaseInkKey = {
   backspace: boolean;
   delete: boolean;
   meta: boolean;
+  wheelUp: boolean;
+  wheelDown: boolean;
 };
 
 export type TerminalKey = BaseInkKey & {
@@ -62,7 +64,7 @@ export function useTerminalInput(inputHandler: InputHandler, options: Options = 
         rightArrow: keypress.name === "right",
         pageDown: keypress.name === "pagedown",
         pageUp: keypress.name === "pageup",
-        return: keypress.name === "return",
+        return: keypress.name === "return" || keypress.name === "enter",
         escape: keypress.name === "escape",
         ctrl: keypress.ctrl,
         shift: keypress.shift,
@@ -73,6 +75,8 @@ export function useTerminalInput(inputHandler: InputHandler, options: Options = 
         home: keypress.name === "home",
         end: keypress.name === "end",
         space: keypress.name === "space",
+        wheelUp: keypress.name === "wheelup",
+        wheelDown: keypress.name === "wheeldown",
         name: keypress.name,
         raw: keypress.raw,
         sequence: keypress.sequence

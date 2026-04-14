@@ -4,6 +4,7 @@ import { useRegisterOverlay } from "../context/overlayContext.js";
 import { Box, Text, useInput } from "../runtime/ink.js";
 import { terminalUiTheme } from "../theme/theme.js";
 import type { PermissionDecision } from "../state/types.js";
+import { Pane } from "./Pane.js";
 
 const APPROVAL_OPTIONS: Array<{
   id: PermissionDecision;
@@ -82,17 +83,12 @@ export function ApprovalDialog(props: {
   }
 
   return (
-    <Box
-      borderStyle="round"
-      borderColor={terminalUiTheme.colors.warning}
-      paddingX={1}
-      flexDirection="column"
-      width="100%"
+    <Pane
+      title={`Permission Request · ${props.request.toolName}`}
+      subtitle={props.request.title}
+      accentColor={terminalUiTheme.colors.warning}
+      footer="↑/↓ choose | Enter confirm | Esc reject"
     >
-      <Text color={terminalUiTheme.colors.warning} wrap="truncate-end">
-        Permission Request | {props.request.toolName}
-      </Text>
-      <Text wrap="truncate-end">{props.request.title}</Text>
       <Text color={terminalUiTheme.colors.muted} wrap="truncate-end">
         {props.request.summary}
       </Text>
@@ -113,15 +109,12 @@ export function ApprovalDialog(props: {
               >
                 {isSelected ? ">" : " "}
                 {" "}
-                {index + 1}. {option.label} | {option.description}
+                [{index + 1}] {option.label} | {option.description}
               </Text>
             </Box>
           );
         })}
       </Box>
-      <Text color={terminalUiTheme.colors.subtle} wrap="truncate-end">
-        Enter confirm | Esc reject
-      </Text>
-    </Box>
+    </Pane>
   );
 }

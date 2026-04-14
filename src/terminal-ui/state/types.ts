@@ -53,10 +53,11 @@ export type PermissionDecision =
   | "auto-approve-session";
 
 export type ActiveDialog =
-  | { type: "permission"; request: ToolApprovalRequest }
-  | { type: "settings"; section: SettingsSection; reason?: string };
+  | { type: "permission"; layer: "overlay"; request: ToolApprovalRequest }
+  | { type: "settings"; layer: "overlay"; section: SettingsSection; reason?: string }
+  | { type: "reader"; layer: "modal"; messageId: string };
 
-export type TerminalUiOverlayId = ActiveDialog["type"];
+export type TerminalUiOverlayId = "permission" | "settings";
 
 export interface TerminalUiState {
   workspaceRoot: string;
@@ -68,12 +69,13 @@ export interface TerminalUiState {
   draftInput: string;
   isLoading: boolean;
   statusText: string;
-  dialog: ActiveDialog | null;
-  readerMessageId: string | null;
+  dialogQueue: ActiveDialog[];
   activeOverlays: TerminalUiOverlayId[];
   messages: TerminalUiMessage[];
   selectedMessageId: string | null;
-  autoFollowMessages: boolean;
+  transcriptSticky: boolean;
+  unseenDividerMessageId: string | null;
+  unseenMessageCount: number;
   sessionApprovalMode: ApprovalMode;
   sessionAllowedKinds: ToolPermissionKind[];
 }

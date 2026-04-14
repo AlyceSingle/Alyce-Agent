@@ -17,6 +17,7 @@ import {
   appendMessage,
   closeMessageReader,
   closeDialog,
+  getActiveDialog,
   openMessageReader,
   openPermissionDialog,
   openSettingsDialog,
@@ -27,7 +28,8 @@ import {
   setSessionAllowedKinds,
   setSessionApprovalMode,
   setSessionSettingsState,
-  setStatusText
+  setStatusText,
+  setTranscriptSticky
 } from "../state/actions.js";
 import type { TerminalUiStore } from "../state/store.js";
 import type { PermissionDecision, SettingsSection, TerminalUiMessage } from "../state/types.js";
@@ -128,7 +130,10 @@ export function createSessionController(
     runtime.messages.splice(turn.runtimeMessageCount);
     store.updateState((state) =>
       setDraftInput(
-        replaceMessages(setStatusText(state, "Idle"), state.messages.slice(0, turn.uiMessageCount)),
+        setTranscriptSticky(
+          replaceMessages(setStatusText(state, "Idle"), state.messages.slice(0, turn.uiMessageCount)),
+          true
+        ),
         turn.input
       )
     );
@@ -519,7 +524,7 @@ export function createSessionController(
       store.updateState((state) => closeMessageReader(state));
     },
     closeDialog: () => {
-      const activeDialog = store.getState().dialog;
+      const activeDialog = getActiveDialog(store.getState());
       if (activeDialog?.type === "permission") {
         return;
       }

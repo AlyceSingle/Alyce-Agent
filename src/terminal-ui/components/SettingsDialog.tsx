@@ -12,6 +12,7 @@ import { Box, Text, useInput } from "../runtime/ink.js";
 import type { SettingsSection } from "../state/types.js";
 import { terminalUiTheme } from "../theme/theme.js";
 import { normalizeInlineValue } from "../utils/text.js";
+import { Pane } from "./Pane.js";
 
 type EditableConfig = ConnectionConfig & SessionSettings;
 
@@ -345,38 +346,16 @@ export function SettingsDialog(props: {
       : sourceInfo?.source === "env" || sourceInfo?.source === "cli";
 
   return (
-    <Box
-      borderStyle="round"
-      borderColor={terminalUiTheme.colors.borderActive}
-      paddingX={1}
-      flexDirection="column"
-      width="100%"
+    <Pane
+      title="Settings"
+      subtitle={props.reason ?? `${section === "connection" ? "Connection" : "Session"} settings`}
+      accentColor={terminalUiTheme.colors.chrome}
+      footer={
+        section === "connection"
+          ? "←/→ switch tab | ↑/↓ move | Enter edit | P target | S save | Esc close"
+          : "←/→ switch tab | ↑/↓ move | Enter edit | S save | Esc close"
+      }
     >
-      <Text color={terminalUiTheme.colors.chrome}>Settings</Text>
-      {props.reason ? (
-        <Text color={terminalUiTheme.colors.warning} wrap="truncate-end">
-          {props.reason}
-        </Text>
-      ) : null}
-      <Text color={terminalUiTheme.colors.muted} wrap="truncate-end">
-        {section === "connection" ? "Connection" : "Session"}
-        {" | "}
-        Left/Right switch tab
-        {section === "connection"
-          ? (
-              <>
-                {" | "}
-                P target
-              </>
-            )
-          : null}
-        {" | "}
-        Enter edit
-        {" | "}
-        S save
-        {" | "}
-        Esc close
-      </Text>
       {section === "connection" ? (
         <Text color={terminalUiTheme.colors.subtle} wrap="truncate-end">
           Save scope: {getConnectionSaveTargetLabel(connectionSaveTarget)}
@@ -457,9 +436,9 @@ export function SettingsDialog(props: {
                 ? "Text fields accept \\n for line breaks. Press P to switch the connection save scope."
                 : currentField.type === "text"
                   ? "Text fields accept \\n for line breaks."
-                : currentField.type === "number"
-                  ? "Number fields are persisted as positive integers."
-                  : "Toggle or cycle this field with Enter."}
+                  : currentField.type === "number"
+                    ? "Number fields are persisted as positive integers."
+                    : "Toggle or cycle this field with Enter."}
             </Text>
           )}
         </Box>
@@ -474,7 +453,7 @@ export function SettingsDialog(props: {
           Saving...
         </Text>
       ) : null}
-    </Box>
+    </Pane>
   );
 
   function cycleSelectField(field: FieldDefinition, delta: number) {

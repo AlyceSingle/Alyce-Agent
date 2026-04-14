@@ -1,4 +1,4 @@
-export type KeybindingContextName = "Global" | "Conversation";
+export type KeybindingContextName = "Global" | "Conversation" | "Scroll";
 
 export type TerminalUiAction =
   | "app:quit"
@@ -10,7 +10,13 @@ export type TerminalUiAction =
   | "conversation:pageUp"
   | "conversation:pageDown"
   | "conversation:firstMessage"
-  | "conversation:lastMessage";
+  | "conversation:lastMessage"
+  | "scroll:lineUp"
+  | "scroll:lineDown"
+  | "scroll:pageUp"
+  | "scroll:pageDown"
+  | "scroll:top"
+  | "scroll:bottom";
 
 export interface ParsedKeystroke {
   key: string;
