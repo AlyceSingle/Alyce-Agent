@@ -31,9 +31,11 @@ export function StatusBar(props: {
     props.requestPatchCount > 0
       ? ` | Request patches ${props.requestPatchCount}`
       : "";
+  const inlineStatusText =
+    props.statusText.trim().length > 0 ? ` | ${props.statusText}` : "";
 
   return (
-    <Box flexDirection="column" width="100%">
+    <Box width="100%">
       <Text color={terminalUiTheme.colors.muted} wrap="truncate-end">
         Alyce
         {" | "}
@@ -47,9 +49,7 @@ export function StatusBar(props: {
         Model {props.connection.model}
         {" | "}
         Approval {formatApprovalMode(props.sessionApprovalMode, props.sessionAllowedKinds)}
-      </Text>
-      <Text color={terminalUiTheme.colors.subtle} wrap="truncate-end">
-        {props.statusText}
+        <Text color={terminalUiTheme.colors.subtle}>{inlineStatusText}</Text>
       </Text>
     </Box>
   );

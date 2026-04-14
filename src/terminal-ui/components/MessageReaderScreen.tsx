@@ -173,7 +173,16 @@ export function MessageReaderScreen(props: {
               : "SYSTEM";
 
   return (
-    <Box flexDirection="column" flexGrow={1} height="100%" overflow="hidden" paddingX={1} width="100%">
+    <Box
+      flexDirection="column"
+      flexGrow={1}
+      flexShrink={1}
+      minHeight={0}
+      height="100%"
+      overflow="hidden"
+      paddingX={1}
+      width="100%"
+    >
       <Text color={terminalUiTheme.colors.chrome} wrap="truncate-end">
         [{badge}] {props.message.title}
       </Text>
@@ -184,8 +193,24 @@ export function MessageReaderScreen(props: {
         Reader mode | Esc / q / Ctrl+C close
       </Text>
       <Divider />
-      <Box flexDirection="column" flexGrow={1} overflow="hidden" paddingX={1} width="100%">
-        <ScrollBox ref={scrollRef} flexDirection="column" flexGrow={1} width="100%">
+      <Box
+        flexDirection="column"
+        flexGrow={1}
+        flexShrink={1}
+        minHeight={0}
+        overflow="hidden"
+        paddingX={1}
+        width="100%"
+      >
+        <ScrollBox
+          ref={scrollRef}
+          flexDirection="column"
+          flexGrow={1}
+          flexShrink={1}
+          minHeight={0}
+          height="100%"
+          width="100%"
+        >
           {topSpacerHeight > 0 ? <Box height={topSpacerHeight} /> : null}
           {visibleLines.map((line, index) => (
             <Text

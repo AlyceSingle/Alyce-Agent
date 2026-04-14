@@ -243,7 +243,15 @@ const MessageListImpl = forwardRef<MessageListHandle, {
   }, [entryOffsets, props.onStickyChange, renderedEntries]);
 
   return (
-    <Box flexDirection="column" flexGrow={1} width="100%" overflow="hidden">
+    <Box
+      flexDirection="column"
+      flexGrow={1}
+      flexShrink={1}
+      minHeight={0}
+      height="100%"
+      width="100%"
+      overflow="hidden"
+    >
       <Text
         color={props.transcriptSticky ? terminalUiTheme.colors.subtle : terminalUiTheme.colors.warning}
         wrap="truncate-end"
@@ -252,11 +260,22 @@ const MessageListImpl = forwardRef<MessageListHandle, {
         {" | "}
         {props.messages.length} {pluralizeMessages(props.messages.length)}
       </Text>
-      <Box flexDirection="column" flexGrow={1} overflow="hidden" paddingX={1} width="100%">
+      <Box
+        flexDirection="column"
+        flexGrow={1}
+        flexShrink={1}
+        minHeight={0}
+        overflow="hidden"
+        paddingX={1}
+        width="100%"
+      >
         <ScrollBox
           ref={scrollRef}
           flexDirection="column"
           flexGrow={1}
+          flexShrink={1}
+          minHeight={0}
+          height="100%"
           stickyScroll={props.transcriptSticky}
           width="100%"
         >

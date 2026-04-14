@@ -19,12 +19,27 @@ export function FullscreenLayout(props: {
       ) : null}
       <Divider />
       {props.modal !== undefined && props.modal !== null ? (
-        <Box flexDirection="column" flexGrow={1} overflow="hidden" paddingX={1} width="100%">
+        <Box
+          flexDirection="column"
+          flexGrow={1}
+          flexShrink={1}
+          minHeight={0}
+          overflow="hidden"
+          paddingX={1}
+          width="100%"
+        >
           {props.modal}
         </Box>
       ) : (
         <>
-          <Box flexDirection="column" flexGrow={1} overflow="hidden" width="100%">
+          <Box
+            flexDirection="column"
+            flexGrow={1}
+            flexShrink={1}
+            minHeight={0}
+            overflow="hidden"
+            width="100%"
+          >
             {props.transcript}
           </Box>
           {props.pill !== undefined && props.pill !== null ? (
