@@ -4,6 +4,7 @@ import { useTerminalInput } from "../runtime/input.js";
 import type { TerminalUiMessage } from "../state/types.js";
 import { terminalUiTheme } from "../theme/theme.js";
 import { wrapText } from "../utils/text.js";
+import { Divider } from "./Divider.js";
 
 const OVERSCAN_LINES = 3;
 const MIN_VIEWPORT_ROWS = 6;
@@ -120,6 +121,16 @@ export function MessageReaderScreen(props: {
       return;
     }
 
+    if (key.wheelUp) {
+      handle.scrollBy(-3);
+      return;
+    }
+
+    if (key.wheelDown) {
+      handle.scrollBy(3);
+      return;
+    }
+
     if (key.pageUp) {
       handle.scrollBy(-pageStep);
       return;
@@ -162,50 +173,43 @@ export function MessageReaderScreen(props: {
               : "SYSTEM";
 
   return (
-    <Box flexDirection="column" flexGrow={1} height="100%" paddingX={1} width="100%">
-      <Box
-        borderStyle="round"
-        borderColor={terminalUiTheme.colors.borderActive}
-        paddingX={1}
-        flexDirection="column"
-        flexGrow={1}
-        width="100%"
-      >
-        <Text color={terminalUiTheme.colors.chrome} wrap="truncate-end">
-          [{badge}] {props.message.title}
-        </Text>
-        <Text color={terminalUiTheme.colors.muted} wrap="truncate-end">
-          {metadataText}
-        </Text>
-        <Text color={terminalUiTheme.colors.subtle} wrap="truncate-end">
-          Reader mode | Esc / q / Ctrl+C close
-        </Text>
-        <Box marginTop={1} flexDirection="column" flexGrow={1} width="100%">
-          <ScrollBox ref={scrollRef} flexDirection="column" flexGrow={1} width="100%">
-            {topSpacerHeight > 0 ? <Box height={topSpacerHeight} /> : null}
-            {visibleLines.map((line, index) => (
-              <Text
-                key={`${props.message.id}-${visibleStart + index}`}
-                color={line === "Input" || line === "Output" ? terminalUiTheme.colors.subtle : undefined}
-              >
-                {line}
-              </Text>
-            ))}
-            {bottomSpacerHeight > 0 ? <Box height={bottomSpacerHeight} /> : null}
-          </ScrollBox>
-        </Box>
-        <Text color={terminalUiTheme.colors.subtle} wrap="truncate-end">
-          Lines {lines.length === 0 ? 0 : scrollSnapshot.top + 1}-{lastVisibleLine} of {lines.length}
-          {" | "}
-          Up/Down scroll
-          {" | "}
-          PgUp/PgDn jump
-          {" | "}
-          Home/End
-          {" | "}
-          Ctrl+0 top
-        </Text>
+    <Box flexDirection="column" flexGrow={1} height="100%" overflow="hidden" paddingX={1} width="100%">
+      <Text color={terminalUiTheme.colors.chrome} wrap="truncate-end">
+        [{badge}] {props.message.title}
+      </Text>
+      <Text color={terminalUiTheme.colors.muted} wrap="truncate-end">
+        {metadataText}
+      </Text>
+      <Text color={terminalUiTheme.colors.subtle} wrap="truncate-end">
+        Reader mode | Esc / q / Ctrl+C close
+      </Text>
+      <Divider />
+      <Box flexDirection="column" flexGrow={1} overflow="hidden" paddingX={1} width="100%">
+        <ScrollBox ref={scrollRef} flexDirection="column" flexGrow={1} width="100%">
+          {topSpacerHeight > 0 ? <Box height={topSpacerHeight} /> : null}
+          {visibleLines.map((line, index) => (
+            <Text
+              key={`${props.message.id}-${visibleStart + index}`}
+              color={line === "Input" || line === "Output" ? terminalUiTheme.colors.subtle : undefined}
+            >
+              {line}
+            </Text>
+          ))}
+          {bottomSpacerHeight > 0 ? <Box height={bottomSpacerHeight} /> : null}
+        </ScrollBox>
       </Box>
+      <Divider />
+      <Text color={terminalUiTheme.colors.subtle} wrap="truncate-end">
+        Lines {lines.length === 0 ? 0 : scrollSnapshot.top + 1}-{lastVisibleLine} of {lines.length}
+        {" | "}
+        Up/Down scroll
+        {" | "}
+        PgUp/PgDn jump
+        {" | "}
+        Home/End
+        {" | "}
+        Ctrl+0 top
+      </Text>
     </Box>
   );
 }

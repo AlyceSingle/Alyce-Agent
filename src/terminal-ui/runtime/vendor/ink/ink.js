@@ -97,6 +97,11 @@ export default class Ink {
         if (!this.options.stdout.isTTY || !this.parkedCursor) {
             return;
         }
+        if (this.parkedCursor.mode === 'absolute') {
+            this.options.stdout.write(ansiEscapes.cursorTo(0, Math.max(0, this.parkedCursor.outputHeight - 1)));
+            this.parkedCursor = null;
+            return;
+        }
         const down = Math.max(0, this.parkedCursor.outputHeight - this.parkedCursor.targetY);
         this.options.stdout.write((down > 0 ? ansiEscapes.cursorDown(down) : '') + ansiEscapes.cursorLeft);
         this.parkedCursor = null;
@@ -156,11 +161,17 @@ export default class Ink {
         if (hasStaticOutput) {
             this.fullStaticOutput += staticOutput;
         }
-        if (outputHeight >= this.options.stdout.rows) {
+        if (outputHeight > this.options.stdout.rows) {
             this.parkedCursor = null;
             this.options.stdout.write(ansiEscapes.clearTerminal + this.fullStaticOutput + output);
             this.lastOutput = output;
             this.cursorDeclaration = null;
+            return;
+        }
+        if (outputHeight === this.options.stdout.rows) {
+            this.options.stdout.write(ansiEscapes.clearTerminal + this.fullStaticOutput + output);
+            this.lastOutput = output;
+            this.parkCursor(outputHeight, 'absolute');
             return;
         }
         // To ensure static output is cleanly rendered before main output, clear main output first
@@ -274,26 +285,43 @@ export default class Ink {
         }
         this.cursorDeclaration = null;
     };
-    parkCursor(outputHeight) {
+    resolveCursorTarget(outputHeight) {
         this.parkedCursor = null;
         if (!this.options.stdout.isTTY || !this.cursorDeclaration || outputHeight <= 0) {
-            return;
+            return null;
         }
         const node = this.cursorDeclaration.node;
         const baseX = typeof node.internal_absoluteX === 'number' ? node.internal_absoluteX : undefined;
         const baseY = typeof node.internal_absoluteY === 'number' ? node.internal_absoluteY : undefined;
         if (typeof baseX !== 'number' || typeof baseY !== 'number') {
-            return;
+            return null;
         }
         const targetX = Math.max(0, Math.min(baseX + this.cursorDeclaration.relativeX, Math.max(0, (this.options.stdout.columns || 1) - 1)));
         const targetY = baseY + this.cursorDeclaration.relativeY;
         if (!Number.isFinite(targetY) || targetY < 0 || targetY >= outputHeight) {
+            return null;
+        }
+        return { targetX, targetY };
+    }
+    parkCursor(outputHeight, mode = 'relative') {
+        const target = this.resolveCursorTarget(outputHeight);
+        if (!target) {
             return;
         }
-        this.options.stdout.write(ansiEscapes.cursorUp(outputHeight - targetY) + ansiEscapes.cursorForward(targetX));
+        if (mode === 'absolute') {
+            this.options.stdout.write(ansiEscapes.cursorTo(target.targetX, target.targetY));
+            this.parkedCursor = {
+                outputHeight,
+                targetY: target.targetY,
+                mode: 'absolute',
+            };
+            return;
+        }
+        this.options.stdout.write(ansiEscapes.cursorUp(outputHeight - target.targetY) + ansiEscapes.cursorForward(target.targetX));
         this.parkedCursor = {
             outputHeight,
-            targetY,
+            targetY: target.targetY,
+            mode: 'relative',
         };
     }
     patchConsole() {

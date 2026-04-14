@@ -1,5 +1,5 @@
 import { useEffect } from 'react';
-import parseKeypress, { nonAlphanumericKeys } from '../parse-keypress.js';
+import { parseKeypress, nonAlphanumericKeys } from '../../../parseKeypress.js';
 import reconciler from '../reconciler.js';
 import useStdin from './use-stdin.js';
 /**
@@ -58,6 +58,11 @@ const useInput = (inputHandler, options = {}) => {
                 tab: keypress.name === 'tab',
                 backspace: keypress.name === 'backspace',
                 delete: keypress.name === 'delete',
+                home: keypress.name === 'home',
+                end: keypress.name === 'end',
+                space: keypress.name === 'space',
+                wheelUp: keypress.name === 'wheelup',
+                wheelDown: keypress.name === 'wheeldown',
                 // `parseKeypress` parses \u001B\u001B[A (meta + up arrow) as meta = false
                 // but with option = true, so we need to take this into account here
                 // to avoid breaking changes in Ink.

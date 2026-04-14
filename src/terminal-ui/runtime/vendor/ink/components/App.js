@@ -9,9 +9,30 @@ import StderrContext from './StderrContext.js';
 import FocusContext from './FocusContext.js';
 import ErrorOverview from './ErrorOverview.js';
 import CursorDeclarationContext from '../../../CursorDeclarationContext.js';
+import { INITIAL_KEY_PARSE_STATE, parseMultipleKeypresses } from '../../../parseKeypress.js';
 const tab = '\t';
 const shiftTab = '\u001B[Z';
 const escape = '\u001B';
+const ENABLE_BRACKETED_PASTE = '\u001B[?2004h';
+const DISABLE_BRACKETED_PASTE = '\u001B[?2004l';
+const ENABLE_KITTY_KEYBOARD = '\u001B[>1u';
+const DISABLE_KITTY_KEYBOARD = '\u001B[<u';
+const ENABLE_MODIFY_OTHER_KEYS = '\u001B[>4;2m';
+const DISABLE_MODIFY_OTHER_KEYS = '\u001B[>4m';
+const supportsExtendedKeys = () => {
+    const termProgram = process.env.TERM_PROGRAM;
+    const term = process.env.TERM;
+    if (process.env.TMUX || process.env.WT_SESSION) {
+        return true;
+    }
+    if (termProgram && ['iTerm.app', 'WezTerm', 'ghostty', 'vscode'].includes(termProgram)) {
+        return true;
+    }
+    if ((term === null || term === void 0 ? void 0 : term.includes('kitty')) || process.env.KITTY_WINDOW_ID) {
+        return true;
+    }
+    return term === 'xterm-ghostty';
+};
 // Root component for all Ink apps
 // It renders stdin and stdout contexts, so that children can access them if needed
 // It also handles Ctrl+C exiting and cursor visibility
@@ -31,6 +52,7 @@ export default class App extends PureComponent {
     rawModeEnabledCount = 0;
     // eslint-disable-next-line @typescript-eslint/naming-convention
     internal_eventEmitter = new EventEmitter();
+    keyParseState = INITIAL_KEY_PARSE_STATE;
     // Determines if TTY is supported on the provided stdin
     isRawModeSupported() {
         return this.props.stdin.isTTY;
@@ -120,12 +142,20 @@ export default class App extends PureComponent {
                 stdin.ref();
                 stdin.setRawMode(true);
                 stdin.addListener('readable', this.handleReadable);
+                this.props.stdout.write(ENABLE_BRACKETED_PASTE);
+                if (supportsExtendedKeys()) {
+                    this.props.stdout.write(ENABLE_KITTY_KEYBOARD);
+                    this.props.stdout.write(ENABLE_MODIFY_OTHER_KEYS);
+                }
             }
             this.rawModeEnabledCount++;
             return;
         }
         // Disable raw mode only when no components left that are using it
         if (--this.rawModeEnabledCount === 0) {
+            this.props.stdout.write(DISABLE_MODIFY_OTHER_KEYS);
+            this.props.stdout.write(DISABLE_KITTY_KEYBOARD);
+            this.props.stdout.write(DISABLE_BRACKETED_PASTE);
             stdin.setRawMode(false);
             stdin.removeListener('readable', this.handleReadable);
             stdin.unref();
@@ -135,8 +165,12 @@ export default class App extends PureComponent {
         let chunk;
         // eslint-disable-next-line @typescript-eslint/ban-types
         while ((chunk = this.props.stdin.read()) !== null) {
-            this.handleInput(chunk);
-            this.internal_eventEmitter.emit('input', chunk);
+            const [tokens, nextState] = parseMultipleKeypresses(this.keyParseState, chunk);
+            this.keyParseState = nextState;
+            for (const token of tokens) {
+                this.handleInput(token);
+                this.internal_eventEmitter.emit('input', token);
+            }
         }
     };
     handleInput = (input) => {

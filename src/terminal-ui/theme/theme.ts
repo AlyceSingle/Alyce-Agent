@@ -2,6 +2,7 @@ export const terminalUiTheme = {
   colors: {
     border: "#475569",
     borderActive: "#f59e0b",
+    divider: "#b45309",
     chrome: "#f8fafc",
     muted: "#cbd5e1",
     subtle: "#94a3b8",
@@ -9,6 +10,7 @@ export const terminalUiTheme = {
     success: "#4ade80",
     warning: "#f59e0b",
     danger: "#f87171",
+    accent: "#fb923c",
     user: "#fb923c",
     assistant: "#4ade80",
     tool: "#38bdf8",

@@ -49,6 +49,12 @@ export function getKeyName(input: string, key: TerminalKey): string | null {
   if (key.end) {
     return "end";
   }
+  if (key.wheelUp) {
+    return "wheelup";
+  }
+  if (key.wheelDown) {
+    return "wheeldown";
+  }
   if (key.space) {
     return "space";
   }

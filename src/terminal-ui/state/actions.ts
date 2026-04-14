@@ -12,7 +12,6 @@ import type {
   TerminalUiState
 } from "./types.js";
 
-// 这里保持纯函数式状态变换，便于 UI 层按需组合更新而不引入副作用。
 export function createInitialTerminalUiState(options: {
   connectionState: ConnectionConfigState;
   settingsState: SessionSettingsState;
@@ -29,12 +28,13 @@ export function createInitialTerminalUiState(options: {
     draftInput: "",
     isLoading: false,
     statusText: options.connectionState.effective.apiKey ? "Idle" : "Setup required",
-    dialog: null,
-    readerMessageId: null,
+    dialogQueue: [],
     activeOverlays: [],
     messages: [],
     selectedMessageId: null,
-    autoFollowMessages: true,
+    transcriptSticky: true,
+    unseenDividerMessageId: null,
+    unseenMessageCount: 0,
     sessionApprovalMode: options.settingsState.effective.approvalMode,
     sessionAllowedKinds: []
   };
@@ -42,13 +42,22 @@ export function createInitialTerminalUiState(options: {
 
 export function appendMessage(state: TerminalUiState, message: TerminalUiMessage): TerminalUiState {
   const nextMessages = [...state.messages, message];
-  const shouldFollow = state.autoFollowMessages || state.selectedMessageId === null;
+
+  if (state.transcriptSticky) {
+    return {
+      ...state,
+      messages: nextMessages,
+      selectedMessageId: message.id,
+      unseenDividerMessageId: null,
+      unseenMessageCount: 0
+    };
+  }
 
   return {
     ...state,
     messages: nextMessages,
-    selectedMessageId: shouldFollow ? message.id : state.selectedMessageId,
-    autoFollowMessages: shouldFollow
+    unseenDividerMessageId: state.unseenDividerMessageId ?? message.id,
+    unseenMessageCount: state.unseenMessageCount + 1
   };
 }
 
@@ -60,7 +69,9 @@ export function replaceMessages(
     ...state,
     messages,
     selectedMessageId: messages.at(-1)?.id ?? null,
-    autoFollowMessages: true
+    transcriptSticky: true,
+    unseenDividerMessageId: null,
+    unseenMessageCount: 0
   };
 }
 
@@ -97,17 +108,38 @@ export function setStatusText(state: TerminalUiState, statusText: string): Termi
   };
 }
 
+export function getActiveDialog(state: TerminalUiState): ActiveDialog | null {
+  return state.dialogQueue[0] ?? null;
+}
+
+function pushDialog(state: TerminalUiState, dialog: ActiveDialog): TerminalUiState {
+  const firstModalIndex =
+    dialog.layer === "overlay"
+      ? state.dialogQueue.findIndex((currentDialog) => currentDialog.layer === "modal")
+      : -1;
+
+  return {
+    ...state,
+    dialogQueue:
+      firstModalIndex === -1
+        ? [...state.dialogQueue, dialog]
+        : [
+            ...state.dialogQueue.slice(0, firstModalIndex),
+            dialog,
+            ...state.dialogQueue.slice(firstModalIndex)
+          ]
+  };
+}
+
 export function openPermissionDialog(
   state: TerminalUiState,
   request: ToolApprovalRequest
 ): TerminalUiState {
-  return {
-    ...state,
-    dialog: {
-      type: "permission",
-      request
-    }
-  };
+  return pushDialog(state, {
+    type: "permission",
+    layer: "overlay",
+    request
+  });
 }
 
 export function openSettingsDialog(
@@ -115,50 +147,48 @@ export function openSettingsDialog(
   section: SettingsSection,
   reason?: string
 ): TerminalUiState {
-  return {
-    ...state,
-    dialog: {
-      type: "settings",
-      section,
-      reason
-    }
-  };
+  return pushDialog(state, {
+    type: "settings",
+    layer: "overlay",
+    section,
+    reason
+  });
 }
 
 export function openMessageReader(
   state: TerminalUiState,
   messageId: string
 ): TerminalUiState {
-  return {
-    ...state,
-    readerMessageId: messageId
-  };
+  const activeDialog = getActiveDialog(state);
+  if (activeDialog?.type === "reader" && activeDialog.messageId === messageId) {
+    return state;
+  }
+
+  return pushDialog(state, {
+    type: "reader",
+    layer: "modal",
+    messageId
+  });
 }
 
 export function closeMessageReader(state: TerminalUiState): TerminalUiState {
-  if (!state.readerMessageId) {
+  const activeDialog = getActiveDialog(state);
+  if (activeDialog?.type !== "reader") {
+    return state;
+  }
+
+  return closeDialog(state);
+}
+
+export function closeDialog(state: TerminalUiState): TerminalUiState {
+  if (state.dialogQueue.length === 0) {
     return state;
   }
 
   return {
     ...state,
-    readerMessageId: null
-  };
-}
-
-export function closeDialog(state: TerminalUiState): TerminalUiState {
-  return {
-    ...state,
-    dialog: null,
+    dialogQueue: state.dialogQueue.slice(1),
     activeOverlays: []
-  };
-}
-
-export function setDialog(state: TerminalUiState, dialog: ActiveDialog | null): TerminalUiState {
-  return {
-    ...state,
-    dialog,
-    activeOverlays: dialog ? state.activeOverlays : []
   };
 }
 
@@ -188,12 +218,13 @@ export function setSelectedMessageId(
   state: TerminalUiState,
   selectedMessageId: string | null
 ): TerminalUiState {
-  const lastMessageId = state.messages.at(-1)?.id ?? null;
+  if (state.selectedMessageId === selectedMessageId) {
+    return state;
+  }
 
   return {
     ...state,
-    selectedMessageId,
-    autoFollowMessages: selectedMessageId !== null && selectedMessageId === lastMessageId
+    selectedMessageId
   };
 }
 
@@ -202,7 +233,6 @@ export function selectRelativeMessage(state: TerminalUiState, delta: number): Te
     return state;
   }
 
-  // 找不到当前选中项时回退到首条消息，避免新增消息后出现“空选中”状态。
   const currentIndex = Math.max(
     0,
     state.messages.findIndex((message) => message.id === state.selectedMessageId)
@@ -211,8 +241,28 @@ export function selectRelativeMessage(state: TerminalUiState, delta: number): Te
 
   return {
     ...state,
-    selectedMessageId: state.messages[nextIndex]?.id ?? state.selectedMessageId,
-    autoFollowMessages: nextIndex === state.messages.length - 1
+    selectedMessageId: state.messages[nextIndex]?.id ?? state.selectedMessageId
+  };
+}
+
+export function setTranscriptSticky(state: TerminalUiState, transcriptSticky: boolean): TerminalUiState {
+  if (state.transcriptSticky === transcriptSticky) {
+    return state;
+  }
+
+  if (!transcriptSticky) {
+    return {
+      ...state,
+      transcriptSticky: false
+    };
+  }
+
+  return {
+    ...state,
+    transcriptSticky: true,
+    unseenDividerMessageId: null,
+    unseenMessageCount: 0,
+    selectedMessageId: state.messages.at(-1)?.id ?? state.selectedMessageId
   };
 }
 
