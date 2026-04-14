@@ -31,11 +31,20 @@ export function createTerminalUiStore(initialState: TerminalUiState): TerminalUi
       };
     },
     setState: (nextState) => {
+      if (Object.is(state, nextState)) {
+        return;
+      }
+
       state = nextState;
       notify();
     },
     updateState: (updater) => {
-      state = updater(state);
+      const nextState = updater(state);
+      if (Object.is(state, nextState)) {
+        return;
+      }
+
+      state = nextState;
       notify();
     }
   };

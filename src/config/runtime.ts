@@ -1,4 +1,5 @@
 import { promises as fs, readFileSync } from "node:fs";
+import os from "node:os";
 import path from "node:path";
 import { z } from "zod";
 import {
@@ -45,17 +46,44 @@ export interface SessionSettings extends PromptOverrideConfig {
   autoSummaryEnabled: boolean;
 }
 
+export type ConnectionConfigSource = "default" | "project" | "env" | "cli";
+export type SessionSettingsSource = "default" | "project" | "user" | "env" | "cli";
+
+export interface ConnectionConfigState {
+  effective: ConnectionConfig;
+  project: Partial<ConnectionConfig>;
+  env: Partial<ConnectionConfig>;
+  cli: Partial<ConnectionConfig>;
+  sources: Record<keyof ConnectionConfig, ConnectionConfigSource>;
+  saveTargetPath: string;
+}
+
+export interface SessionSettingsState {
+  effective: SessionSettings;
+  project: Partial<SessionSettings>;
+  user: Partial<SessionSettings>;
+  env: Partial<SessionSettings>;
+  cli: Partial<SessionSettings>;
+  sources: Record<keyof SessionSettings, SessionSettingsSource>;
+  saveTargetPath: string;
+  projectPath: string;
+}
+
 export interface RuntimePaths {
   workspaceRoot: string;
   alyceDirectory: string;
   connectionConfigPath: string;
   settingsConfigPath: string;
+  userAlyceDirectory: string;
+  userSettingsConfigPath: string;
 }
 
 export interface RuntimeConfig {
   paths: RuntimePaths;
   connection: ConnectionConfig;
+  connectionState: ConnectionConfigState;
   settings: SessionSettings;
+  settingsState: SessionSettingsState;
   requestPatches: RequestPatchOperation[];
   memory: MemoryRuntimeConfig;
 }
@@ -88,37 +116,30 @@ export async function loadRuntimeConfig(
 ): Promise<RuntimeConfig> {
   const workspaceRoot = path.resolve(getArgValue(argv, "--cwd") || env.AGENT_WORKSPACE || ".");
   const paths = getRuntimePaths(workspaceRoot);
-  const [savedConnection, savedSettings] = await Promise.all([
+  const [projectConnection, projectSettings, userSettings] = await Promise.all([
     readJsonConfig(paths.connectionConfigPath, ConnectionConfigFileSchema),
-    readJsonConfig(paths.settingsConfigPath, SessionSettingsFileSchema)
+    readJsonConfig(paths.settingsConfigPath, SessionSettingsFileSchema),
+    readJsonConfig(paths.userSettingsConfigPath, SessionSettingsFileSchema)
   ]);
 
-  const envConnection: Partial<ConnectionConfig> = {
-    apiKey: env.OPENAI_API_KEY ?? "",
-    baseURL: env.OPENAI_BASE_URL || undefined,
-    model: env.OPENAI_MODEL || "gpt-4.1-mini"
-  };
-  const cliConnection = compactObject<ConnectionConfig>({
-    model: getArgValue(argv, "--model") || undefined
+  const connectionState = buildConnectionConfigState(paths, {
+    project: projectConnection,
+    env: resolveConnectionFromEnv(env),
+    cli: resolveConnectionFromCli(argv)
   });
-
-  const envSettings = resolveSettingsFromInputs(argv, env);
-  const cliSettings = compactObject<SessionSettings>({
-    approvalMode: hasFlag(argv, "--yolo") ? "auto" : undefined
+  const settingsState = buildSessionSettingsState(paths, {
+    project: projectSettings,
+    user: userSettings,
+    env: resolveSettingsFromEnv(env),
+    cli: resolveSettingsFromCli(argv)
   });
 
   return {
     paths,
-    connection: normalizeConnectionConfig({
-      ...envConnection,
-      ...savedConnection,
-      ...cliConnection
-    }),
-    settings: normalizeSessionSettings({
-      ...envSettings,
-      ...savedSettings,
-      ...cliSettings
-    }),
+    connection: connectionState.effective,
+    connectionState,
+    settings: settingsState.effective,
+    settingsState,
     requestPatches: resolveRequestPatches(argv, env),
     memory: {
       directory: env.AGENT_MEMORY_DIR || ".alyce/memory",
@@ -139,40 +160,116 @@ export async function loadRuntimeConfig(
 
 export function getRuntimePaths(workspaceRoot: string): RuntimePaths {
   const alyceDirectory = path.join(workspaceRoot, ".alyce");
+  const userAlyceDirectory = path.join(os.homedir(), ".alyce");
+
   return {
     workspaceRoot,
     alyceDirectory,
     connectionConfigPath: path.join(alyceDirectory, "config.json"),
-    settingsConfigPath: path.join(alyceDirectory, "settings.json")
+    settingsConfigPath: path.join(alyceDirectory, "settings.json"),
+    userAlyceDirectory,
+    userSettingsConfigPath: path.join(userAlyceDirectory, "settings.json")
+  };
+}
+
+export function buildConnectionConfigState(
+  paths: Pick<RuntimePaths, "connectionConfigPath">,
+  layers: {
+    project?: Partial<ConnectionConfig>;
+    env?: Partial<ConnectionConfig>;
+    cli?: Partial<ConnectionConfig>;
+  }
+): ConnectionConfigState {
+  const orderedLayers: Array<SourceLayer<ConnectionConfig, ConnectionConfigSource>> = [
+    { source: "project", values: compactObject(layers.project ?? {}) },
+    { source: "env", values: compactObject(layers.env ?? {}) },
+    { source: "cli", values: compactObject(layers.cli ?? {}) }
+  ];
+  const effective = normalizeConnectionConfig(mergeLayers(orderedLayers));
+
+  return {
+    effective,
+    project: orderedLayers[0]!.values,
+    env: orderedLayers[1]!.values,
+    cli: orderedLayers[2]!.values,
+    sources: buildSourceMap(effective, orderedLayers, "default"),
+    saveTargetPath: paths.connectionConfigPath
+  };
+}
+
+export function buildSessionSettingsState(
+  paths: Pick<RuntimePaths, "settingsConfigPath" | "userSettingsConfigPath">,
+  layers: {
+    project?: Partial<SessionSettings>;
+    user?: Partial<SessionSettings>;
+    env?: Partial<SessionSettings>;
+    cli?: Partial<SessionSettings>;
+  }
+): SessionSettingsState {
+  const orderedLayers: Array<SourceLayer<SessionSettings, SessionSettingsSource>> = [
+    { source: "project", values: compactObject(layers.project ?? {}) },
+    { source: "user", values: compactObject(layers.user ?? {}) },
+    { source: "env", values: compactObject(layers.env ?? {}) },
+    { source: "cli", values: compactObject(layers.cli ?? {}) }
+  ];
+  const effective = normalizeSessionSettings(mergeLayers(orderedLayers));
+
+  return {
+    effective,
+    project: orderedLayers[0]!.values,
+    user: orderedLayers[1]!.values,
+    env: orderedLayers[2]!.values,
+    cli: orderedLayers[3]!.values,
+    sources: buildSourceMap(effective, orderedLayers, "default"),
+    saveTargetPath: paths.userSettingsConfigPath,
+    projectPath: paths.settingsConfigPath
   };
 }
 
 export async function saveConnectionConfig(
   paths: RuntimePaths,
-  connection: ConnectionConfig
+  connection: Partial<ConnectionConfig>
 ): Promise<void> {
-  await writeJsonConfig(paths.connectionConfigPath, {
-    apiKey: connection.apiKey,
-    baseURL: connection.baseURL || undefined,
-    model: connection.model
-  });
+  await writeJsonConfig(paths.connectionConfigPath, serializeConnectionConfig(connection));
 }
 
-export async function saveSessionSettings(
+export async function saveUserSessionSettings(
   paths: RuntimePaths,
-  settings: SessionSettings
+  settings: Partial<SessionSettings>
 ): Promise<void> {
-  await writeJsonConfig(paths.settingsConfigPath, {
-    approvalMode: settings.approvalMode,
-    maxSteps: settings.maxSteps,
-    commandTimeoutMs: settings.commandTimeoutMs,
-    autoSummaryEnabled: settings.autoSummaryEnabled,
-    languagePreference: settings.languagePreference || undefined,
-    personaPreset: settings.personaPreset || undefined,
-    aiPersonalityPrompt: settings.aiPersonalityPrompt || undefined,
-    customSystemPrompt: settings.customSystemPrompt || undefined,
-    appendSystemPrompt: settings.appendSystemPrompt || undefined
-  });
+  await writeJsonConfig(paths.userSettingsConfigPath, serializeSessionSettings(settings));
+}
+
+type SourceLayer<T extends object, Source extends string> = {
+  source: Source;
+  values: Partial<T>;
+};
+
+function mergeLayers<T extends object, Source extends string>(
+  layers: Array<SourceLayer<T, Source>>
+): Partial<T> {
+  return Object.assign({}, ...layers.map((layer) => layer.values));
+}
+
+function buildSourceMap<T extends object, Source extends string>(
+  effective: T,
+  layers: Array<SourceLayer<T, Source>>,
+  defaultSource: Source
+): Record<keyof T, Source> {
+  const sources = {} as Record<keyof T, Source>;
+
+  for (const key of Object.keys(effective) as Array<keyof T>) {
+    let source = defaultSource;
+    for (const layer of layers) {
+      if (layer.values[key] !== undefined) {
+        source = layer.source;
+      }
+    }
+
+    sources[key] = source;
+  }
+
+  return sources;
 }
 
 function resolveRequestPatches(
@@ -207,11 +304,10 @@ function resolveRequestPatches(
   );
 }
 
-function resolvePromptText(options: {
+function resolvePromptTextFromCli(options: {
   argv: string[];
   directFlag: string;
   fileFlag: string;
-  envValue?: string;
   label: string;
 }): string | undefined {
   const directValue = getArgValue(options.argv, options.directFlag);
@@ -231,7 +327,7 @@ function resolvePromptText(options: {
     }
   }
 
-  return directValue ?? options.envValue;
+  return directValue;
 }
 
 function getArgValue(argv: string[], flag: string): string | undefined {
@@ -276,9 +372,27 @@ function parsePositiveInt(value: string | undefined, fallback: number): number {
   return Math.max(1, Math.trunc(parsed));
 }
 
+function parseOptionalPositiveInt(value: string | undefined): number | undefined {
+  if (!value) {
+    return undefined;
+  }
+
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed)) {
+    return undefined;
+  }
+
+  return Math.max(1, Math.trunc(parsed));
+}
+
 function parseBoolean(value: string | undefined, fallback: boolean): boolean {
+  const parsed = parseOptionalBoolean(value);
+  return parsed ?? fallback;
+}
+
+function parseOptionalBoolean(value: string | undefined): boolean | undefined {
   if (value === undefined) {
-    return fallback;
+    return undefined;
   }
 
   const normalized = value.trim().toLowerCase();
@@ -290,7 +404,7 @@ function parseBoolean(value: string | undefined, fallback: boolean): boolean {
     return false;
   }
 
-  return fallback;
+  return undefined;
 }
 
 function normalizeConnectionConfig(input: Partial<ConnectionConfig>): ConnectionConfig {
@@ -299,6 +413,14 @@ function normalizeConnectionConfig(input: Partial<ConnectionConfig>): Connection
     baseURL: normalizeOptionalText(input.baseURL),
     model: input.model?.trim() || "gpt-4.1-mini"
   };
+}
+
+function serializeConnectionConfig(connection: Partial<ConnectionConfig>): Partial<ConnectionConfig> {
+  return compactObject({
+    apiKey: "apiKey" in connection ? connection.apiKey?.trim() ?? "" : undefined,
+    baseURL: "baseURL" in connection ? normalizeOptionalText(connection.baseURL) : undefined,
+    model: "model" in connection ? normalizeOptionalText(connection.model) : undefined
+  });
 }
 
 function normalizeSessionSettings(input: Partial<SessionSettings>): SessionSettings {
@@ -315,34 +437,80 @@ function normalizeSessionSettings(input: Partial<SessionSettings>): SessionSetti
   };
 }
 
-function resolveSettingsFromInputs(
-  argv: string[],
-  env: NodeJS.ProcessEnv
-): Partial<SessionSettings> {
-  return {
-    maxSteps: parsePositiveInt(env.AGENT_MAX_STEPS, 8),
-    commandTimeoutMs: parsePositiveInt(env.AGENT_COMMAND_TIMEOUT_MS, 120_000),
-    autoSummaryEnabled: parseBoolean(env.AGENT_MEMORY_AUTO_SUMMARY, true),
-    languagePreference: getArgValue(argv, "--lang") || env.AGENT_LANGUAGE || undefined,
-    personaPreset: resolvePersonaPreset(
-      getArgValue(argv, "--persona-preset") || env.AGENT_PERSONA_PRESET || undefined
-    ),
-    aiPersonalityPrompt: getArgValue(argv, "--persona") || env.AGENT_AI_PERSONALITY || undefined,
-    customSystemPrompt: resolvePromptText({
+function serializeSessionSettings(settings: Partial<SessionSettings>): Partial<SessionSettings> {
+  return compactObject({
+    approvalMode: "approvalMode" in settings ? settings.approvalMode : undefined,
+    maxSteps: "maxSteps" in settings ? settings.maxSteps : undefined,
+    commandTimeoutMs: "commandTimeoutMs" in settings ? settings.commandTimeoutMs : undefined,
+    autoSummaryEnabled:
+      "autoSummaryEnabled" in settings ? settings.autoSummaryEnabled : undefined,
+    languagePreference:
+      "languagePreference" in settings ? normalizeOptionalText(settings.languagePreference) : undefined,
+    personaPreset:
+      "personaPreset" in settings
+        ? resolvePersonaPreset(normalizeOptionalText(settings.personaPreset))
+        : undefined,
+    aiPersonalityPrompt:
+      "aiPersonalityPrompt" in settings
+        ? normalizeOptionalText(settings.aiPersonalityPrompt)
+        : undefined,
+    customSystemPrompt:
+      "customSystemPrompt" in settings
+        ? normalizeOptionalText(settings.customSystemPrompt)
+        : undefined,
+    appendSystemPrompt:
+      "appendSystemPrompt" in settings
+        ? normalizeOptionalText(settings.appendSystemPrompt)
+        : undefined
+  });
+}
+
+function resolveConnectionFromEnv(env: NodeJS.ProcessEnv): Partial<ConnectionConfig> {
+  return compactObject({
+    apiKey: env.OPENAI_API_KEY,
+    baseURL: env.OPENAI_BASE_URL,
+    model: env.OPENAI_MODEL
+  });
+}
+
+function resolveConnectionFromCli(argv: string[]): Partial<ConnectionConfig> {
+  return compactObject({
+    model: getArgValue(argv, "--model")
+  });
+}
+
+function resolveSettingsFromEnv(env: NodeJS.ProcessEnv): Partial<SessionSettings> {
+  return compactObject({
+    maxSteps: parseOptionalPositiveInt(env.AGENT_MAX_STEPS),
+    commandTimeoutMs: parseOptionalPositiveInt(env.AGENT_COMMAND_TIMEOUT_MS),
+    autoSummaryEnabled: parseOptionalBoolean(env.AGENT_MEMORY_AUTO_SUMMARY),
+    languagePreference: env.AGENT_LANGUAGE,
+    personaPreset: resolvePersonaPreset(env.AGENT_PERSONA_PRESET),
+    aiPersonalityPrompt: env.AGENT_AI_PERSONALITY,
+    customSystemPrompt: env.AGENT_SYSTEM_PROMPT,
+    appendSystemPrompt: env.AGENT_APPEND_SYSTEM_PROMPT
+  });
+}
+
+function resolveSettingsFromCli(argv: string[]): Partial<SessionSettings> {
+  return compactObject({
+    approvalMode: hasFlag(argv, "--yolo") ? "auto" : undefined,
+    languagePreference: getArgValue(argv, "--lang"),
+    personaPreset: resolvePersonaPreset(getArgValue(argv, "--persona-preset")),
+    aiPersonalityPrompt: getArgValue(argv, "--persona"),
+    customSystemPrompt: resolvePromptTextFromCli({
       argv,
       directFlag: "--system-prompt",
       fileFlag: "--system-prompt-file",
-      envValue: env.AGENT_SYSTEM_PROMPT,
       label: "system prompt"
     }),
-    appendSystemPrompt: resolvePromptText({
+    appendSystemPrompt: resolvePromptTextFromCli({
       argv,
       directFlag: "--append-system-prompt",
       fileFlag: "--append-system-prompt-file",
-      envValue: env.AGENT_APPEND_SYSTEM_PROMPT,
       label: "append system prompt"
     })
-  };
+  });
 }
 
 async function readJsonConfig<T>(

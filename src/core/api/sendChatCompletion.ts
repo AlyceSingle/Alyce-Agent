@@ -12,6 +12,7 @@ export interface SendChatCompletionOptions {
   temperature?: number;
   toolChoice?: ChatCreateParams["tool_choice"];
   requestPatches?: RequestPatchOperation[];
+  abortSignal?: AbortSignal;
 }
 
 function normalizeMessagesForApi(messages: MessageParam[]): MessageParam[] {
@@ -48,5 +49,7 @@ export async function sendChatCompletion(
   };
 
   const patchedRequest = applyRequestPatchOperations(baseRequest, options.requestPatches ?? []);
-  return client.chat.completions.create(patchedRequest);
+  return client.chat.completions.create(patchedRequest, {
+    signal: options.abortSignal
+  });
 }

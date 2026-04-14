@@ -7,13 +7,15 @@ export function Layout(props: {
   footer?: React.ReactNode;
   overlay?: React.ReactNode;
 }) {
+  const hasFooterOrOverlay = Boolean(props.footer) || Boolean(props.overlay);
+
   return (
     <Box flexDirection="column" paddingX={1} width="100%">
       <Box marginBottom={1} width="100%">
         {props.header}
       </Box>
       {props.body !== undefined && props.body !== null ? (
-        <Box flexDirection="column" marginBottom={1} width="100%">
+        <Box flexDirection="column" marginBottom={hasFooterOrOverlay ? 1 : 0} width="100%">
           {props.body}
         </Box>
       ) : null}

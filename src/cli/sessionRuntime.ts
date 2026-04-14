@@ -1,14 +1,19 @@
 import process from "node:process";
 import OpenAI from "openai";
 import {
+  buildConnectionConfigState,
+  buildSessionSettingsState,
   loadRuntimeConfig,
   saveConnectionConfig,
-  saveSessionSettings,
+  saveUserSessionSettings,
   type ConnectionConfig,
+  type ConnectionConfigState,
   type RuntimeConfig,
-  type SessionSettings
+  type SessionSettings,
+  type SessionSettingsState
 } from "../config/runtime.js";
 import { MemoryService } from "../core/memory/memoryService.js";
+import { FileHistoryManager, type FileHistoryRestoreResult } from "../core/file-history/fileHistoryManager.js";
 import type { MemorySnapshot } from "../core/memory/types.js";
 import { buildEffectiveSystemPrompt } from "../core/prompt/builder.js";
 import { PromptSectionResolver } from "../core/prompt/sectionResolver.js";
@@ -18,6 +23,7 @@ import { buildNextTurnContextPreview } from "./contextPreview.js";
 
 export type SessionMessage = OpenAI.Chat.Completions.ChatCompletionMessageParam;
 
+// SessionRuntime 统一封装会话消息、持久化配置、记忆系统和工具执行依赖。
 export interface SessionRuntime {
   config: RuntimeConfig;
   memoryService: MemoryService;
@@ -26,7 +32,9 @@ export interface SessionRuntime {
   requestPatches: RuntimeConfig["requestPatches"];
   hasConnectionConfig: () => boolean;
   getConnectionConfig: () => ConnectionConfig;
+  getConnectionConfigState: () => ConnectionConfigState;
   getSettings: () => SessionSettings;
+  getSettingsState: () => SessionSettingsState;
   requireClient: () => OpenAI;
   getCurrentModel: () => string;
   setCurrentModel: (model: string) => Promise<void>;
@@ -36,7 +44,15 @@ export interface SessionRuntime {
   clearConversation: () => Promise<void>;
   clearPromptCache: () => void;
   buildContextPreview: (nextUserInput?: string) => string;
-  createToolContext: (requestApproval: (request: ToolApprovalRequest) => Promise<boolean>) => ToolExecutionContext;
+  beginTurn: (turnId: string) => void;
+  hasTrackedFileChanges: (turnId: string) => boolean;
+  restoreFilesForTurn: (turnId: string) => Promise<FileHistoryRestoreResult>;
+  discardTurn: (turnId: string) => void;
+  createToolContext: (options: {
+    turnId: string;
+    abortSignal: AbortSignal;
+    requestApproval: (request: ToolApprovalRequest) => Promise<boolean>;
+  }) => ToolExecutionContext;
 }
 
 export function getCurrentDateLabel() {
@@ -105,11 +121,14 @@ export async function createSessionRuntime(
   env: NodeJS.ProcessEnv
 ): Promise<SessionRuntime> {
   const config = await loadRuntimeConfig(argv, env);
-  let connection = config.connection;
-  let settings = config.settings;
+  let connectionState = cloneConnectionConfigState(config.connectionState);
+  let settingsState = cloneSessionSettingsState(config.settingsState);
+  let connection = connectionState.effective;
+  let settings = settingsState.effective;
   let client: OpenAI | null = createClientFromConnection(connection);
 
   const promptResolver = new PromptSectionResolver();
+  const fileHistoryManager = new FileHistoryManager();
   const memoryService = new MemoryService({
     workspaceRoot: config.paths.workspaceRoot,
     ...config.memory
@@ -117,6 +136,7 @@ export async function createSessionRuntime(
   memoryService.setAutoSummaryEnabled(settings.autoSummaryEnabled);
   await memoryService.initialize();
 
+  // system prompt 始终由当前模型、环境、工具能力和记忆视图重新生成。
   const buildSystemPrompt = async () =>
     buildEffectiveSystemPrompt(
       {
@@ -138,6 +158,7 @@ export async function createSessionRuntime(
     }
   ];
 
+  // 约定 messages[0] 永远保留为 system message，其他消息只追加在其后。
   const resetSystemMessage = async () => {
     messages[0] = {
       role: "system",
@@ -146,11 +167,11 @@ export async function createSessionRuntime(
   };
 
   const persistConnection = async () => {
-    await saveConnectionConfig(config.paths, connection);
+    await saveConnectionConfig(config.paths, connectionState.project);
   };
 
   const persistSettings = async () => {
-    await saveSessionSettings(config.paths, settings);
+    await saveUserSessionSettings(config.paths, settingsState.user);
   };
 
   return {
@@ -161,7 +182,9 @@ export async function createSessionRuntime(
     requestPatches: config.requestPatches,
     hasConnectionConfig: () => connection.apiKey.trim().length > 0,
     getConnectionConfig: () => ({ ...connection }),
+    getConnectionConfigState: () => cloneConnectionConfigState(connectionState),
     getSettings: () => ({ ...settings }),
+    getSettingsState: () => cloneSessionSettingsState(settingsState),
     requireClient: () => {
       if (!connection.apiKey.trim()) {
         throw new Error("Connection is incomplete. Open settings and fill API key, URL, and model.");
@@ -179,35 +202,48 @@ export async function createSessionRuntime(
     },
     getCurrentModel: () => connection.model,
     setCurrentModel: async (model) => {
-      connection = {
-        ...connection,
-        model: model.trim() || connection.model
-      };
+      const projectPatch = normalizeConnectionPatch({ model }, connection);
+      connectionState = buildConnectionConfigState(config.paths, {
+        project: mergePersistedSource(connectionState.project, projectPatch),
+        env: connectionState.env,
+        cli: connectionState.cli
+      });
+      connection = connectionState.effective;
+      client = createClientFromConnection(connection);
       await persistConnection();
       await resetSystemMessage();
     },
     updateConnectionConfig: async (patch) => {
-      connection = {
-        ...connection,
-        ...normalizeConnectionPatch(patch, connection)
-      };
+      const projectPatch = normalizeConnectionPatch(patch, connection);
+      connectionState = buildConnectionConfigState(config.paths, {
+        project: mergePersistedSource(connectionState.project, projectPatch),
+        env: connectionState.env,
+        cli: connectionState.cli
+      });
+      connection = connectionState.effective;
       client = createClientFromConnection(connection);
       await persistConnection();
       await resetSystemMessage();
     },
     updateSettings: async (patch) => {
-      settings = {
-        ...settings,
-        ...normalizeSettingsPatch(patch)
-      };
+      const userPatch = normalizeSettingsPatch(patch);
+      settingsState = buildSessionSettingsState(config.paths, {
+        project: settingsState.project,
+        user: mergePersistedSource(settingsState.user, userPatch),
+        env: settingsState.env,
+        cli: settingsState.cli
+      });
+      settings = settingsState.effective;
       memoryService.setAutoSummaryEnabled(settings.autoSummaryEnabled);
       await persistSettings();
       await resetSystemMessage();
     },
     resetSystemMessage,
     clearConversation: async () => {
+      // 清空会话时保留连接与设置，仅重置对话、记忆缓存和文件回滚历史。
       memoryService.clearSession();
       promptResolver.clearSessionCache();
+      fileHistoryManager.clearAll();
       messages.splice(1);
       await resetSystemMessage();
     },
@@ -218,11 +254,63 @@ export async function createSessionRuntime(
         messages,
         nextUserInput
       }),
-    createToolContext: (requestApproval) => ({
+    beginTurn: (turnId) => {
+      fileHistoryManager.beginTurn(turnId);
+    },
+    hasTrackedFileChanges: (turnId) => fileHistoryManager.hasTrackedFiles(turnId),
+    restoreFilesForTurn: (turnId) => fileHistoryManager.restoreTurn(turnId),
+    discardTurn: (turnId) => {
+      fileHistoryManager.removeTurn(turnId);
+    },
+    createToolContext: ({ turnId, abortSignal, requestApproval }) => ({
+      // 工具在执行前会先登记 turnId，并在写文件前抓取快照，便于中断后回滚。
       workspaceRoot: config.paths.workspaceRoot,
       commandTimeoutMs: settings.commandTimeoutMs,
-      requestApproval
+      turnId,
+      abortSignal,
+      requestApproval,
+      captureFileBeforeWrite: (absolutePath) => fileHistoryManager.captureBeforeWrite(turnId, absolutePath)
     })
+  };
+}
+
+function mergePersistedSource<T extends object>(base: Partial<T>, patch: Partial<T>): Partial<T> {
+  const next = { ...base } as Partial<T>;
+
+  for (const key of Object.keys(patch) as Array<keyof T>) {
+    const value = patch[key];
+    if (value === undefined) {
+      delete next[key];
+      continue;
+    }
+
+    next[key] = value;
+  }
+
+  return next;
+}
+
+function cloneConnectionConfigState(state: ConnectionConfigState): ConnectionConfigState {
+  return {
+    effective: { ...state.effective },
+    project: { ...state.project },
+    env: { ...state.env },
+    cli: { ...state.cli },
+    sources: { ...state.sources },
+    saveTargetPath: state.saveTargetPath
+  };
+}
+
+function cloneSessionSettingsState(state: SessionSettingsState): SessionSettingsState {
+  return {
+    effective: { ...state.effective },
+    project: { ...state.project },
+    user: { ...state.user },
+    env: { ...state.env },
+    cli: { ...state.cli },
+    sources: { ...state.sources },
+    saveTargetPath: state.saveTargetPath,
+    projectPath: state.projectPath
   };
 }
 

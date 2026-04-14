@@ -62,6 +62,7 @@ export async function executeFileEdit(
     throw new Error("User rejected Edit tool request");
   }
 
+  await context.captureFileBeforeWrite(fullFilePath);
   await fs.writeFile(fullFilePath, patchResult.updatedFile, "utf8");
 
   return {

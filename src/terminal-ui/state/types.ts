@@ -1,4 +1,10 @@
-import type { ApprovalMode, ConnectionConfig, SessionSettings } from "../../config/runtime.js";
+import type {
+  ApprovalMode,
+  ConnectionConfig,
+  ConnectionConfigState,
+  SessionSettings,
+  SessionSettingsState
+} from "../../config/runtime.js";
 import type { ToolApprovalRequest, ToolPermissionKind } from "../../tools/types.js";
 
 export type TerminalUiMessageKind =
@@ -30,17 +36,23 @@ export type PermissionDecision =
 
 export type ActiveDialog =
   | { type: "permission"; request: ToolApprovalRequest }
-  | { type: "settings"; section: SettingsSection; reason?: string }
-  | { type: "message-detail"; messageId: string };
+  | { type: "settings"; section: SettingsSection; reason?: string };
+
+export type TerminalUiOverlayId = ActiveDialog["type"];
 
 export interface TerminalUiState {
   workspaceRoot: string;
   connection: ConnectionConfig;
+  connectionState: ConnectionConfigState;
   settings: SessionSettings;
+  settingsState: SessionSettingsState;
   requestPatchCount: number;
+  draftInput: string;
   isLoading: boolean;
   statusText: string;
   dialog: ActiveDialog | null;
+  readerMessageId: string | null;
+  activeOverlays: TerminalUiOverlayId[];
   messages: TerminalUiMessage[];
   selectedMessageId: string | null;
   sessionApprovalMode: ApprovalMode;

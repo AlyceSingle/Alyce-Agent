@@ -1,13 +1,16 @@
-import type { JsonRecord, ToolExecutionContext } from "./types.js";
-import { getToolDefinition } from "./definitions.js";
 import { ZodError } from "zod";
+import { isTurnInterruptedError, throwIfAborted, toTurnInterruptedError } from "../core/abort.js";
+import { getToolDefinition } from "./definitions.js";
+import type { JsonRecord, ToolExecutionContext } from "./types.js";
 
-// 工具调度入口：解析参数、分发到具体实现并统一错误返回格式。
+// 统一处理“查找工具 -> 解析参数 -> 校验 schema -> 执行 -> 包装结果”这条路径。
 export async function executeToolCall(
   name: string,
   rawArgs: string,
   context: ToolExecutionContext
 ): Promise<string> {
+  throwIfAborted(context.abortSignal);
+
   const tool = getToolDefinition(name);
   if (!tool) {
     return JSON.stringify(
@@ -26,7 +29,7 @@ export async function executeToolCall(
   let args: JsonRecord = {};
 
   try {
-    // 工具参数由模型以 JSON 字符串传入。
+    // 模型产出的 arguments 始终先按 JSON 解析，再交给 zod 做结构校验。
     args = rawArgs ? (JSON.parse(rawArgs) as JsonRecord) : {};
   } catch {
     return JSON.stringify(
@@ -59,7 +62,10 @@ export async function executeToolCall(
   }
 
   try {
+    throwIfAborted(context.abortSignal);
     const result = await tool.execute(parsed.data, context);
+    throwIfAborted(context.abortSignal);
+    // 统一返回稳定的 JSON 包装，便于模型继续消费工具结果。
     return JSON.stringify(
       {
         ok: true,
@@ -70,7 +76,10 @@ export async function executeToolCall(
       2
     );
   } catch (error) {
-    // 工具内部异常统一序列化，避免中断整轮推理。
+    if (isTurnInterruptedError(error, context.abortSignal)) {
+      throw toTurnInterruptedError(error, context.abortSignal);
+    }
+
     const message = error instanceof Error ? error.message : String(error);
     return JSON.stringify(
       {

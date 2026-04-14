@@ -1,9 +1,10 @@
-export {
-  Box,
-  Text,
-  render,
-  useApp,
-  useInput,
-  useStdout,
-  useStdin
-} from "ink";
+export { default as Box } from "./vendor/ink/components/Box.js";
+export { default as Text } from "./vendor/ink/components/Text.js";
+export { default as render } from "./vendor/ink/render.js";
+export { default as useApp } from "./vendor/ink/hooks/use-app.js";
+export { default as useInput } from "./vendor/ink/hooks/use-input.js";
+export { default as useStdout } from "./vendor/ink/hooks/use-stdout.js";
+export { default as useStdin } from "./vendor/ink/hooks/use-stdin.js";
+export { AlternateScreen } from "./AlternateScreen.js";
+export { ScrollBox } from "./ScrollBox.js";
+export type { ScrollBoxHandle } from "./ScrollBox.js";

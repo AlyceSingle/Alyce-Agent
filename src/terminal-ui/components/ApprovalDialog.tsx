@@ -1,5 +1,6 @@
 import React, { useEffect, useState } from "react";
 import type { ToolApprovalRequest } from "../../tools/types.js";
+import { useRegisterOverlay } from "../context/overlayContext.js";
 import { Box, Text, useInput } from "../runtime/ink.js";
 import { terminalUiTheme } from "../theme/theme.js";
 import type { PermissionDecision } from "../state/types.js";
@@ -36,6 +37,8 @@ export function ApprovalDialog(props: {
   onDecision: (decision: PermissionDecision) => void;
 }) {
   const [selectedIndex, setSelectedIndex] = useState(0);
+
+  useRegisterOverlay("permission", Boolean(props.request));
 
   useEffect(() => {
     setSelectedIndex(0);

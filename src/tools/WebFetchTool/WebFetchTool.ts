@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { throwIfAborted } from "../../core/abort.js";
 import { truncate } from "../internal/values.js";
 import type { ToolExecutionContext } from "../types.js";
 import { DESCRIPTION, WEB_FETCH_TOOL_NAME } from "./prompt.js";
@@ -39,6 +40,8 @@ export async function executeWebFetchTool(
   input: z.infer<typeof WebFetchInputSchema>,
   context: ToolExecutionContext
 ): Promise<WebFetchResult> {
+  throwIfAborted(context.abortSignal);
+
   const normalizedUrl = normalizeUrl(input.url);
   const maxChars = input.max_chars ?? DEFAULT_MAX_CHARS;
   const timeoutMs = Math.max(1, context.commandTimeoutMs);
@@ -54,7 +57,9 @@ export async function executeWebFetchTool(
     throw new Error("User rejected WebFetch tool request");
   }
 
-  const response = await fetchWithTimeout(normalizedUrl, timeoutMs);
+  throwIfAborted(context.abortSignal);
+
+  const response = await fetchWithTimeout(normalizedUrl, timeoutMs, context.abortSignal);
   const rawBody = await response.text();
   const contentType = response.headers.get("content-type") ?? "unknown";
 
@@ -74,11 +79,22 @@ export async function executeWebFetchTool(
   };
 }
 
-async function fetchWithTimeout(url: string, timeoutMs: number): Promise<Response> {
+async function fetchWithTimeout(
+  url: string,
+  timeoutMs: number,
+  parentSignal?: AbortSignal
+): Promise<Response> {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), timeoutMs);
+  const handleAbort = () => controller.abort(parentSignal?.reason);
 
   try {
+    if (parentSignal?.aborted) {
+      controller.abort(parentSignal.reason);
+    } else {
+      parentSignal?.addEventListener("abort", handleAbort, { once: true });
+    }
+
     return await fetch(url, {
       signal: controller.signal,
       redirect: "follow",
@@ -94,6 +110,7 @@ async function fetchWithTimeout(url: string, timeoutMs: number): Promise<Respons
     throw error;
   } finally {
     clearTimeout(timer);
+    parentSignal?.removeEventListener("abort", handleAbort);
   }
 }
 

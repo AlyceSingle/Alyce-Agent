@@ -136,6 +136,66 @@ export function wrapText(value: string, width: number): string[] {
   return wrapped;
 }
 
+export function wrapTextClamped(
+  value: string,
+  width: number,
+  maxLines: number
+): { lines: string[]; truncated: boolean } {
+  const safeWidth = Math.max(8, width);
+  const safeMaxLines = Math.max(1, maxLines);
+  const rawLines = value.split(/\r?\n/);
+  const wrapped: string[] = [];
+
+  const finalizeTruncated = () => ({
+    lines: [...wrapped.slice(0, Math.max(0, safeMaxLines - 1)), "..."],
+    truncated: true
+  });
+
+  for (let rawLineIndex = 0; rawLineIndex < rawLines.length; rawLineIndex += 1) {
+    const rawLine = rawLines[rawLineIndex] ?? "";
+
+    if (rawLine.length === 0) {
+      wrapped.push("");
+      if (wrapped.length >= safeMaxLines) {
+        const hasMoreContent = rawLineIndex < rawLines.length - 1;
+        return hasMoreContent ? finalizeTruncated() : { lines: wrapped, truncated: false };
+      }
+      continue;
+    }
+
+    let currentLine = "";
+    let currentWidth = 0;
+    for (let characterIndex = 0; characterIndex < rawLine.length; characterIndex += 1) {
+      const character = rawLine[characterIndex] ?? "";
+      const charWidth = measureCharWidth(character);
+      if (currentWidth + charWidth > safeWidth && currentLine.length > 0) {
+        wrapped.push(currentLine);
+        if (wrapped.length >= safeMaxLines) {
+          return finalizeTruncated();
+        }
+
+        currentLine = character;
+        currentWidth = charWidth;
+        continue;
+      }
+
+      currentLine += character;
+      currentWidth += charWidth;
+    }
+
+    wrapped.push(currentLine);
+    if (wrapped.length >= safeMaxLines) {
+      const hasMoreContent = rawLineIndex < rawLines.length - 1;
+      return hasMoreContent ? finalizeTruncated() : { lines: wrapped, truncated: false };
+    }
+  }
+
+  return {
+    lines: wrapped,
+    truncated: false
+  };
+}
+
 export function clampLines(lines: string[], maxLines: number): { lines: string[]; truncated: boolean } {
   if (lines.length <= maxLines) {
     return {

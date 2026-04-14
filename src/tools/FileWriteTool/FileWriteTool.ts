@@ -45,6 +45,7 @@ export async function executeFileWrite(
   }
 
   // 写入前确保父目录存在，兼容创建新文件场景。
+  await context.captureFileBeforeWrite(fullFilePath);
   await fs.mkdir(path.dirname(fullFilePath), { recursive: true });
   await fs.writeFile(fullFilePath, input.content, "utf8");
 

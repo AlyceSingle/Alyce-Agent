@@ -1,7 +1,16 @@
 import React from "react";
 import type { ApprovalMode, ConnectionConfig, SessionSettings } from "../../config/runtime.js";
 import { Box, Text } from "../runtime/ink.js";
+import { getBindingDisplayText } from "../keybindings/shortcutDisplay.js";
 import { terminalUiTheme } from "../theme/theme.js";
+
+const PREVIOUS_MESSAGE_SHORTCUT = getBindingDisplayText("conversation:previousMessage", "Conversation") ?? "Up";
+const NEXT_MESSAGE_SHORTCUT = getBindingDisplayText("conversation:nextMessage", "Conversation") ?? "Down";
+const PAGE_UP_SHORTCUT = getBindingDisplayText("conversation:pageUp", "Conversation") ?? "PgUp";
+const PAGE_DOWN_SHORTCUT = getBindingDisplayText("conversation:pageDown", "Conversation") ?? "PgDn";
+const OPEN_DETAIL_SHORTCUT = getBindingDisplayText("conversation:openDetail", "Global") ?? "Ctrl+O";
+const OPEN_SETTINGS_SHORTCUT = getBindingDisplayText("app:openSettings", "Global") ?? "Ctrl+X";
+const QUIT_SHORTCUT = getBindingDisplayText("app:quit", "Global") ?? "Ctrl+Q";
 
 function maskApiKey(apiKey: string) {
   if (!apiKey) {
@@ -71,7 +80,7 @@ export function StatusBar(props: {
       <Text color={terminalUiTheme.colors.subtle} wrap="truncate-end">
         Status: {props.statusText}
         {" | "}
-        /settings | Ctrl+X settings | Ctrl+C clear input or quit | Ctrl+Q quit
+        /settings | {PREVIOUS_MESSAGE_SHORTCUT}/{NEXT_MESSAGE_SHORTCUT} browse | {PAGE_UP_SHORTCUT}/{PAGE_DOWN_SHORTCUT} jump | {OPEN_DETAIL_SHORTCUT} reader | {OPEN_SETTINGS_SHORTCUT} settings | {QUIT_SHORTCUT} quit
       </Text>
     </Box>
   );

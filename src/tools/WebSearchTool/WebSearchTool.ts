@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { throwIfAborted } from "../../core/abort.js";
 import { truncate } from "../internal/values.js";
 import type { ToolExecutionContext } from "../types.js";
 import { WEB_SEARCH_TOOL_DESCRIPTION, WEB_SEARCH_TOOL_NAME } from "./prompt.js";
@@ -43,6 +44,8 @@ export async function executeWebSearchTool(
   input: z.infer<typeof WebSearchInputSchema>,
   context: ToolExecutionContext
 ): Promise<WebSearchResult> {
+  throwIfAborted(context.abortSignal);
+
   const approved = await context.requestApproval({
     kind: "web",
     toolName: WEB_SEARCH_TOOL_NAME,
@@ -55,7 +58,8 @@ export async function executeWebSearchTool(
   }
 
   const maxResults = input.max_results ?? DEFAULT_MAX_RESULTS;
-  const html = await fetchDuckDuckGoHtml(input.query, context.commandTimeoutMs);
+  throwIfAborted(context.abortSignal);
+  const html = await fetchDuckDuckGoHtml(input.query, context.commandTimeoutMs, context.abortSignal);
 
   const parsed = parseDuckDuckGoResults(html)
     .filter((item) => passesDomainFilter(item.url, input.allowed_domains, input.blocked_domains))
@@ -69,11 +73,22 @@ export async function executeWebSearchTool(
   };
 }
 
-async function fetchDuckDuckGoHtml(query: string, timeoutMs: number): Promise<string> {
+async function fetchDuckDuckGoHtml(
+  query: string,
+  timeoutMs: number,
+  parentSignal?: AbortSignal
+): Promise<string> {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), Math.max(1, timeoutMs));
+  const handleAbort = () => controller.abort(parentSignal?.reason);
 
   try {
+    if (parentSignal?.aborted) {
+      controller.abort(parentSignal.reason);
+    } else {
+      parentSignal?.addEventListener("abort", handleAbort, { once: true });
+    }
+
     const searchUrl = `https://html.duckduckgo.com/html/?q=${encodeURIComponent(query)}`;
     const response = await fetch(searchUrl, {
       signal: controller.signal,
@@ -95,6 +110,7 @@ async function fetchDuckDuckGoHtml(query: string, timeoutMs: number): Promise<st
     throw error;
   } finally {
     clearTimeout(timer);
+    parentSignal?.removeEventListener("abort", handleAbort);
   }
 }
 

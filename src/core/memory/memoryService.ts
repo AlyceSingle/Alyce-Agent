@@ -1,4 +1,5 @@
 import OpenAI from "openai";
+import { isTurnInterruptedError, toTurnInterruptedError } from "../abort.js";
 import { buildAutoSessionSummary, getConversationMessageCount } from "./autoSummary.js";
 import { PersistentMemoryStore } from "./persistentMemoryStore.js";
 import { SessionMemoryStore } from "./sessionMemoryStore.js";
@@ -88,6 +89,7 @@ export class MemoryService {
     client: OpenAI;
     model: string;
     messages: MessageParam[];
+    abortSignal?: AbortSignal;
   }): Promise<boolean> {
     if (!this.autoSummaryEnabled) {
       return false;
@@ -109,7 +111,8 @@ export class MemoryService {
         existingSummary: this.autoSummary?.markdown,
         messages: options.messages,
         windowMessages: this.config.autoSummary.windowMessages,
-        maxCharsPerMessage: this.config.autoSummary.maxCharsPerMessage
+        maxCharsPerMessage: this.config.autoSummary.maxCharsPerMessage,
+        abortSignal: options.abortSignal
       });
 
       this.autoSummary = {
@@ -119,7 +122,11 @@ export class MemoryService {
       };
 
       return true;
-    } catch {
+    } catch (error) {
+      if (isTurnInterruptedError(error, options.abortSignal)) {
+        throw toTurnInterruptedError(error, options.abortSignal);
+      }
+
       return false;
     } finally {
       this.autoSummaryUpdating = false;

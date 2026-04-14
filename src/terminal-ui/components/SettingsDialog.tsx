@@ -1,6 +1,12 @@
 import React, { useEffect, useState } from "react";
-import type { ConnectionConfig, SessionSettings } from "../../config/runtime.js";
+import type {
+  ConnectionConfig,
+  ConnectionConfigState,
+  SessionSettings,
+  SessionSettingsState
+} from "../../config/runtime.js";
 import { getBuiltinPersonaPresetNames } from "../../core/prompt/fragments/personaPresets.js";
+import { useRegisterOverlay } from "../context/overlayContext.js";
 import { Box, Text, useInput } from "../runtime/ink.js";
 import type { SettingsSection } from "../state/types.js";
 import { terminalUiTheme } from "../theme/theme.js";
@@ -61,6 +67,9 @@ const FIELD_DEFINITIONS: FieldDefinition[] = [
   }
 ];
 
+const CONNECTION_FIELDS = FIELD_DEFINITIONS.filter((field) => field.section === "connection");
+const SESSION_FIELDS = FIELD_DEFINITIONS.filter((field) => field.section === "session");
+
 function encodeTextValue(value: string | undefined) {
   return value?.replace(/\r?\n/g, "\\n") ?? "";
 }
@@ -95,45 +104,105 @@ function maskValue(value: string) {
   return `${value.slice(0, 4)}...${value.slice(-4)}`;
 }
 
+function getSourceLabel(source: string) {
+  switch (source) {
+    case "project":
+      return "project file";
+    case "user":
+      return "user file";
+    case "env":
+      return "environment";
+    case "cli":
+      return "CLI flag";
+    default:
+      return "built-in default";
+  }
+}
+
+function buildPatch<T extends object>(
+  fields: FieldDefinition[],
+  initialConfig: EditableConfig,
+  currentConfig: EditableConfig
+): Partial<T> {
+  const patch = {} as Partial<T>;
+
+  for (const field of fields) {
+    const key = field.key as keyof T;
+    const nextValue = currentConfig[field.key];
+    const initialValue = initialConfig[field.key];
+
+    if (!Object.is(initialValue, nextValue)) {
+      patch[key] = nextValue as T[keyof T];
+    }
+  }
+
+  return patch;
+}
+
 export function SettingsDialog(props: {
   visible: boolean;
   initialSection: SettingsSection;
   reason?: string;
   connection: ConnectionConfig;
+  connectionState: ConnectionConfigState;
   settings: SessionSettings;
+  settingsState: SessionSettingsState;
   onClose: () => void;
-  onSave: (connection: ConnectionConfig, settings: SessionSettings) => Promise<void>;
+  onSave: (
+    connectionPatch: Partial<ConnectionConfig>,
+    settingsPatch: Partial<SessionSettings>
+  ) => Promise<void>;
   onCtrlCCaptureChange: (capture: boolean) => void;
 }) {
+  const initialEditableConfig: EditableConfig = {
+    ...props.connection,
+    ...props.settings
+  };
   const [section, setSection] = useState<SettingsSection>(props.initialSection);
   const [selectedIndex, setSelectedIndex] = useState(0);
   const [isEditing, setIsEditing] = useState(false);
   const [draftValue, setDraftValue] = useState("");
   const [errorText, setErrorText] = useState<string | null>(null);
   const [isSaving, setIsSaving] = useState(false);
-  const [config, setConfig] = useState<EditableConfig>(() => ({
-    ...props.connection,
-    ...props.settings
-  }));
+  const [initialConfig, setInitialConfig] = useState<EditableConfig>(initialEditableConfig);
+  const [config, setConfig] = useState<EditableConfig>(initialEditableConfig);
+
+  useRegisterOverlay("settings", props.visible);
 
   const sectionFields = FIELD_DEFINITIONS.filter((field) => field.section === section);
   const currentField = sectionFields[selectedIndex] ?? sectionFields[0];
+  const sourceInfo =
+    currentField?.section === "connection"
+      ? {
+          source: props.connectionState.sources[currentField.key as keyof ConnectionConfig] ?? "default",
+          saveTargetPath: props.connectionState.saveTargetPath,
+          fallbackPath: null as string | null
+        }
+      : currentField
+        ? {
+            source: props.settingsState.sources[currentField.key as keyof SessionSettings] ?? "default",
+            saveTargetPath: props.settingsState.saveTargetPath,
+            fallbackPath: props.settingsState.projectPath
+          }
+        : null;
 
   useEffect(() => {
     if (!props.visible) {
       return;
     }
 
+    const nextConfig = {
+      ...props.connection,
+      ...props.settings
+    };
     setSection(props.initialSection);
     setSelectedIndex(0);
     setIsEditing(false);
     setDraftValue("");
     setErrorText(null);
     setIsSaving(false);
-    setConfig({
-      ...props.connection,
-      ...props.settings
-    });
+    setInitialConfig(nextConfig);
+    setConfig(nextConfig);
   }, [props.connection, props.initialSection, props.settings, props.visible]);
 
   useEffect(() => {
@@ -233,16 +302,6 @@ export function SettingsDialog(props: {
       return;
     }
 
-    if (currentField.type === "select" && key.rightArrow) {
-      cycleSelectField(currentField, 1);
-      return;
-    }
-
-    if (currentField.type === "select" && key.leftArrow) {
-      cycleSelectField(currentField, -1);
-      return;
-    }
-
     if (key.return) {
       setDraftValue(getFieldValue(config, currentField));
       setIsEditing(true);
@@ -259,6 +318,7 @@ export function SettingsDialog(props: {
     Math.min(selectedIndex - Math.floor(visibleCount / 2), sectionFields.length - visibleCount)
   );
   const visibleFields = sectionFields.slice(startIndex, startIndex + visibleCount);
+  const hasRuntimeOverride = sourceInfo?.source === "env" || sourceInfo?.source === "cli";
 
   return (
     <Box
@@ -276,17 +336,16 @@ export function SettingsDialog(props: {
       ) : null}
       <Text color={terminalUiTheme.colors.muted} wrap="truncate-end">
         {section === "connection" ? "Connection" : "Session"}
-        {" · "}
+        {" | "}
         Left/Right switch tab
-        {" · "}
+        {" | "}
         Enter edit
-        {" · "}
+        {" | "}
         S save
-        {" · "}
+        {" | "}
         Esc close
       </Text>
       <Box flexDirection="column" marginTop={1} width="100%">
-        {/* 列表项保持单行，避免上下切换时触发终端宽高抖动。 */}
         {visibleFields.map((field, index) => {
           const actualIndex = startIndex + index;
           const isSelected = actualIndex === selectedIndex;
@@ -300,7 +359,7 @@ export function SettingsDialog(props: {
                 backgroundColor={isSelected ? terminalUiTheme.colors.selection : undefined}
                 wrap="truncate-end"
               >
-                {isSelected ? "›" : " "}
+                {isSelected ? ">" : " "}
                 {" "}
                 {field.label}: {valueLabel}
               </Text>
@@ -308,11 +367,26 @@ export function SettingsDialog(props: {
           );
         })}
       </Box>
-      {currentField ? (
+      {currentField && sourceInfo ? (
         <Box flexDirection="column" marginTop={1} width="100%">
           <Text color={terminalUiTheme.colors.subtle} wrap="truncate-end">
             Current field: {currentField.label}
           </Text>
+          <Text color={terminalUiTheme.colors.subtle} wrap="truncate-end">
+            Source: {getSourceLabel(sourceInfo.source)}
+            {" | "}
+            Save target: {normalizeInlineValue(sourceInfo.saveTargetPath, "(none)")}
+          </Text>
+          {sourceInfo.fallbackPath ? (
+            <Text color={terminalUiTheme.colors.subtle} wrap="truncate-end">
+              Project fallback: {normalizeInlineValue(sourceInfo.fallbackPath, "(none)")}
+            </Text>
+          ) : null}
+          {hasRuntimeOverride ? (
+            <Text color={terminalUiTheme.colors.warning} wrap="truncate-end">
+              This field is currently overridden by {sourceInfo.source}. Saved changes will apply after the override is removed.
+            </Text>
+          ) : null}
           {isEditing ? (
             <Text color={terminalUiTheme.colors.chrome} wrap="truncate-end">
               Draft: {currentField.secret ? maskValue(draftValue) : normalizeInlineValue(draftValue, "")}
@@ -398,24 +472,9 @@ export function SettingsDialog(props: {
     setIsSaving(true);
     setErrorText(null);
     try {
-      await props.onSave(
-        {
-          apiKey: config.apiKey,
-          baseURL: config.baseURL,
-          model: config.model
-        },
-        {
-          approvalMode: config.approvalMode,
-          maxSteps: config.maxSteps,
-          commandTimeoutMs: config.commandTimeoutMs,
-          autoSummaryEnabled: config.autoSummaryEnabled,
-          languagePreference: config.languagePreference,
-          personaPreset: config.personaPreset,
-          aiPersonalityPrompt: config.aiPersonalityPrompt,
-          customSystemPrompt: config.customSystemPrompt,
-          appendSystemPrompt: config.appendSystemPrompt
-        }
-      );
+      const connectionPatch = buildPatch<ConnectionConfig>(CONNECTION_FIELDS, initialConfig, config);
+      const settingsPatch = buildPatch<SessionSettings>(SESSION_FIELDS, initialConfig, config);
+      await props.onSave(connectionPatch, settingsPatch);
     } catch (error) {
       setErrorText(error instanceof Error ? error.message : String(error));
     } finally {

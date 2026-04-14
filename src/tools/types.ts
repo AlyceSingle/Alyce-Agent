@@ -13,6 +13,9 @@ export interface ToolExecutionContext {
   workspaceRoot: string;
   requestApproval: (request: ToolApprovalRequest) => Promise<boolean>;
   commandTimeoutMs: number;
+  turnId: string;
+  abortSignal: AbortSignal;
+  captureFileBeforeWrite: (absolutePath: string) => Promise<void>;
 }
 
 // 通用 JSON 对象类型，用于承接模型传入的工具参数。

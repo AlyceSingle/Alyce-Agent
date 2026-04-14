@@ -1,6 +1,7 @@
 import { spawn } from "node:child_process";
 import path from "node:path";
 import { z } from "zod";
+import { TurnInterruptedError, getAbortReason, throwIfAborted } from "../../core/abort.js";
 import { resolveWorkspacePath, toWorkspaceRelative } from "../internal/pathSandbox.js";
 import { truncate } from "../internal/values.js";
 import type { ToolExecutionContext } from "../types.js";
@@ -53,10 +54,11 @@ export async function executeBashTool(
     throw new Error("run_in_background is not supported in this runtime");
   }
 
+  throwIfAborted(context.abortSignal);
+
   const workingDirectory = resolveWorkingDirectory(context.workspaceRoot, input.cwd);
   const timeoutMs = normalizeTimeout(input.timeout_ms, context.commandTimeoutMs);
 
-  // 命令执行属于高风险动作，统一在运行前请求用户确认。
   const approved = await context.requestApproval({
     kind: "command",
     toolName: BASH_TOOL_NAME,
@@ -72,8 +74,10 @@ export async function executeBashTool(
     throw new Error("User rejected Bash tool request");
   }
 
+  throwIfAborted(context.abortSignal);
+
   const startedAt = Date.now();
-  const outcome = await runShellCommand(input.command, workingDirectory, timeoutMs);
+  const outcome = await runShellCommand(input.command, workingDirectory, timeoutMs, context.abortSignal);
 
   return {
     command: input.command,
@@ -135,7 +139,12 @@ function summarizeCommand(command: string): string {
   return `${normalized.slice(0, maxChars)}...`;
 }
 
-function runShellCommand(command: string, cwd: string, timeoutMs: number): Promise<{
+function runShellCommand(
+  command: string,
+  cwd: string,
+  timeoutMs: number,
+  abortSignal?: AbortSignal
+): Promise<{
   exitCode: number | null;
   signal: string | null;
   timedOut: boolean;
@@ -154,8 +163,60 @@ function runShellCommand(command: string, cwd: string, timeoutMs: number): Promi
     let stdout = "";
     let stderr = "";
     let timedOut = false;
+    let settled = false;
+    let timer: NodeJS.Timeout | null = null;
 
-    const timer = setTimeout(() => {
+    const cleanup = () => {
+      if (timer) {
+        clearTimeout(timer);
+      }
+      abortSignal?.removeEventListener("abort", handleAbort);
+    };
+
+    const finishResolve = (value: {
+      exitCode: number | null;
+      signal: string | null;
+      timedOut: boolean;
+      stdout: string;
+      stderr: string;
+    }) => {
+      if (settled) {
+        return;
+      }
+
+      settled = true;
+      cleanup();
+      resolve(value);
+    };
+
+    const finishReject = (error: Error) => {
+      if (settled) {
+        return;
+      }
+
+      settled = true;
+      cleanup();
+      reject(error);
+    };
+
+    const handleAbort = () => {
+      child.kill();
+      finishReject(
+        new TurnInterruptedError(
+          getAbortReason(abortSignal) ?? "aborted",
+          "Shell command interrupted by user"
+        )
+      );
+    };
+
+    if (abortSignal?.aborted) {
+      handleAbort();
+      return;
+    }
+
+    abortSignal?.addEventListener("abort", handleAbort, { once: true });
+
+    timer = setTimeout(() => {
       timedOut = true;
       child.kill();
     }, timeoutMs);
@@ -169,13 +230,11 @@ function runShellCommand(command: string, cwd: string, timeoutMs: number): Promi
     });
 
     child.on("error", (error) => {
-      clearTimeout(timer);
-      reject(error);
+      finishReject(error);
     });
 
     child.on("close", (exitCode, signal) => {
-      clearTimeout(timer);
-      resolve({
+      finishResolve({
         exitCode,
         signal,
         timedOut,

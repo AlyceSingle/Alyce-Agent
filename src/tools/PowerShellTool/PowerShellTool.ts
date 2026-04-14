@@ -1,6 +1,7 @@
 import { spawn } from "node:child_process";
 import path from "node:path";
 import { z } from "zod";
+import { TurnInterruptedError, getAbortReason, throwIfAborted } from "../../core/abort.js";
 import { resolveWorkspacePath, toWorkspaceRelative } from "../internal/pathSandbox.js";
 import { truncate } from "../internal/values.js";
 import type { ToolExecutionContext } from "../types.js";
@@ -52,10 +53,11 @@ export async function executePowerShellTool(
     throw new Error("run_in_background is not supported in this runtime");
   }
 
+  throwIfAborted(context.abortSignal);
+
   const workingDirectory = resolveWorkingDirectory(context.workspaceRoot, input.cwd);
   const timeoutMs = normalizeTimeout(input.timeout_ms, context.commandTimeoutMs);
 
-  // PowerShell 命令执行同样走审批，保证危险操作可被显式拦截。
   const approved = await context.requestApproval({
     kind: "command",
     toolName: POWERSHELL_TOOL_NAME,
@@ -71,8 +73,15 @@ export async function executePowerShellTool(
     throw new Error("User rejected PowerShell tool request");
   }
 
+  throwIfAborted(context.abortSignal);
+
   const startedAt = Date.now();
-  const outcome = await runPowerShellCommand(input.command, workingDirectory, timeoutMs);
+  const outcome = await runPowerShellCommand(
+    input.command,
+    workingDirectory,
+    timeoutMs,
+    context.abortSignal
+  );
 
   return {
     command: input.command,
@@ -120,7 +129,12 @@ function summarizeCommand(command: string): string {
   return `${normalized.slice(0, maxChars)}...`;
 }
 
-function runPowerShellCommand(command: string, cwd: string, timeoutMs: number): Promise<{
+function runPowerShellCommand(
+  command: string,
+  cwd: string,
+  timeoutMs: number,
+  abortSignal?: AbortSignal
+): Promise<{
   exitCode: number | null;
   signal: string | null;
   timedOut: boolean;
@@ -139,8 +153,60 @@ function runPowerShellCommand(command: string, cwd: string, timeoutMs: number): 
     let stdout = "";
     let stderr = "";
     let timedOut = false;
+    let settled = false;
+    let timer: NodeJS.Timeout | null = null;
 
-    const timer = setTimeout(() => {
+    const cleanup = () => {
+      if (timer) {
+        clearTimeout(timer);
+      }
+      abortSignal?.removeEventListener("abort", handleAbort);
+    };
+
+    const finishResolve = (value: {
+      exitCode: number | null;
+      signal: string | null;
+      timedOut: boolean;
+      stdout: string;
+      stderr: string;
+    }) => {
+      if (settled) {
+        return;
+      }
+
+      settled = true;
+      cleanup();
+      resolve(value);
+    };
+
+    const finishReject = (error: Error) => {
+      if (settled) {
+        return;
+      }
+
+      settled = true;
+      cleanup();
+      reject(error);
+    };
+
+    const handleAbort = () => {
+      child.kill();
+      finishReject(
+        new TurnInterruptedError(
+          getAbortReason(abortSignal) ?? "aborted",
+          "PowerShell command interrupted by user"
+        )
+      );
+    };
+
+    if (abortSignal?.aborted) {
+      handleAbort();
+      return;
+    }
+
+    abortSignal?.addEventListener("abort", handleAbort, { once: true });
+
+    timer = setTimeout(() => {
       timedOut = true;
       child.kill();
     }, timeoutMs);
@@ -154,13 +220,11 @@ function runPowerShellCommand(command: string, cwd: string, timeoutMs: number): 
     });
 
     child.on("error", (error) => {
-      clearTimeout(timer);
-      reject(error);
+      finishReject(error);
     });
 
     child.on("close", (exitCode, signal) => {
-      clearTimeout(timer);
-      resolve({
+      finishResolve({
         exitCode,
         signal,
         timedOut,
@@ -172,6 +236,5 @@ function runPowerShellCommand(command: string, cwd: string, timeoutMs: number): 
 }
 
 function resolvePowerShellExecutable(): string {
-  // Windows 优先 powershell.exe；其他平台尝试 pwsh 以兼容 PowerShell Core。
   return process.platform === "win32" ? "powershell.exe" : "pwsh";
 }

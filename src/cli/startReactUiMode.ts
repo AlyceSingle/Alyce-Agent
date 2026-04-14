@@ -15,8 +15,8 @@ export async function startReactUiMode(argv: string[], env: NodeJS.ProcessEnv) {
   const runtime = await createSessionRuntime(argv, env);
   const store = createTerminalUiStore(
     createInitialTerminalUiState({
-      connection: runtime.getConnectionConfig(),
-      settings: runtime.getSettings(),
+      connectionState: runtime.getConnectionConfigState(),
+      settingsState: runtime.getSettingsState(),
       workspaceRoot: runtime.workspaceRoot,
       requestPatchCount: runtime.requestPatches.length
     })

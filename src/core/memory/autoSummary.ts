@@ -8,6 +8,7 @@ type AutoSummaryOptions = {
   messages: MessageParam[];
   windowMessages: number;
   maxCharsPerMessage: number;
+  abortSignal?: AbortSignal;
 };
 
 const SUMMARY_TEMPLATE = [
@@ -36,39 +37,44 @@ export async function buildAutoSessionSummary(
     options.maxCharsPerMessage
   );
 
-  const response = await client.chat.completions.create({
-    model: options.model,
-    temperature: 0.1,
-    messages: [
-      {
-        role: "system",
-        content: [
-          "You are a session memory summarizer for a coding agent.",
-          "Your task is to update a concise and accurate session summary.",
-          "Output markdown only.",
-          "Preserve the exact section headers in the template.",
-          "Do not hallucinate. If uncertain, explicitly say unknown.",
-          "Focus on actionable engineering context for the next turn."
-        ].join(" ")
-      },
-      {
-        role: "user",
-        content: [
-          "Update the summary using the latest conversation window.",
-          "Prefer concrete facts: files, commands, errors, fixes, pending work.",
-          "",
-          "## Existing Summary",
-          options.existingSummary?.trim() || "(none)",
-          "",
-          "## Required Template",
-          SUMMARY_TEMPLATE,
-          "",
-          "## Conversation Window",
-          conversationWindow || "(empty)"
-        ].join("\n")
-      }
-    ]
-  });
+  const response = await client.chat.completions.create(
+    {
+      model: options.model,
+      temperature: 0.1,
+      messages: [
+        {
+          role: "system",
+          content: [
+            "You are a session memory summarizer for a coding agent.",
+            "Your task is to update a concise and accurate session summary.",
+            "Output markdown only.",
+            "Preserve the exact section headers in the template.",
+            "Do not hallucinate. If uncertain, explicitly say unknown.",
+            "Focus on actionable engineering context for the next turn."
+          ].join(" ")
+        },
+        {
+          role: "user",
+          content: [
+            "Update the summary using the latest conversation window.",
+            "Prefer concrete facts: files, commands, errors, fixes, pending work.",
+            "",
+            "## Existing Summary",
+            options.existingSummary?.trim() || "(none)",
+            "",
+            "## Required Template",
+            SUMMARY_TEMPLATE,
+            "",
+            "## Conversation Window",
+            conversationWindow || "(empty)"
+          ].join("\n")
+        }
+      ]
+    },
+    {
+      signal: options.abortSignal
+    }
+  );
 
   const content = response.choices[0]?.message?.content;
   if (typeof content !== "string" || content.trim().length === 0) {

@@ -77,9 +77,9 @@ docs/                          # 补充文档
 
 `src/config/runtime.ts` 负责合并配置，优先级为：
 
-1. 环境变量默认值
-2. 工作区 `.alyce/config.json` 与 `.alyce/settings.json`
-3. CLI 参数覆盖
+1. 工作区 `.alyce/config.json` 与 `.alyce/settings.json`
+2. 环境变量 `.env` / 进程环境变量覆盖
+3. CLI 参数最终覆盖
 
 运行时拆成两类配置：
 
@@ -178,4 +178,3 @@ docs/                          # 补充文档
 
 - `npm run build`：当前最基础的验证手段
 - `npm run dev`：验证 UI、工具审批和完整交互流
-

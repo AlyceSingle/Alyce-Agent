@@ -1,29 +1,40 @@
-import type { ConnectionConfig, SessionSettings } from "../../config/runtime.js";
+import type {
+  ApprovalMode,
+  ConnectionConfigState,
+  SessionSettingsState
+} from "../../config/runtime.js";
 import type { ToolApprovalRequest, ToolPermissionKind } from "../../tools/types.js";
 import type {
   ActiveDialog,
   SettingsSection,
   TerminalUiMessage,
+  TerminalUiOverlayId,
   TerminalUiState
 } from "./types.js";
 
+// 这里保持纯函数式状态变换，便于 UI 层按需组合更新而不引入副作用。
 export function createInitialTerminalUiState(options: {
-  connection: ConnectionConfig;
-  settings: SessionSettings;
+  connectionState: ConnectionConfigState;
+  settingsState: SessionSettingsState;
   workspaceRoot: string;
   requestPatchCount: number;
 }): TerminalUiState {
   return {
     workspaceRoot: options.workspaceRoot,
-    connection: options.connection,
-    settings: options.settings,
+    connection: options.connectionState.effective,
+    connectionState: options.connectionState,
+    settings: options.settingsState.effective,
+    settingsState: options.settingsState,
     requestPatchCount: options.requestPatchCount,
+    draftInput: "",
     isLoading: false,
-    statusText: options.connection.apiKey ? "Idle" : "Setup required",
+    statusText: options.connectionState.effective.apiKey ? "Idle" : "Setup required",
     dialog: null,
+    readerMessageId: null,
+    activeOverlays: [],
     messages: [],
     selectedMessageId: null,
-    sessionApprovalMode: options.settings.approvalMode,
+    sessionApprovalMode: options.settingsState.effective.approvalMode,
     sessionAllowedKinds: []
   };
 }
@@ -48,13 +59,32 @@ export function replaceMessages(
 }
 
 export function setLoading(state: TerminalUiState, isLoading: boolean): TerminalUiState {
+  if (state.isLoading === isLoading) {
+    return state;
+  }
+
   return {
     ...state,
     isLoading
   };
 }
 
+export function setDraftInput(state: TerminalUiState, draftInput: string): TerminalUiState {
+  if (state.draftInput === draftInput) {
+    return state;
+  }
+
+  return {
+    ...state,
+    draftInput
+  };
+}
+
 export function setStatusText(state: TerminalUiState, statusText: string): TerminalUiState {
+  if (state.statusText === statusText) {
+    return state;
+  }
+
   return {
     ...state,
     statusText
@@ -89,50 +119,62 @@ export function openSettingsDialog(
   };
 }
 
-export function openMessageDetailDialog(
+export function openMessageReader(
   state: TerminalUiState,
   messageId: string
 ): TerminalUiState {
   return {
     ...state,
-    dialog: {
-      type: "message-detail",
-      messageId
-    }
+    readerMessageId: messageId
+  };
+}
+
+export function closeMessageReader(state: TerminalUiState): TerminalUiState {
+  if (!state.readerMessageId) {
+    return state;
+  }
+
+  return {
+    ...state,
+    readerMessageId: null
   };
 }
 
 export function closeDialog(state: TerminalUiState): TerminalUiState {
   return {
     ...state,
-    dialog: null
+    dialog: null,
+    activeOverlays: []
   };
 }
 
 export function setDialog(state: TerminalUiState, dialog: ActiveDialog | null): TerminalUiState {
   return {
     ...state,
-    dialog
+    dialog,
+    activeOverlays: dialog ? state.activeOverlays : []
   };
 }
 
-export function setConnectionConfig(
+export function setConnectionConfigState(
   state: TerminalUiState,
-  connection: ConnectionConfig
+  connectionState: ConnectionConfigState
 ): TerminalUiState {
   return {
     ...state,
-    connection
+    connection: connectionState.effective,
+    connectionState
   };
 }
 
-export function setSessionSettings(
+export function setSessionSettingsState(
   state: TerminalUiState,
-  settings: SessionSettings
+  settingsState: SessionSettingsState
 ): TerminalUiState {
   return {
     ...state,
-    settings
+    settings: settingsState.effective,
+    settingsState
   };
 }
 
@@ -151,6 +193,7 @@ export function selectRelativeMessage(state: TerminalUiState, delta: number): Te
     return state;
   }
 
+  // 找不到当前选中项时回退到首条消息，避免新增消息后出现“空选中”状态。
   const currentIndex = Math.max(
     0,
     state.messages.findIndex((message) => message.id === state.selectedMessageId)
@@ -165,7 +208,7 @@ export function selectRelativeMessage(state: TerminalUiState, delta: number): Te
 
 export function setSessionApprovalMode(
   state: TerminalUiState,
-  sessionApprovalMode: SessionSettings["approvalMode"]
+  sessionApprovalMode: ApprovalMode
 ): TerminalUiState {
   return {
     ...state,
@@ -194,5 +237,31 @@ export function allowSessionKind(
   return {
     ...state,
     sessionAllowedKinds: [...state.sessionAllowedKinds, kind]
+  };
+}
+
+export function setOverlayActive(
+  state: TerminalUiState,
+  overlayId: TerminalUiOverlayId,
+  active: boolean
+): TerminalUiState {
+  if (active) {
+    if (state.activeOverlays.includes(overlayId)) {
+      return state;
+    }
+
+    return {
+      ...state,
+      activeOverlays: [...state.activeOverlays, overlayId]
+    };
+  }
+
+  if (!state.activeOverlays.includes(overlayId)) {
+    return state;
+  }
+
+  return {
+    ...state,
+    activeOverlays: state.activeOverlays.filter((currentId) => currentId !== overlayId)
   };
 }

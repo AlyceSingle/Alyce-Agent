@@ -1,4 +1,6 @@
+import { randomUUID } from "node:crypto";
 import { runAgentTurn } from "../../agent.js";
+import { isTurnInterruptedError, throwIfAborted } from "../../core/abort.js";
 import { parseReplCommand } from "../../cli/commandRouter.js";
 import {
   formatMemorySnapshot,
@@ -8,17 +10,19 @@ import {
 import type { ConnectionConfig, SessionSettings } from "../../config/runtime.js";
 import type { ToolApprovalRequest, ToolPermissionKind } from "../../tools/types.js";
 import {
-  allowSessionKind,
   appendMessage,
+  closeMessageReader,
   closeDialog,
+  openMessageReader,
   openPermissionDialog,
   openSettingsDialog,
   replaceMessages,
-  setConnectionConfig,
+  setConnectionConfigState,
+  setDraftInput,
   setLoading,
   setSessionAllowedKinds,
   setSessionApprovalMode,
-  setSessionSettings,
+  setSessionSettingsState,
   setStatusText
 } from "../state/actions.js";
 import type { TerminalUiStore } from "../state/store.js";
@@ -33,13 +37,36 @@ import {
   createUserMessage
 } from "./messageMapper.js";
 
+// SessionController 负责把 REPL/UI 事件翻译成会话运行时调用，并维护中断恢复状态。
+const RESTORABLE_TOOL_NAMES = new Set(["Edit", "Write"]);
+
+// 每轮请求在执行前都会记录一个 checkpoint，便于中断时回滚消息和文件改动。
+interface TurnCheckpoint {
+  turnId: string;
+  input: string;
+  runtimeMessageCount: number;
+  uiMessageCount: number;
+  controller: AbortController;
+  hasAssistantOutput: boolean;
+  hasNonRestorableToolActivity: boolean;
+  userCancelled: boolean;
+}
+
 export interface SessionController {
   initialize: () => void;
   submit: (input: string) => Promise<void>;
+  setDraftInput: (value: string) => void;
+  interrupt: () => void;
+  restoreLastInterruptedTurn: () => Promise<void>;
   respondToApproval: (decision: PermissionDecision) => void;
   openSettings: (section?: SettingsSection, reason?: string) => void;
+  openMessageReader: (messageId: string) => void;
+  closeMessageReader: () => void;
   closeDialog: () => void;
-  saveConfig: (connection: ConnectionConfig, settings: SessionSettings) => Promise<void>;
+  saveConfig: (
+    connectionPatch: Partial<ConnectionConfig>,
+    settingsPatch: Partial<SessionSettings>
+  ) => Promise<void>;
   requestExit: () => void;
   setExitHandler: (handler: (() => void) | null) => void;
 }
@@ -52,9 +79,15 @@ export function createSessionController(
   let pendingApprovalResolver: ((decision: PermissionDecision) => void) | null = null;
   let sessionApprovalMode = runtime.getSettings().approvalMode;
   const sessionAllowedKinds = new Set<ToolPermissionKind>();
+  let activeTurn: TurnCheckpoint | null = null;
+  let lastInterruptedTurn: TurnCheckpoint | null = null;
 
   const appendUiMessage = (message: TerminalUiMessage) => {
     store.updateState((state) => appendMessage(state, message));
+  };
+
+  const setDraftInputValue = (value: string) => {
+    store.updateState((state) => setDraftInput(state, value));
   };
 
   const syncApprovalState = () => {
@@ -68,6 +101,40 @@ export function createSessionController(
 
   const setDialogClosed = () => {
     store.updateState((state) => closeDialog(state));
+  };
+
+  const discardInterruptedTurn = () => {
+    if (!lastInterruptedTurn) {
+      return;
+    }
+
+    runtime.discardTurn(lastInterruptedTurn.turnId);
+    lastInterruptedTurn = null;
+  };
+
+  const canFullyRestoreTurn = (turn: TurnCheckpoint) => !turn.hasNonRestorableToolActivity;
+
+  const restoreTurn = async (turn: TurnCheckpoint) => {
+    // 文件回滚和消息截断必须一起做，避免 UI 与真实工作区状态脱节。
+    if (runtime.hasTrackedFileChanges(turn.turnId)) {
+      await runtime.restoreFilesForTurn(turn.turnId);
+    }
+
+    runtime.messages.splice(turn.runtimeMessageCount);
+    store.updateState((state) =>
+      setDraftInput(
+        replaceMessages(setStatusText(state, "Idle"), state.messages.slice(0, turn.uiMessageCount)),
+        turn.input
+      )
+    );
+
+    runtime.discardTurn(turn.turnId);
+    if (activeTurn?.turnId === turn.turnId) {
+      activeTurn = null;
+    }
+    if (lastInterruptedTurn?.turnId === turn.turnId) {
+      lastInterruptedTurn = null;
+    }
   };
 
   const requestApproval = async (request: ToolApprovalRequest) => {
@@ -89,6 +156,7 @@ export function createSessionController(
     store.updateState((state) => openPermissionDialog(state, request));
 
     return new Promise<boolean>((resolve) => {
+      // 审批结果既影响当前请求，也可能提升为“本会话允许该类操作”或“全会话自动批准”。
       pendingApprovalResolver = (decision) => {
         pendingApprovalResolver = null;
         setDialogClosed();
@@ -154,11 +222,15 @@ export function createSessionController(
     }
 
     if (parsedCommand.type === "clear") {
+      discardInterruptedTurn();
       await runtime.clearConversation();
       store.updateState((state) =>
-        replaceMessages(
-          setStatusText(state, "Idle"),
-          [createSystemMessage("History and session memory cleared.", "Session")]
+        setDraftInput(
+          replaceMessages(
+            setStatusText(state, "Idle"),
+            [createSystemMessage("History and session memory cleared.", "Session")]
+          ),
+          ""
         )
       );
       return true;
@@ -219,7 +291,7 @@ export function createSessionController(
 
     if (parsedCommand.type === "switch-model") {
       await runtime.setCurrentModel(parsedCommand.model);
-      store.updateState((state) => setConnectionConfig(state, runtime.getConnectionConfig()));
+      store.updateState((state) => setConnectionConfigState(state, runtime.getConnectionConfigState()));
       appendUiMessage(createSystemMessage("Switched model to: " + runtime.getCurrentModel(), "Model"));
       return true;
     }
@@ -261,6 +333,9 @@ export function createSessionController(
         return;
       }
 
+      discardInterruptedTurn();
+      setDraftInputValue("");
+
       const parsedCommand = parseReplCommand(normalized);
       if (await handleCommand(parsedCommand)) {
         return;
@@ -276,6 +351,22 @@ export function createSessionController(
         return;
       }
 
+      const turnId = randomUUID();
+      const controller = new AbortController();
+      const checkpoint: TurnCheckpoint = {
+        turnId,
+        input: normalized,
+        runtimeMessageCount: runtime.messages.length,
+        uiMessageCount: store.getState().messages.length,
+        controller,
+        hasAssistantOutput: false,
+        hasNonRestorableToolActivity: false,
+        userCancelled: false
+      };
+
+      runtime.beginTurn(turnId);
+      activeTurn = checkpoint;
+
       runtime.messages.push({
         role: "user",
         content: normalized
@@ -284,11 +375,17 @@ export function createSessionController(
       store.updateState((state) => setLoading(setStatusText(state, "Thinking..."), true));
 
       try {
+        // 每轮都绑定独立的 abort controller 和 tool context，确保取消只影响当前轮次。
         const client = runtime.requireClient();
         const reply = await runAgentTurn(client, runtime.messages, {
           model: runtime.getCurrentModel(),
           maxSteps: runtime.getSettings().maxSteps,
-          context: runtime.createToolContext(requestApproval),
+          abortSignal: controller.signal,
+          context: runtime.createToolContext({
+            turnId,
+            abortSignal: controller.signal,
+            requestApproval
+          }),
           requestPatches: runtime.requestPatches,
           onThinking: (thinking) => {
             const chunk = thinking.trim();
@@ -299,6 +396,10 @@ export function createSessionController(
             appendUiMessage(createThinkingMessage(chunk));
           },
           onToolCallStart: (toolName, rawArguments) => {
+            if (!RESTORABLE_TOOL_NAMES.has(toolName)) {
+              checkpoint.hasNonRestorableToolActivity = true;
+            }
+
             appendUiMessage(createToolStartMessage(toolName, rawArguments));
             store.updateState((state) => setStatusText(state, `Running ${toolName}...`));
           },
@@ -307,26 +408,97 @@ export function createSessionController(
           }
         });
 
+        checkpoint.hasAssistantOutput = true;
         appendUiMessage(createAssistantMessage(reply));
+        throwIfAborted(controller.signal);
 
         const summaryUpdated = await runtime.memoryService.maybeRefreshAutoSummary({
           client,
           model: runtime.getCurrentModel(),
-          messages: runtime.messages
+          messages: runtime.messages,
+          abortSignal: controller.signal
         });
+
+        throwIfAborted(controller.signal);
 
         if (summaryUpdated) {
           await runtime.resetSystemMessage();
           appendUiMessage(createSystemMessage("Auto session summary updated.", "Memory"));
         }
 
+        runtime.discardTurn(turnId);
+        activeTurn = null;
         store.updateState((state) => setStatusText(state, "Idle"));
       } catch (error) {
-        const message = error instanceof Error ? error.message : String(error);
-        appendUiMessage(createErrorMessage(message));
-        store.updateState((state) => setStatusText(state, "Error"));
+        if (isTurnInterruptedError(error, controller.signal)) {
+          activeTurn = null;
+
+          // 只有在未产生不可回滚副作用时，才允许把中断前状态完整恢复出来。
+          if (checkpoint.userCancelled && canFullyRestoreTurn(checkpoint) && !checkpoint.hasAssistantOutput) {
+            try {
+              await restoreTurn(checkpoint);
+            } catch (restoreError) {
+              const restoreMessage = restoreError instanceof Error ? restoreError.message : String(restoreError);
+              appendUiMessage(
+                createErrorMessage(`Interrupted, but failed to restore the previous turn: ${restoreMessage}`)
+              );
+              runtime.discardTurn(turnId);
+              store.updateState((state) => setStatusText(state, "Error"));
+            }
+          } else if (checkpoint.userCancelled && canFullyRestoreTurn(checkpoint)) {
+            lastInterruptedTurn = checkpoint;
+            appendUiMessage(
+              createSystemMessage(
+                "Request interrupted by user. Press ESC again to restore the previous turn.",
+                "Session"
+              )
+            );
+            store.updateState((state) => setStatusText(state, "Interrupted"));
+          } else {
+            runtime.discardTurn(turnId);
+            lastInterruptedTurn = null;
+            appendUiMessage(
+              createSystemMessage(
+                "Request interrupted by user. This turn cannot be fully restored because non-rewindable tools already ran.",
+                "Session"
+              )
+            );
+            store.updateState((state) => setStatusText(state, "Interrupted"));
+          }
+        } else {
+          activeTurn = null;
+          runtime.discardTurn(turnId);
+          const message = error instanceof Error ? error.message : String(error);
+          appendUiMessage(createErrorMessage(message));
+          store.updateState((state) => setStatusText(state, "Error"));
+        }
       } finally {
         store.updateState((state) => setLoading(state, false));
+      }
+    },
+    setDraftInput: (value) => {
+      setDraftInputValue(value);
+    },
+    interrupt: () => {
+      if (!activeTurn || activeTurn.controller.signal.aborted) {
+        return;
+      }
+
+      activeTurn.userCancelled = true;
+      activeTurn.controller.abort("user-cancel");
+      store.updateState((state) => setStatusText(state, "Interrupting..."));
+    },
+    restoreLastInterruptedTurn: async () => {
+      if (!lastInterruptedTurn) {
+        return;
+      }
+
+      try {
+        await restoreTurn(lastInterruptedTurn);
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        appendUiMessage(createErrorMessage(`Failed to restore the interrupted turn: ${message}`));
+        store.updateState((state) => setStatusText(state, "Error"));
       }
     },
     respondToApproval: (decision) => {
@@ -334,6 +506,12 @@ export function createSessionController(
     },
     openSettings: (section = "session", reason) => {
       store.updateState((state) => openSettingsDialog(state, section, reason));
+    },
+    openMessageReader: (messageId) => {
+      store.updateState((state) => openMessageReader(state, messageId));
+    },
+    closeMessageReader: () => {
+      store.updateState((state) => closeMessageReader(state));
     },
     closeDialog: () => {
       const activeDialog = store.getState().dialog;
@@ -343,18 +521,21 @@ export function createSessionController(
 
       setDialogClosed();
     },
-    saveConfig: async (connection, settings) => {
-      await runtime.updateConnectionConfig(connection);
-      await runtime.updateSettings(settings);
+    saveConfig: async (connectionPatch, settingsPatch) => {
+      await runtime.updateConnectionConfig(connectionPatch);
+      await runtime.updateSettings(settingsPatch);
 
-      sessionApprovalMode = settings.approvalMode;
+      sessionApprovalMode = runtime.getSettings().approvalMode;
       sessionAllowedKinds.clear();
 
       store.updateState((state) =>
         setStatusText(
           setSessionAllowedKinds(
             setSessionApprovalMode(
-              setSessionSettings(setConnectionConfig(closeDialog(state), runtime.getConnectionConfig()), runtime.getSettings()),
+              setSessionSettingsState(
+                setConnectionConfigState(closeDialog(state), runtime.getConnectionConfigState()),
+                runtime.getSettingsState()
+              ),
               sessionApprovalMode
             ),
             []
@@ -363,7 +544,17 @@ export function createSessionController(
         )
       );
 
-      appendUiMessage(createSystemMessage("Connection and runtime settings saved.", "Settings"));
+      const overriddenKeys = Object.entries(runtime.getSettingsState().sources)
+        .filter(([, source]) => source === "env" || source === "cli")
+        .map(([key]) => key);
+      appendUiMessage(
+        createSystemMessage(
+          overriddenKeys.length > 0
+            ? `Settings saved. Active overrides: ${overriddenKeys.join(", ")}.`
+            : "Connection and runtime settings saved.",
+          "Settings"
+        )
+      );
     },
     requestExit: () => {
       exitHandler?.();

@@ -1,38 +1,51 @@
 import OpenAI from "openai";
 import { executeToolCall, TOOL_SCHEMAS, type ToolExecutionContext } from "../../tools.js";
+import { isTurnInterruptedError, throwIfAborted, toTurnInterruptedError } from "../abort.js";
 import { sendChatCompletion } from "../api/sendChatCompletion.js";
 import type { RequestPatchOperation } from "../api/requestPatch.js";
 
 type MessageParam = OpenAI.Chat.Completions.ChatCompletionMessageParam;
-
 type UnknownRecord = Record<string, unknown>;
 
+// 单轮 Agent 执行采用“模型回复 -> 运行工具 -> 回填结果 -> 再次请求模型”的闭环。
 export interface AgentTurnOptions {
   model: string;
   maxSteps: number;
   context: ToolExecutionContext;
   requestPatches?: RequestPatchOperation[];
+  abortSignal?: AbortSignal;
   onThinking?: (content: string) => void;
   onToolCallStart?: (toolName: string, rawArguments: string) => void;
   onToolCallResult?: (toolName: string, result: string) => void;
 }
 
-// 执行单轮对话：允许模型在本轮内多次调用工具后再产出最终文本。
 export async function runAgentTurn(
   client: OpenAI,
   messages: MessageParam[],
   options: AgentTurnOptions
 ): Promise<string> {
-  // 循环上限用于防止工具调用链无限增长。
+  // 工具轮次受 maxSteps 限制，避免模型无限循环调用工具。
   for (let step = 0; step < options.maxSteps; step += 1) {
-    const response = await sendChatCompletion(client, {
-      model: options.model,
-      messages,
-      tools: TOOL_SCHEMAS,
-      toolChoice: "auto",
-      temperature: 0.2,
-      requestPatches: options.requestPatches
-    });
+    throwIfAborted(options.abortSignal);
+
+    let response: OpenAI.Chat.Completions.ChatCompletion;
+    try {
+      response = await sendChatCompletion(client, {
+        model: options.model,
+        messages,
+        tools: TOOL_SCHEMAS,
+        toolChoice: "auto",
+        temperature: 0.2,
+        requestPatches: options.requestPatches,
+        abortSignal: options.abortSignal
+      });
+    } catch (error) {
+      if (isTurnInterruptedError(error, options.abortSignal)) {
+        throw toTurnInterruptedError(error, options.abortSignal);
+      }
+
+      throw error;
+    }
 
     const next = response.choices[0]?.message;
     if (!next) {
@@ -40,34 +53,45 @@ export async function runAgentTurn(
     }
 
     const toolCalls = next.tool_calls ?? [];
-    // thinking 优先展示：工具调用前的中间文本 + 供应商扩展字段。
     const thinkingChunks = extractThinkingChunks(next, toolCalls.length > 0);
     for (const chunk of thinkingChunks) {
       options.onThinking?.(chunk);
     }
 
+    // 无论下一步是直接结束还是继续调工具，都先把 assistant 原始输出写回上下文。
     messages.push({
       role: "assistant",
       content: next.content ?? "",
       tool_calls: next.tool_calls
     });
 
-    // 没有工具调用时，本轮可直接返回模型文本。
     if (toolCalls.length === 0) {
       return (next.content ?? "").trim() || "(No text output from model)";
     }
 
     for (const toolCall of toolCalls) {
-      // 当前仅支持函数工具调用。
+      throwIfAborted(options.abortSignal);
+
       if (toolCall.type !== "function") {
         continue;
       }
 
       options.onToolCallStart?.(toolCall.function.name, toolCall.function.arguments);
-      const result = await executeToolCall(toolCall.function.name, toolCall.function.arguments, options.context);
+
+      let result: string;
+      try {
+        result = await executeToolCall(toolCall.function.name, toolCall.function.arguments, options.context);
+      } catch (error) {
+        if (isTurnInterruptedError(error, options.abortSignal)) {
+          throw toTurnInterruptedError(error, options.abortSignal);
+        }
+
+        throw error;
+      }
+
+      throwIfAborted(options.abortSignal);
       options.onToolCallResult?.(toolCall.function.name, result);
 
-      // 将工具结果追加到消息历史，供模型继续推理。
       messages.push({
         role: "tool",
         tool_call_id: toolCall.id,
@@ -85,7 +109,7 @@ function extractThinkingChunks(
 ): string[] {
   const chunks: string[] = [];
 
-  // 对于“先工具后答案”的步骤，assistant 的文本通常是中间思考或计划。
+  // 部分模型会把“思考”混在 content、reasoning 或扩展字段里，这里统一兜底提取。
   if (hasToolCalls && typeof message.content === "string") {
     pushUniqueChunk(chunks, message.content);
   }
@@ -95,7 +119,6 @@ function extractThinkingChunks(
   pushUniqueChunk(chunks, extended.reasoning_text);
   pushUniqueChunk(chunks, extractReasoningFromObject(extended.reasoning));
 
-  // 某些兼容网关会把内容块放在 content 数组里。
   if (Array.isArray(extended.content)) {
     for (const block of extended.content) {
       if (!block || typeof block !== "object") {
