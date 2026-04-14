@@ -1,5 +1,6 @@
 import React from "react";
 import type { SessionController } from "../adapters/sessionController.js";
+import { AlternateScreen } from "../runtime/ink.js";
 import { AgentScreen } from "../screens/AgentScreen.js";
 import { TerminalUiStoreProvider, type TerminalUiStore } from "../state/store.js";
 
@@ -9,7 +10,9 @@ export function App(props: {
 }) {
   return (
     <TerminalUiStoreProvider store={props.store}>
-      <AgentScreen controller={props.controller} />
+      <AlternateScreen>
+        <AgentScreen controller={props.controller} />
+      </AlternateScreen>
     </TerminalUiStoreProvider>
   );
 }

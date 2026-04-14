@@ -34,16 +34,21 @@ export function createInitialTerminalUiState(options: {
     activeOverlays: [],
     messages: [],
     selectedMessageId: null,
+    autoFollowMessages: true,
     sessionApprovalMode: options.settingsState.effective.approvalMode,
     sessionAllowedKinds: []
   };
 }
 
 export function appendMessage(state: TerminalUiState, message: TerminalUiMessage): TerminalUiState {
+  const nextMessages = [...state.messages, message];
+  const shouldFollow = state.autoFollowMessages || state.selectedMessageId === null;
+
   return {
     ...state,
-    messages: [...state.messages, message],
-    selectedMessageId: message.id
+    messages: nextMessages,
+    selectedMessageId: shouldFollow ? message.id : state.selectedMessageId,
+    autoFollowMessages: shouldFollow
   };
 }
 
@@ -54,7 +59,8 @@ export function replaceMessages(
   return {
     ...state,
     messages,
-    selectedMessageId: messages.at(-1)?.id ?? null
+    selectedMessageId: messages.at(-1)?.id ?? null,
+    autoFollowMessages: true
   };
 }
 
@@ -182,9 +188,12 @@ export function setSelectedMessageId(
   state: TerminalUiState,
   selectedMessageId: string | null
 ): TerminalUiState {
+  const lastMessageId = state.messages.at(-1)?.id ?? null;
+
   return {
     ...state,
-    selectedMessageId
+    selectedMessageId,
+    autoFollowMessages: selectedMessageId !== null && selectedMessageId === lastMessageId
   };
 }
 
@@ -202,7 +211,8 @@ export function selectRelativeMessage(state: TerminalUiState, delta: number): Te
 
   return {
     ...state,
-    selectedMessageId: state.messages[nextIndex]?.id ?? state.selectedMessageId
+    selectedMessageId: state.messages[nextIndex]?.id ?? state.selectedMessageId,
+    autoFollowMessages: nextIndex === state.messages.length - 1
   };
 }
 

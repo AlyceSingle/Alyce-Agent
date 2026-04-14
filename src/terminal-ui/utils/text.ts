@@ -104,6 +104,175 @@ export function buildInputViewport(value: string, cursor: number, maxWidth: numb
   };
 }
 
+type WrappedInputLine = {
+  chars: string[];
+  startIndex: number;
+  endIndex: number;
+};
+
+export interface InputViewportLine {
+  before: string;
+  current: string | null;
+  after: string;
+  isCursorLine: boolean;
+}
+
+function wrapInputLines(value: string, width: number): WrappedInputLine[] {
+  const safeWidth = Math.max(8, width);
+  const characters = toCharacters(value);
+  const lines: WrappedInputLine[] = [];
+  let currentChars: string[] = [];
+  let currentWidth = 0;
+  let lineStartIndex = 0;
+
+  for (let index = 0; index < characters.length; index += 1) {
+    const character = characters[index] ?? "";
+
+    if (character === "\n") {
+      lines.push({
+        chars: currentChars,
+        startIndex: lineStartIndex,
+        endIndex: index
+      });
+      currentChars = [];
+      currentWidth = 0;
+      lineStartIndex = index + 1;
+      continue;
+    }
+
+    const nextWidth = measureCharWidth(character);
+    if (currentChars.length > 0 && currentWidth + nextWidth > safeWidth) {
+      lines.push({
+        chars: currentChars,
+        startIndex: lineStartIndex,
+        endIndex: index
+      });
+      currentChars = [character];
+      currentWidth = nextWidth;
+      lineStartIndex = index;
+      continue;
+    }
+
+    currentChars.push(character);
+    currentWidth += nextWidth;
+  }
+
+  lines.push({
+    chars: currentChars,
+    startIndex: lineStartIndex,
+    endIndex: characters.length
+  });
+
+  return lines;
+}
+
+function getCursorLineLocation(lines: WrappedInputLine[], cursor: number) {
+  if (lines.length === 0) {
+    return {
+      lineIndex: 0,
+      column: 0
+    };
+  }
+
+  for (let index = 0; index < lines.length; index += 1) {
+    const line = lines[index]!;
+    const nextLine = lines[index + 1];
+    const wrapsIntoNextLine =
+      nextLine !== undefined &&
+      cursor === line.endIndex &&
+      nextLine.startIndex === cursor &&
+      nextLine.startIndex === line.endIndex;
+
+    if (cursor < line.startIndex || cursor > line.endIndex || wrapsIntoNextLine) {
+      continue;
+    }
+
+    return {
+      lineIndex: index,
+      column: cursor - line.startIndex
+    };
+  }
+
+  const lastLine = lines.at(-1)!;
+  return {
+    lineIndex: lines.length - 1,
+    column: Math.max(0, cursor - lastLine.startIndex)
+  };
+}
+
+export function buildInputEditorViewport(
+  value: string,
+  cursor: number,
+  maxWidth: number,
+  maxLines: number
+): {
+  lines: InputViewportLine[];
+  hasTopOverflow: boolean;
+  hasBottomOverflow: boolean;
+  totalLines: number;
+} {
+  const safeWidth = Math.max(8, maxWidth);
+  const safeMaxLines = Math.max(1, maxLines);
+  const characters = toCharacters(value);
+  const safeCursor = Math.min(Math.max(0, cursor), characters.length);
+  const wrappedLines = wrapInputLines(value, safeWidth);
+  const cursorLocation = getCursorLineLocation(wrappedLines, safeCursor);
+  const startLine = Math.max(0, cursorLocation.lineIndex - safeMaxLines + 1);
+  const endLine = Math.min(wrappedLines.length, startLine + safeMaxLines);
+  const visibleLines = wrappedLines.slice(startLine, endLine);
+
+  return {
+    lines: visibleLines.map((line, index) => {
+      const absoluteLineIndex = startLine + index;
+
+      if (absoluteLineIndex !== cursorLocation.lineIndex) {
+        return {
+          before: line.chars.join(""),
+          current: null,
+          after: "",
+          isCursorLine: false
+        };
+      }
+
+      const before = line.chars.slice(0, cursorLocation.column).join("");
+      if (cursorLocation.column >= line.chars.length) {
+        return {
+          before,
+          current: " ",
+          after: "",
+          isCursorLine: true
+        };
+      }
+
+      return {
+        before,
+        current: line.chars[cursorLocation.column] ?? " ",
+        after: line.chars.slice(cursorLocation.column + 1).join(""),
+        isCursorLine: true
+      };
+    }),
+    hasTopOverflow: startLine > 0,
+    hasBottomOverflow: endLine < wrappedLines.length,
+    totalLines: wrappedLines.length
+  };
+}
+
+export function moveCursorVertically(
+  value: string,
+  cursor: number,
+  width: number,
+  delta: -1 | 1
+): number {
+  const wrappedLines = wrapInputLines(value, width);
+  const cursorLocation = getCursorLineLocation(wrappedLines, cursor);
+  const targetLineIndex = Math.max(
+    0,
+    Math.min(wrappedLines.length - 1, cursorLocation.lineIndex + delta)
+  );
+  const targetLine = wrappedLines[targetLineIndex]!;
+  return targetLine.startIndex + Math.min(cursorLocation.column, targetLine.chars.length);
+}
+
 export function wrapText(value: string, width: number): string[] {
   const safeWidth = Math.max(8, width);
   const lines = value.split(/\r?\n/);

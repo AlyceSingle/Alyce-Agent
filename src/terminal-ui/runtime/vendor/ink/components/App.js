@@ -8,6 +8,7 @@ import StdoutContext from './StdoutContext.js';
 import StderrContext from './StderrContext.js';
 import FocusContext from './FocusContext.js';
 import ErrorOverview from './ErrorOverview.js';
+import CursorDeclarationContext from '../../../CursorDeclarationContext.js';
 const tab = '\t';
 const shiftTab = '\u001B[Z';
 const escape = '\u001B';
@@ -86,7 +87,8 @@ export default class App extends PureComponent {
                                 focusNext: this.focusNext,
                                 focusPrevious: this.focusPrevious,
                                 focus: this.focus,
-                            } }, this.state.error ? (React.createElement(ErrorOverview, { error: this.state.error })) : (this.props.children)))))));
+                            } },
+                            React.createElement(CursorDeclarationContext.Provider, { value: this.props.onCursorDeclaration ?? (() => { }) }, this.state.error ? (React.createElement(ErrorOverview, { error: this.state.error })) : (this.props.children))))))));
     }
     componentDidMount() {
         cliCursor.hide(this.props.stdout);

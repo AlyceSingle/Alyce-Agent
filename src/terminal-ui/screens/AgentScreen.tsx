@@ -14,14 +14,15 @@ import { useTerminalInput } from "../runtime/input.js";
 import { setSelectedMessageId } from "../state/actions.js";
 import { useTerminalUiSelector, useTerminalUiStore } from "../state/store.js";
 
-const BODY_CHROME_ROWS = 13;
+const BODY_CHROME_ROWS = 15;
 const MESSAGE_SCROLL_PAGE = 5;
 const MIN_MESSAGE_VIEWPORT_ROWS = 8;
+const EXIT_CONFIRMATION_STATUS = "Press Ctrl+C again to quit";
 
 const ConversationPane = React.memo(function ConversationPane(props: {
   terminalWidth: number;
   viewportHeight: number;
-  scrollOffset: number;
+  autoFollow: boolean;
 }) {
   const messages = useTerminalUiSelector((value) => value.messages);
   const selectedMessageId = useTerminalUiSelector((value) => value.selectedMessageId);
@@ -32,7 +33,7 @@ const ConversationPane = React.memo(function ConversationPane(props: {
       selectedMessageId={selectedMessageId}
       viewportWidth={props.terminalWidth}
       viewportHeight={props.viewportHeight}
-      scrollOffset={props.scrollOffset}
+      autoFollow={props.autoFollow}
     />
   );
 });
@@ -56,6 +57,7 @@ export function AgentScreen(props: { controller: SessionController }) {
   const draftInput = useTerminalUiSelector((value) => value.draftInput);
   const selectedMessageId = useTerminalUiSelector((value) => value.selectedMessageId);
   const messagesLength = useTerminalUiSelector((value) => value.messages.length);
+  const autoFollowMessages = useTerminalUiSelector((value) => value.autoFollowMessages);
   const selectedMessageIndex = useTerminalUiSelector((value) => {
     if (value.messages.length === 0) {
       return -1;
@@ -72,14 +74,13 @@ export function AgentScreen(props: { controller: SessionController }) {
     return value.messages.find((message) => message.id === readerMessageId) ?? null;
   });
   const clearOnCtrlCRef = useRef(false);
-  const [messageScrollOffset, setMessageScrollOffset] = useState(0);
+  const [exitConfirmationPending, setExitConfirmationPending] = useState(false);
   const terminalWidth = stdout.columns || 120;
   const terminalHeight = stdout.rows || 36;
   const messageViewportHeight = Math.max(MIN_MESSAGE_VIEWPORT_ROWS, terminalHeight - BODY_CHROME_ROWS);
   const hasDialog = dialog !== null;
   const isReaderOpen = Boolean(readerMessage);
   const hasActiveOverlay = useIsOverlayActive();
-  const maxMessageScrollOffset = Math.max(0, messagesLength - 1);
 
   useEffect(() => {
     props.controller.setExitHandler(() => exit());
@@ -88,21 +89,12 @@ export function AgentScreen(props: { controller: SessionController }) {
     };
   }, [exit, props.controller]);
 
-  useEffect(() => {
-    setMessageScrollOffset((current) => Math.min(current, maxMessageScrollOffset));
-  }, [maxMessageScrollOffset]);
-
-  useEffect(() => {
-    if (selectedMessageIndex < 0) {
-      return;
-    }
-
-    const requiredOffset = Math.max(0, messagesLength - selectedMessageIndex - 1);
-    setMessageScrollOffset((current) => Math.max(current, requiredOffset));
-  }, [messagesLength, selectedMessageIndex]);
-
   const setCtrlCCapture = useCallback((capture: boolean) => {
     clearOnCtrlCRef.current = capture;
+  }, []);
+
+  const resetExitConfirmation = useCallback(() => {
+    setExitConfirmationPending(false);
   }, []);
 
   const focusMessageByIndex = useCallback((nextIndex: number) => {
@@ -113,7 +105,6 @@ export function AgentScreen(props: { controller: SessionController }) {
     }
 
     store.updateState((state) => setSelectedMessageId(state, nextMessage.id));
-    setMessageScrollOffset(Math.max(0, currentState.messages.length - nextIndex - 1));
   }, [store]);
 
   const keybindingHandlers = useMemo(() => ({
@@ -185,16 +176,54 @@ export function AgentScreen(props: { controller: SessionController }) {
   });
 
   useTerminalInput((input, key) => {
+    const normalizedInput = input.toLowerCase();
+    const isCtrlC = key.ctrl && normalizedInput === "c";
+
+    if (!isCtrlC && exitConfirmationPending) {
+      resetExitConfirmation();
+    }
+
     if (key.escape && dialog?.type === "permission") {
       props.controller.respondToApproval("reject-once");
       return;
     }
 
     // Only hijack Ctrl+C when there is no editable input to clear.
-    if (key.ctrl && input.toLowerCase() === "c" && !clearOnCtrlCRef.current) {
-      props.controller.requestExit();
+    if (isCtrlC && !clearOnCtrlCRef.current) {
+      if (exitConfirmationPending) {
+        resetExitConfirmation();
+        props.controller.requestExit();
+        return;
+      }
+
+      setExitConfirmationPending(true);
+      return;
     }
   }, { isActive: !isReaderOpen });
+
+  useEffect(() => {
+    if (!exitConfirmationPending) {
+      return;
+    }
+
+    if (clearOnCtrlCRef.current || hasDialog || hasActiveOverlay || isReaderOpen) {
+      resetExitConfirmation();
+    }
+  }, [
+    exitConfirmationPending,
+    hasActiveOverlay,
+    hasDialog,
+    isReaderOpen,
+    resetExitConfirmation
+  ]);
+
+  useEffect(() => {
+    if (exitConfirmationPending && draftInput.length > 0) {
+      resetExitConfirmation();
+    }
+  }, [draftInput.length, exitConfirmationPending, resetExitConfirmation]);
+
+  const displayedStatusText = exitConfirmationPending ? EXIT_CONFIRMATION_STATUS : statusText;
 
   const overlay =
     dialog?.type === "permission" ? (
@@ -240,7 +269,7 @@ export function AgentScreen(props: { controller: SessionController }) {
           sessionApprovalMode={sessionApprovalMode}
           sessionAllowedKinds={sessionAllowedKinds}
           requestPatchCount={requestPatchCount}
-          statusText={statusText}
+          statusText={displayedStatusText}
         />
       }
       body={
@@ -250,7 +279,7 @@ export function AgentScreen(props: { controller: SessionController }) {
               <ConversationPane
                 terminalWidth={terminalWidth}
                 viewportHeight={messageViewportHeight}
-                scrollOffset={messageScrollOffset}
+                autoFollow={autoFollowMessages}
               />
             )
       }
@@ -263,9 +292,11 @@ export function AgentScreen(props: { controller: SessionController }) {
                 viewportWidth={terminalWidth}
                 disabled={isLoading}
                 disabledReason={isLoading ? "Input locked while Alyce is working. Press ESC to interrupt." : undefined}
+                sublineText={`${connection.model} · ${workspaceRoot}`}
                 onChange={(value) => props.controller.setDraftInput(value)}
                 onCtrlCCaptureChange={setCtrlCCapture}
                 onSubmit={async (value) => {
+                  resetExitConfirmation();
                   await props.controller.submit(value);
                 }}
               />

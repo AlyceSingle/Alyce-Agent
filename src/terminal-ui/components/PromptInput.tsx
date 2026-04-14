@@ -1,18 +1,23 @@
-import React, { useEffect, useRef, useState } from "react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
 import { Box, Text } from "../runtime/ink.js";
-import { getBindingDisplayText } from "../keybindings/shortcutDisplay.js";
 import { useTerminalInput } from "../runtime/input.js";
+import { useDeclaredCursor } from "../runtime/useDeclaredCursor.js";
 import { terminalUiTheme } from "../theme/theme.js";
-import { buildInputViewport } from "../utils/text.js";
+import { buildInputEditorViewport, measureCharWidth, moveCursorVertically } from "../utils/text.js";
 
-const PREVIOUS_MESSAGE_SHORTCUT = getBindingDisplayText("conversation:previousMessage", "Conversation") ?? "Up";
-const NEXT_MESSAGE_SHORTCUT = getBindingDisplayText("conversation:nextMessage", "Conversation") ?? "Down";
-const PAGE_UP_SHORTCUT = getBindingDisplayText("conversation:pageUp", "Conversation") ?? "PgUp";
-const PAGE_DOWN_SHORTCUT = getBindingDisplayText("conversation:pageDown", "Conversation") ?? "PgDn";
-const OPEN_DETAIL_SHORTCUT = getBindingDisplayText("conversation:openDetail", "Global") ?? "Ctrl+O";
-const OPEN_SETTINGS_SHORTCUT = getBindingDisplayText("app:openSettings", "Global") ?? "Ctrl+X";
+const INPUT_VIEWPORT_LINES = 1;
+const PROMPT_PREFIX = "> ";
+const CONTINUATION_PREFIX = "  ";
 
-// Keep a local cursor while reflecting the externally controlled draft value.
+function getDisplayWidth(value: string) {
+  let width = 0;
+  for (const character of Array.from(value)) {
+    width += measureCharWidth(character);
+  }
+
+  return width;
+}
+
 function insertText(value: string, cursor: number, text: string) {
   return {
     value: value.slice(0, cursor) + text + value.slice(cursor),
@@ -48,17 +53,41 @@ function removeAtCursor(value: string, cursor: number) {
   };
 }
 
+function removePreviousWord(value: string, cursor: number) {
+  if (cursor <= 0) {
+    return {
+      value,
+      cursor
+    };
+  }
+
+  let target = cursor;
+  while (target > 0 && /\s/.test(value[target - 1] ?? "")) {
+    target -= 1;
+  }
+  while (target > 0 && !/\s/.test(value[target - 1] ?? "")) {
+    target -= 1;
+  }
+
+  return {
+    value: value.slice(0, target) + value.slice(cursor),
+    cursor: target
+  };
+}
+
 export function PromptInput(props: {
   value: string;
   viewportWidth: number;
   disabled: boolean;
   disabledReason?: string;
+  sublineText?: string;
   onChange: (value: string) => void;
   onCtrlCCaptureChange: (capture: boolean) => void;
   onSubmit: (value: string) => Promise<void> | void;
 }) {
   const [cursor, setCursor] = useState(0);
   const pendingValueRef = useRef<string | null>(null);
+  const editorWidth = Math.max(20, props.viewportWidth - 10);
 
   useEffect(() => {
     props.onCtrlCCaptureChange(!props.disabled && props.value.length > 0);
@@ -70,7 +99,6 @@ export function PromptInput(props: {
     };
   }, [props.onCtrlCCaptureChange]);
 
-  // Preserve the cursor for local edits, but snap to the end when the draft is replaced externally.
   useEffect(() => {
     if (pendingValueRef.current === props.value) {
       pendingValueRef.current = null;
@@ -91,20 +119,42 @@ export function PromptInput(props: {
     props.onChange(nextValue);
   };
 
-  // The prompt owns text-editing keys. Navigation across conversation history is handled globally.
+  const viewport = useMemo(
+    () => buildInputEditorViewport(props.value, cursor, editorWidth, INPUT_VIEWPORT_LINES),
+    [cursor, editorWidth, props.value]
+  );
+  const cursorLineIndex =
+    props.value.length === 0 ? 0 : Math.max(0, viewport.lines.findIndex((line) => line.isCursorLine));
+  const cursorLine = props.value.length === 0
+    ? null
+    : viewport.lines[cursorLineIndex] ?? null;
+  const cursorDeclaration = useDeclaredCursor({
+    line: cursorLineIndex,
+    column:
+      (props.value.length === 0 ? getDisplayWidth(PROMPT_PREFIX) : getDisplayWidth(cursorLineIndex === 0 ? PROMPT_PREFIX : CONTINUATION_PREFIX)) +
+      getDisplayWidth(cursorLine?.before ?? ""),
+    active: !props.disabled
+  });
+
   useTerminalInput((input, key) => {
     if (props.disabled) {
       return;
     }
 
-    if (key.return) {
-      const nextValue = props.value.trim();
-      if (!nextValue) {
+    if (key.return && !key.shift && !key.meta) {
+      if (!props.value.trim()) {
         return;
       }
 
+      const nextValue = props.value;
       commitChange("", 0);
       void props.onSubmit(nextValue);
+      return;
+    }
+
+    if (key.return && (key.shift || key.meta)) {
+      const next = insertText(props.value, cursor, "\n");
+      commitChange(next.value, next.cursor);
       return;
     }
 
@@ -115,6 +165,16 @@ export function PromptInput(props: {
 
     if (key.rightArrow) {
       setCursor((current) => Math.min(props.value.length, current + 1));
+      return;
+    }
+
+    if (key.upArrow) {
+      setCursor((current) => moveCursorVertically(props.value, current, editorWidth, -1));
+      return;
+    }
+
+    if (key.downArrow) {
+      setCursor((current) => moveCursorVertically(props.value, current, editorWidth, 1));
       return;
     }
 
@@ -140,6 +200,23 @@ export function PromptInput(props: {
       return;
     }
 
+    if (key.ctrl && input.toLowerCase() === "u") {
+      commitChange("", 0);
+      return;
+    }
+
+    if (key.ctrl && input.toLowerCase() === "w") {
+      const next = removePreviousWord(props.value, cursor);
+      commitChange(next.value, next.cursor);
+      return;
+    }
+
+    if (key.ctrl && input.toLowerCase() === "j") {
+      const next = insertText(props.value, cursor, "\n");
+      commitChange(next.value, next.cursor);
+      return;
+    }
+
     if (key.ctrl && input.toLowerCase() === "c") {
       if (!props.value.length) {
         return;
@@ -157,40 +234,55 @@ export function PromptInput(props: {
     commitChange(next.value, next.cursor);
   }, { isActive: !props.disabled });
 
-  const viewport = buildInputViewport(props.value, cursor, Math.max(16, props.viewportWidth - 8));
-  const helperText = props.disabled
+  const statusHint = props.disabled
     ? props.disabledReason || "Input locked."
-    : `Enter submit | ${PREVIOUS_MESSAGE_SHORTCUT}/${NEXT_MESSAGE_SHORTCUT} browse | ${PAGE_UP_SHORTCUT}/${PAGE_DOWN_SHORTCUT} jump | ${OPEN_DETAIL_SHORTCUT} reader | ${OPEN_SETTINGS_SHORTCUT} settings | Ctrl+C clear`;
+    : props.sublineText;
 
   return (
     <Box
       borderStyle="round"
-      borderColor={props.disabled ? terminalUiTheme.colors.border : terminalUiTheme.colors.borderActive}
+      borderColor={terminalUiTheme.colors.border}
       paddingX={1}
       flexDirection="column"
       width="100%"
     >
-      <Text color={terminalUiTheme.colors.muted} wrap="truncate-end">
-        {helperText}
-      </Text>
-      <Text>
-        <Text color={terminalUiTheme.colors.subtle}>{"> "}</Text>
-        {viewport.hasLeftOverflow ? (
-          <Text color={terminalUiTheme.colors.subtle}>...</Text>
-        ) : null}
-        <Text>{viewport.before}</Text>
-        {!props.disabled ? (
-          <Text color="black" backgroundColor={terminalUiTheme.colors.chrome}>
-            {viewport.current}
+      <Box ref={cursorDeclaration} flexDirection="column" width="100%">
+        {props.value.length === 0 ? (
+          <Text>
+            <Text color={terminalUiTheme.colors.subtle}>{PROMPT_PREFIX}</Text>
+            <Text
+              color={terminalUiTheme.colors.inputCursorText}
+              backgroundColor={terminalUiTheme.colors.inputCursor}
+            >
+              {" "}
+            </Text>
+            <Text color={terminalUiTheme.colors.subtle}> Ask Alyce to inspect, edit, or explain something...</Text>
           </Text>
         ) : (
-          <Text>{viewport.current}</Text>
+          viewport.lines.map((line, index) => (
+            <Text key={`input-line-${index}`}>
+              <Text color={terminalUiTheme.colors.subtle}>
+                {index === 0 ? PROMPT_PREFIX : CONTINUATION_PREFIX}
+              </Text>
+              <Text>{line.before}</Text>
+              {line.isCursorLine && line.current !== null ? (
+                <Text
+                  color={terminalUiTheme.colors.inputCursorText}
+                  backgroundColor={terminalUiTheme.colors.inputCursor}
+                >
+                  {line.current}
+                </Text>
+              ) : null}
+              <Text>{line.after}</Text>
+            </Text>
+          ))
         )}
-        <Text>{viewport.after}</Text>
-        {viewport.hasRightOverflow ? (
-          <Text color={terminalUiTheme.colors.subtle}>...</Text>
-        ) : null}
-      </Text>
+      </Box>
+      {statusHint ? (
+        <Text color={terminalUiTheme.colors.subtle} wrap="truncate-end">
+          {statusHint}
+        </Text>
+      ) : null}
     </Box>
   );
 }

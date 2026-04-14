@@ -34,6 +34,8 @@ const renderNodeToOutput = (node, output, options) => {
         // Left and top positions in Yoga are relative to their parent node
         const x = offsetX + yogaNode.getComputedLeft();
         const y = offsetY + yogaNode.getComputedTop();
+        node.internal_absoluteX = x;
+        node.internal_absoluteY = y;
         let childOffsetY = y;
         // Transformers are functions that transform final text output of each component
         // See Output class for logic that applies transformers

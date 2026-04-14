@@ -4,13 +4,10 @@ import { Box, Text } from "../runtime/ink.js";
 import { getBindingDisplayText } from "../keybindings/shortcutDisplay.js";
 import { terminalUiTheme } from "../theme/theme.js";
 
-const PREVIOUS_MESSAGE_SHORTCUT = getBindingDisplayText("conversation:previousMessage", "Conversation") ?? "Up";
-const NEXT_MESSAGE_SHORTCUT = getBindingDisplayText("conversation:nextMessage", "Conversation") ?? "Down";
-const PAGE_UP_SHORTCUT = getBindingDisplayText("conversation:pageUp", "Conversation") ?? "PgUp";
-const PAGE_DOWN_SHORTCUT = getBindingDisplayText("conversation:pageDown", "Conversation") ?? "PgDn";
-const OPEN_DETAIL_SHORTCUT = getBindingDisplayText("conversation:openDetail", "Global") ?? "Ctrl+O";
 const OPEN_SETTINGS_SHORTCUT = getBindingDisplayText("app:openSettings", "Global") ?? "Ctrl+X";
 const QUIT_SHORTCUT = getBindingDisplayText("app:quit", "Global") ?? "Ctrl+Q";
+const OPEN_DETAIL_SHORTCUT = getBindingDisplayText("conversation:openDetail", "Global") ?? "Ctrl+O";
+const ESCAPE_SHORTCUT = getBindingDisplayText("app:escape", "Global") ?? "Esc";
 
 function maskApiKey(apiKey: string) {
   if (!apiKey) {
@@ -46,6 +43,9 @@ export function StatusBar(props: {
   statusText: string;
 }) {
   const isReady = props.connection.apiKey.trim().length > 0;
+  const connectionColor = isReady
+    ? terminalUiTheme.colors.success
+    : terminalUiTheme.colors.warning;
 
   return (
     <Box
@@ -55,22 +55,20 @@ export function StatusBar(props: {
       flexDirection="column"
       width="100%"
     >
-      <Text color={terminalUiTheme.colors.chrome}>{terminalUiTheme.chrome.title}</Text>
-      <Text
-        color={isReady ? terminalUiTheme.colors.success : terminalUiTheme.colors.warning}
-        wrap="truncate-end"
-      >
-        {isReady ? "Connected" : "Setup required"}
+      <Text color={terminalUiTheme.colors.chrome} wrap="truncate-end">
+        {terminalUiTheme.chrome.title}
+        {" | "}
+        <Text color={connectionColor}>{isReady ? "Ready" : "Setup required"}</Text>
         {" | "}
         Model {props.connection.model}
-        {" | "}
-        API {maskApiKey(props.connection.apiKey)}
       </Text>
       <Text color={terminalUiTheme.colors.muted} wrap="truncate-end">
         Workspace: {props.workspaceRoot}
       </Text>
       <Text color={terminalUiTheme.colors.muted} wrap="truncate-end">
         Approval: {formatApprovalMode(props.sessionApprovalMode, props.sessionAllowedKinds)}
+        {" | "}
+        API: {maskApiKey(props.connection.apiKey)}
         {" | "}
         Max steps: {props.settings.maxSteps}
         {" | "}
@@ -80,7 +78,13 @@ export function StatusBar(props: {
       <Text color={terminalUiTheme.colors.subtle} wrap="truncate-end">
         Status: {props.statusText}
         {" | "}
-        /settings | {PREVIOUS_MESSAGE_SHORTCUT}/{NEXT_MESSAGE_SHORTCUT} browse | {PAGE_UP_SHORTCUT}/{PAGE_DOWN_SHORTCUT} jump | {OPEN_DETAIL_SHORTCUT} reader | {OPEN_SETTINGS_SHORTCUT} settings | {QUIT_SHORTCUT} quit
+        {OPEN_DETAIL_SHORTCUT} reader
+        {" | "}
+        {OPEN_SETTINGS_SHORTCUT} settings
+        {" | "}
+        {ESCAPE_SHORTCUT} interrupt/restore
+        {" | "}
+        {QUIT_SHORTCUT} quit
       </Text>
     </Box>
   );

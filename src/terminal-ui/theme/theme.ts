@@ -1,22 +1,26 @@
 export const terminalUiTheme = {
   colors: {
-    border: "#4b5563",
-    borderActive: "#93c5fd",
+    border: "#475569",
+    borderActive: "#f59e0b",
     chrome: "#f8fafc",
-    muted: "#94a3b8",
-    subtle: "#64748b",
-    info: "#7dd3fc",
-    success: "#86efac",
-    warning: "#fcd34d",
-    danger: "#fca5a5",
-    user: "#c4b5fd",
-    assistant: "#86efac",
-    tool: "#7dd3fc",
-    thinking: "#cbd5e1",
-    system: "#fcd34d",
-    selection: "#1e293b"
+    muted: "#cbd5e1",
+    subtle: "#94a3b8",
+    info: "#38bdf8",
+    success: "#4ade80",
+    warning: "#f59e0b",
+    danger: "#f87171",
+    user: "#fb923c",
+    assistant: "#4ade80",
+    tool: "#38bdf8",
+    thinking: "#d4d4d8",
+    system: "#facc15",
+    selection: "#1f2937",
+    selectionMuted: "#334155",
+    inputCursor: "#f8fafc",
+    inputCursorText: "#111827",
+    code: "#93c5fd"
   },
   chrome: {
-    title: "Alyce UI"
+    title: "Alyce Console"
   }
 } as const;

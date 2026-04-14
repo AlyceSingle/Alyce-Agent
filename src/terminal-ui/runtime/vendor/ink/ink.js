@@ -24,6 +24,8 @@ export default class Ink {
     lastOutput;
     container;
     rootNode;
+    cursorDeclaration;
+    parkedCursor;
     // This variable is used only in debug mode to store full static output
     // so that it's rerendered every time, not just new static parts, like in non-debug mode
     fullStaticOutput;
@@ -57,6 +59,8 @@ export default class Ink {
         // This variable is used only in debug mode to store full static output
         // so that it's rerendered every time, not just new static parts, like in non-debug mode
         this.fullStaticOutput = '';
+        this.cursorDeclaration = null;
+        this.parkedCursor = null;
         // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment
         this.container = reconciler.createContainer(this.rootNode, 
         // Legacy mode
@@ -89,7 +93,16 @@ export default class Ink {
     resolveExitPromise = () => { };
     rejectExitPromise = () => { };
     unsubscribeExit = () => { };
+    restoreCursorToRenderBase() {
+        if (!this.options.stdout.isTTY || !this.parkedCursor) {
+            return;
+        }
+        const down = Math.max(0, this.parkedCursor.outputHeight - this.parkedCursor.targetY);
+        this.options.stdout.write((down > 0 ? ansiEscapes.cursorDown(down) : '') + ansiEscapes.cursorLeft);
+        this.parkedCursor = null;
+    }
     invalidatePrevFrame() {
+        this.restoreCursorToRenderBase();
         if (!isInCi && !this.options.debug) {
             this.log.clear();
         }
@@ -130,6 +143,7 @@ export default class Ink {
                 this.fullStaticOutput += staticOutput;
             }
             this.options.stdout.write(this.fullStaticOutput + output);
+            this.parkCursor(outputHeight);
             return;
         }
         if (isInCi) {
@@ -143,23 +157,29 @@ export default class Ink {
             this.fullStaticOutput += staticOutput;
         }
         if (outputHeight >= this.options.stdout.rows) {
+            this.parkedCursor = null;
             this.options.stdout.write(ansiEscapes.clearTerminal + this.fullStaticOutput + output);
             this.lastOutput = output;
+            this.cursorDeclaration = null;
             return;
         }
         // To ensure static output is cleanly rendered before main output, clear main output first
         if (hasStaticOutput) {
+            this.restoreCursorToRenderBase();
             this.log.clear();
             this.options.stdout.write(staticOutput);
             this.log(output);
+            this.parkCursor(outputHeight);
         }
         if (!hasStaticOutput && output !== this.lastOutput) {
+            this.restoreCursorToRenderBase();
             this.throttledLog(output);
+            this.parkCursor(outputHeight);
         }
         this.lastOutput = output;
     };
     render(node) {
-        const tree = (React.createElement(App, { stdin: this.options.stdin, stdout: this.options.stdout, stderr: this.options.stderr, writeToStdout: this.writeToStdout, writeToStderr: this.writeToStderr, exitOnCtrlC: this.options.exitOnCtrlC, onExit: this.unmount }, node));
+        const tree = (React.createElement(App, { stdin: this.options.stdin, stdout: this.options.stdout, stderr: this.options.stderr, writeToStdout: this.writeToStdout, writeToStderr: this.writeToStderr, exitOnCtrlC: this.options.exitOnCtrlC, onExit: this.unmount, onCursorDeclaration: this.handleCursorDeclaration }, node));
         reconciler.updateContainer(tree, this.container, null, noop);
     }
     writeToStdout(data) {
@@ -174,6 +194,7 @@ export default class Ink {
             this.options.stdout.write(data);
             return;
         }
+        this.restoreCursorToRenderBase();
         this.log.clear();
         this.options.stdout.write(data);
         this.log(this.lastOutput);
@@ -191,6 +212,7 @@ export default class Ink {
             this.options.stderr.write(data);
             return;
         }
+        this.restoreCursorToRenderBase();
         this.log.clear();
         this.options.stderr.write(data);
         this.log(this.lastOutput);
@@ -200,11 +222,7 @@ export default class Ink {
         if (this.isUnmounted) {
             return;
         }
-        if (this.altScreenActive) {
-            this.exitAlternateScreen();
-        }
-        this.calculateLayout();
-        this.onRender();
+        this.restoreCursorToRenderBase();
         this.unsubscribeExit();
         if (typeof this.restoreConsole === 'function') {
             this.restoreConsole();
@@ -239,8 +257,44 @@ export default class Ink {
     }
     clear() {
         if (!isInCi && !this.options.debug) {
+            this.restoreCursorToRenderBase();
             this.log.clear();
         }
+    }
+    handleCursorDeclaration = (declaration, clearIfNode) => {
+        if (declaration) {
+            this.cursorDeclaration = declaration;
+            return;
+        }
+        if (!this.cursorDeclaration) {
+            return;
+        }
+        if (clearIfNode && this.cursorDeclaration.node !== clearIfNode) {
+            return;
+        }
+        this.cursorDeclaration = null;
+    };
+    parkCursor(outputHeight) {
+        this.parkedCursor = null;
+        if (!this.options.stdout.isTTY || !this.cursorDeclaration || outputHeight <= 0) {
+            return;
+        }
+        const node = this.cursorDeclaration.node;
+        const baseX = typeof node.internal_absoluteX === 'number' ? node.internal_absoluteX : undefined;
+        const baseY = typeof node.internal_absoluteY === 'number' ? node.internal_absoluteY : undefined;
+        if (typeof baseX !== 'number' || typeof baseY !== 'number') {
+            return;
+        }
+        const targetX = Math.max(0, Math.min(baseX + this.cursorDeclaration.relativeX, Math.max(0, (this.options.stdout.columns || 1) - 1)));
+        const targetY = baseY + this.cursorDeclaration.relativeY;
+        if (!Number.isFinite(targetY) || targetY < 0 || targetY >= outputHeight) {
+            return;
+        }
+        this.options.stdout.write(ansiEscapes.cursorUp(outputHeight - targetY) + ansiEscapes.cursorForward(targetX));
+        this.parkedCursor = {
+            outputHeight,
+            targetY,
+        };
     }
     patchConsole() {
         if (this.options.debug) {

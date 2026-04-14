@@ -15,10 +15,28 @@ export type TerminalUiMessageKind =
   | "tool"
   | "error";
 
+export type TerminalUiMessageBlockTone =
+  | "default"
+  | "muted"
+  | "info"
+  | "success"
+  | "warning"
+  | "danger";
+
+export type TerminalUiMessageBlockStyle = "plain" | "code";
+
+export interface TerminalUiMessageBlock {
+  label?: string;
+  content: string;
+  tone?: TerminalUiMessageBlockTone;
+  style?: TerminalUiMessageBlockStyle;
+}
+
 export interface TerminalUiMessage {
   id: string;
   kind: TerminalUiMessageKind;
   title: string;
+  blocks: TerminalUiMessageBlock[];
   content: string;
   preview: string;
   metadata: string[];
@@ -55,6 +73,7 @@ export interface TerminalUiState {
   activeOverlays: TerminalUiOverlayId[];
   messages: TerminalUiMessage[];
   selectedMessageId: string | null;
+  autoFollowMessages: boolean;
   sessionApprovalMode: ApprovalMode;
   sessionAllowedKinds: ToolPermissionKind[];
 }
