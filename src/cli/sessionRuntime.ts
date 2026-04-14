@@ -7,6 +7,7 @@ import {
   saveConnectionConfig,
   saveUserSessionSettings,
   type ConnectionConfig,
+  type ConnectionConfigSaveTarget,
   type ConnectionConfigState,
   type RuntimeConfig,
   type SessionSettings,
@@ -38,7 +39,10 @@ export interface SessionRuntime {
   requireClient: () => OpenAI;
   getCurrentModel: () => string;
   setCurrentModel: (model: string) => Promise<void>;
-  updateConnectionConfig: (patch: Partial<ConnectionConfig>) => Promise<void>;
+  updateConnectionConfig: (
+    patch: Partial<ConnectionConfig>,
+    target?: ConnectionConfigSaveTarget
+  ) => Promise<void>;
   updateSettings: (patch: Partial<SessionSettings>) => Promise<void>;
   resetSystemMessage: () => Promise<void>;
   clearConversation: () => Promise<void>;
@@ -125,6 +129,7 @@ export async function createSessionRuntime(
   let settingsState = cloneSessionSettingsState(config.settingsState);
   let connection = connectionState.effective;
   let settings = settingsState.effective;
+  let connectionSaveTarget = connectionState.saveTarget;
   let client: OpenAI | null = createClientFromConnection(connection);
 
   const promptResolver = new PromptSectionResolver();
@@ -166,12 +171,57 @@ export async function createSessionRuntime(
     };
   };
 
-  const persistConnection = async () => {
-    await saveConnectionConfig(config.paths, connectionState.project);
+  const rebuildConnectionState = (options: {
+    user?: Partial<ConnectionConfig>;
+    project?: Partial<ConnectionConfig>;
+    preferredSaveTarget?: ConnectionConfigSaveTarget;
+  }) => {
+    connectionState = buildConnectionConfigState(config.paths, {
+      user: options.user ?? connectionState.user,
+      project: options.project ?? connectionState.project,
+      env: connectionState.env,
+      cli: connectionState.cli,
+      preferredSaveTarget: options.preferredSaveTarget ?? connectionSaveTarget
+    });
+    connection = connectionState.effective;
+    connectionSaveTarget = connectionState.saveTarget;
+    client = createClientFromConnection(connection);
+  };
+
+  const persistConnection = async (target: ConnectionConfigSaveTarget) => {
+    await saveConnectionConfig(
+      config.paths,
+      target,
+      target === "project" ? connectionState.project : connectionState.user
+    );
   };
 
   const persistSettings = async () => {
     await saveUserSessionSettings(config.paths, settingsState.user);
+  };
+
+  const applyConnectionPatch = async (
+    patch: Partial<ConnectionConfig>,
+    target = connectionSaveTarget
+  ) => {
+    const sourcePatch = normalizeConnectionPatch(patch, connection);
+    rebuildConnectionState({
+      user:
+        target === "user"
+          ? mergePersistedSource(connectionState.user, sourcePatch)
+          : connectionState.user,
+      project:
+        target === "project"
+          ? mergePersistedSource(connectionState.project, sourcePatch)
+          : connectionState.project,
+      preferredSaveTarget: target
+    });
+
+    if (Object.keys(sourcePatch).length > 0) {
+      await persistConnection(target);
+    }
+
+    await resetSystemMessage();
   };
 
   return {
@@ -202,28 +252,10 @@ export async function createSessionRuntime(
     },
     getCurrentModel: () => connection.model,
     setCurrentModel: async (model) => {
-      const projectPatch = normalizeConnectionPatch({ model }, connection);
-      connectionState = buildConnectionConfigState(config.paths, {
-        project: mergePersistedSource(connectionState.project, projectPatch),
-        env: connectionState.env,
-        cli: connectionState.cli
-      });
-      connection = connectionState.effective;
-      client = createClientFromConnection(connection);
-      await persistConnection();
-      await resetSystemMessage();
+      await applyConnectionPatch({ model });
     },
-    updateConnectionConfig: async (patch) => {
-      const projectPatch = normalizeConnectionPatch(patch, connection);
-      connectionState = buildConnectionConfigState(config.paths, {
-        project: mergePersistedSource(connectionState.project, projectPatch),
-        env: connectionState.env,
-        cli: connectionState.cli
-      });
-      connection = connectionState.effective;
-      client = createClientFromConnection(connection);
-      await persistConnection();
-      await resetSystemMessage();
+    updateConnectionConfig: async (patch, target) => {
+      await applyConnectionPatch(patch, target);
     },
     updateSettings: async (patch) => {
       const userPatch = normalizeSettingsPatch(patch);
@@ -293,11 +325,15 @@ function mergePersistedSource<T extends object>(base: Partial<T>, patch: Partial
 function cloneConnectionConfigState(state: ConnectionConfigState): ConnectionConfigState {
   return {
     effective: { ...state.effective },
+    user: { ...state.user },
     project: { ...state.project },
     env: { ...state.env },
     cli: { ...state.cli },
     sources: { ...state.sources },
-    saveTargetPath: state.saveTargetPath
+    saveTarget: state.saveTarget,
+    saveTargetPath: state.saveTargetPath,
+    userPath: state.userPath,
+    projectPath: state.projectPath
   };
 }
 

@@ -1,6 +1,7 @@
 import React, { useEffect, useState } from "react";
 import type {
   ConnectionConfig,
+  ConnectionConfigSaveTarget,
   ConnectionConfigState,
   SessionSettings,
   SessionSettingsState
@@ -119,6 +120,10 @@ function getSourceLabel(source: string) {
   }
 }
 
+function getConnectionSaveTargetLabel(target: ConnectionConfigSaveTarget) {
+  return target === "project" ? "project file" : "user file";
+}
+
 function buildPatch<T extends object>(
   fields: FieldDefinition[],
   initialConfig: EditableConfig,
@@ -150,7 +155,8 @@ export function SettingsDialog(props: {
   onClose: () => void;
   onSave: (
     connectionPatch: Partial<ConnectionConfig>,
-    settingsPatch: Partial<SessionSettings>
+    settingsPatch: Partial<SessionSettings>,
+    connectionTarget: ConnectionConfigSaveTarget
   ) => Promise<void>;
   onCtrlCCaptureChange: (capture: boolean) => void;
 }) {
@@ -166,6 +172,9 @@ export function SettingsDialog(props: {
   const [isSaving, setIsSaving] = useState(false);
   const [initialConfig, setInitialConfig] = useState<EditableConfig>(initialEditableConfig);
   const [config, setConfig] = useState<EditableConfig>(initialEditableConfig);
+  const [connectionSaveTarget, setConnectionSaveTarget] = useState<ConnectionConfigSaveTarget>(
+    props.connectionState.saveTarget
+  );
 
   useRegisterOverlay("settings", props.visible);
 
@@ -174,9 +183,7 @@ export function SettingsDialog(props: {
   const sourceInfo =
     currentField?.section === "connection"
       ? {
-          source: props.connectionState.sources[currentField.key as keyof ConnectionConfig] ?? "default",
-          saveTargetPath: props.connectionState.saveTargetPath,
-          fallbackPath: null as string | null
+          source: props.connectionState.sources[currentField.key as keyof ConnectionConfig] ?? "default"
         }
       : currentField
         ? {
@@ -185,6 +192,14 @@ export function SettingsDialog(props: {
             fallbackPath: props.settingsState.projectPath
           }
         : null;
+  const connectionSavePath =
+    connectionSaveTarget === "project"
+      ? props.connectionState.projectPath
+      : props.connectionState.userPath;
+  const alternateConnectionSavePath =
+    connectionSaveTarget === "project"
+      ? props.connectionState.userPath
+      : props.connectionState.projectPath;
 
   useEffect(() => {
     if (!props.visible) {
@@ -203,6 +218,7 @@ export function SettingsDialog(props: {
     setIsSaving(false);
     setInitialConfig(nextConfig);
     setConfig(nextConfig);
+    setConnectionSaveTarget(props.connectionState.saveTarget);
   }, [props.connection, props.initialSection, props.settings, props.visible]);
 
   useEffect(() => {
@@ -284,6 +300,11 @@ export function SettingsDialog(props: {
       return;
     }
 
+    if (section === "connection" && input.toLowerCase() === "p") {
+      setConnectionSaveTarget((current) => (current === "project" ? "user" : "project"));
+      return;
+    }
+
     if (input.toLowerCase() === "s") {
       void saveAll();
       return;
@@ -318,7 +339,10 @@ export function SettingsDialog(props: {
     Math.min(selectedIndex - Math.floor(visibleCount / 2), sectionFields.length - visibleCount)
   );
   const visibleFields = sectionFields.slice(startIndex, startIndex + visibleCount);
-  const hasRuntimeOverride = sourceInfo?.source === "env" || sourceInfo?.source === "cli";
+  const hasRuntimeOverride =
+    currentField?.section === "connection"
+      ? sourceInfo?.source === "cli"
+      : sourceInfo?.source === "env" || sourceInfo?.source === "cli";
 
   return (
     <Box
@@ -338,6 +362,14 @@ export function SettingsDialog(props: {
         {section === "connection" ? "Connection" : "Session"}
         {" | "}
         Left/Right switch tab
+        {section === "connection"
+          ? (
+              <>
+                {" | "}
+                P target
+              </>
+            )
+          : null}
         {" | "}
         Enter edit
         {" | "}
@@ -345,6 +377,13 @@ export function SettingsDialog(props: {
         {" | "}
         Esc close
       </Text>
+      {section === "connection" ? (
+        <Text color={terminalUiTheme.colors.subtle} wrap="truncate-end">
+          Save scope: {getConnectionSaveTargetLabel(connectionSaveTarget)}
+          {" | "}
+          Path: {normalizeInlineValue(connectionSavePath, "(none)")}
+        </Text>
+      ) : null}
       <Box flexDirection="column" marginTop={1} width="100%">
         {visibleFields.map((field, index) => {
           const actualIndex = startIndex + index;
@@ -372,19 +411,40 @@ export function SettingsDialog(props: {
           <Text color={terminalUiTheme.colors.subtle} wrap="truncate-end">
             Current field: {currentField.label}
           </Text>
-          <Text color={terminalUiTheme.colors.subtle} wrap="truncate-end">
-            Source: {getSourceLabel(sourceInfo.source)}
-            {" | "}
-            Save target: {normalizeInlineValue(sourceInfo.saveTargetPath, "(none)")}
-          </Text>
-          {sourceInfo.fallbackPath ? (
-            <Text color={terminalUiTheme.colors.subtle} wrap="truncate-end">
-              Project fallback: {normalizeInlineValue(sourceInfo.fallbackPath, "(none)")}
-            </Text>
-          ) : null}
+          {currentField.section === "connection" ? (
+            <>
+              <Text color={terminalUiTheme.colors.subtle} wrap="truncate-end">
+                Source: {getSourceLabel(sourceInfo.source)}
+                {" | "}
+                Save scope: {getConnectionSaveTargetLabel(connectionSaveTarget)}
+              </Text>
+              <Text color={terminalUiTheme.colors.subtle} wrap="truncate-end">
+                Other scope path: {normalizeInlineValue(alternateConnectionSavePath, "(none)")}
+              </Text>
+            </>
+          ) : (
+            <>
+              <Text color={terminalUiTheme.colors.subtle} wrap="truncate-end">
+                Source: {getSourceLabel(sourceInfo.source)}
+                {" | "}
+                Save target: {normalizeInlineValue(sourceInfo.saveTargetPath, "(none)")}
+              </Text>
+              {sourceInfo.fallbackPath ? (
+                <Text color={terminalUiTheme.colors.subtle} wrap="truncate-end">
+                  Project fallback: {normalizeInlineValue(sourceInfo.fallbackPath, "(none)")}
+                </Text>
+              ) : null}
+            </>
+          )}
           {hasRuntimeOverride ? (
             <Text color={terminalUiTheme.colors.warning} wrap="truncate-end">
-              This field is currently overridden by {sourceInfo.source}. Saved changes will apply after the override is removed.
+              {currentField.section === "connection"
+                ? "This field is currently overridden by a CLI flag. Saved changes are persisted, but the CLI value stays active for this run."
+                : `This field is currently overridden by ${sourceInfo.source}. Saved changes will apply after the override is removed.`}
+            </Text>
+          ) : currentField.section === "connection" && sourceInfo.source === "env" ? (
+            <Text color={terminalUiTheme.colors.info} wrap="truncate-end">
+              This field currently falls back to the environment. Saving here will override that environment value.
             </Text>
           ) : null}
           {isEditing ? (
@@ -393,8 +453,10 @@ export function SettingsDialog(props: {
             </Text>
           ) : (
             <Text color={terminalUiTheme.colors.subtle} wrap="truncate-end">
-              {currentField.type === "text"
-                ? "Text fields accept \\n for line breaks."
+              {currentField.section === "connection"
+                ? "Text fields accept \\n for line breaks. Press P to switch the connection save scope."
+                : currentField.type === "text"
+                  ? "Text fields accept \\n for line breaks."
                 : currentField.type === "number"
                   ? "Number fields are persisted as positive integers."
                   : "Toggle or cycle this field with Enter."}
@@ -474,7 +536,7 @@ export function SettingsDialog(props: {
     try {
       const connectionPatch = buildPatch<ConnectionConfig>(CONNECTION_FIELDS, initialConfig, config);
       const settingsPatch = buildPatch<SessionSettings>(SESSION_FIELDS, initialConfig, config);
-      await props.onSave(connectionPatch, settingsPatch);
+      await props.onSave(connectionPatch, settingsPatch, connectionSaveTarget);
     } catch (error) {
       setErrorText(error instanceof Error ? error.message : String(error));
     } finally {

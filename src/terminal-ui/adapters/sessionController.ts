@@ -7,7 +7,11 @@ import {
   getHelpText,
   type SessionRuntime
 } from "../../cli/sessionRuntime.js";
-import type { ConnectionConfig, SessionSettings } from "../../config/runtime.js";
+import type {
+  ConnectionConfig,
+  ConnectionConfigSaveTarget,
+  SessionSettings
+} from "../../config/runtime.js";
 import type { ToolApprovalRequest, ToolPermissionKind } from "../../tools/types.js";
 import {
   appendMessage,
@@ -65,7 +69,8 @@ export interface SessionController {
   closeDialog: () => void;
   saveConfig: (
     connectionPatch: Partial<ConnectionConfig>,
-    settingsPatch: Partial<SessionSettings>
+    settingsPatch: Partial<SessionSettings>,
+    connectionTarget: ConnectionConfigSaveTarget
   ) => Promise<void>;
   requestExit: () => void;
   setExitHandler: (handler: (() => void) | null) => void;
@@ -521,8 +526,8 @@ export function createSessionController(
 
       setDialogClosed();
     },
-    saveConfig: async (connectionPatch, settingsPatch) => {
-      await runtime.updateConnectionConfig(connectionPatch);
+    saveConfig: async (connectionPatch, settingsPatch, connectionTarget) => {
+      await runtime.updateConnectionConfig(connectionPatch, connectionTarget);
       await runtime.updateSettings(settingsPatch);
 
       sessionApprovalMode = runtime.getSettings().approvalMode;
@@ -544,9 +549,14 @@ export function createSessionController(
         )
       );
 
-      const overriddenKeys = Object.entries(runtime.getSettingsState().sources)
+      const overriddenKeys = [
+        ...Object.entries(runtime.getConnectionConfigState().sources)
+          .filter(([, source]) => source === "cli")
+          .map(([key]) => `connection.${key}`),
+        ...Object.entries(runtime.getSettingsState().sources)
         .filter(([, source]) => source === "env" || source === "cli")
-        .map(([key]) => key);
+        .map(([key]) => `settings.${key}`)
+      ];
       appendUiMessage(
         createSystemMessage(
           overriddenKeys.length > 0

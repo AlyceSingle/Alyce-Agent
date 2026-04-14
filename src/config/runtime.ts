@@ -37,6 +37,8 @@ export interface ConnectionConfig {
   model: string;
 }
 
+export type ConnectionConfigSaveTarget = "user" | "project";
+
 export type ApprovalMode = "manual" | "auto";
 
 export interface SessionSettings extends PromptOverrideConfig {
@@ -46,16 +48,20 @@ export interface SessionSettings extends PromptOverrideConfig {
   autoSummaryEnabled: boolean;
 }
 
-export type ConnectionConfigSource = "default" | "project" | "env" | "cli";
+export type ConnectionConfigSource = "default" | "user" | "project" | "env" | "cli";
 export type SessionSettingsSource = "default" | "project" | "user" | "env" | "cli";
 
 export interface ConnectionConfigState {
   effective: ConnectionConfig;
+  user: Partial<ConnectionConfig>;
   project: Partial<ConnectionConfig>;
   env: Partial<ConnectionConfig>;
   cli: Partial<ConnectionConfig>;
   sources: Record<keyof ConnectionConfig, ConnectionConfigSource>;
+  saveTarget: ConnectionConfigSaveTarget;
   saveTargetPath: string;
+  userPath: string;
+  projectPath: string;
 }
 
 export interface SessionSettingsState {
@@ -75,6 +81,7 @@ export interface RuntimePaths {
   connectionConfigPath: string;
   settingsConfigPath: string;
   userAlyceDirectory: string;
+  userConnectionConfigPath: string;
   userSettingsConfigPath: string;
 }
 
@@ -116,13 +123,15 @@ export async function loadRuntimeConfig(
 ): Promise<RuntimeConfig> {
   const workspaceRoot = path.resolve(getArgValue(argv, "--cwd") || env.AGENT_WORKSPACE || ".");
   const paths = getRuntimePaths(workspaceRoot);
-  const [projectConnection, projectSettings, userSettings] = await Promise.all([
+  const [projectConnection, userConnection, projectSettings, userSettings] = await Promise.all([
     readJsonConfig(paths.connectionConfigPath, ConnectionConfigFileSchema),
+    readJsonConfig(paths.userConnectionConfigPath, ConnectionConfigFileSchema),
     readJsonConfig(paths.settingsConfigPath, SessionSettingsFileSchema),
     readJsonConfig(paths.userSettingsConfigPath, SessionSettingsFileSchema)
   ]);
 
   const connectionState = buildConnectionConfigState(paths, {
+    user: userConnection,
     project: projectConnection,
     env: resolveConnectionFromEnv(env),
     cli: resolveConnectionFromCli(argv)
@@ -168,32 +177,50 @@ export function getRuntimePaths(workspaceRoot: string): RuntimePaths {
     connectionConfigPath: path.join(alyceDirectory, "config.json"),
     settingsConfigPath: path.join(alyceDirectory, "settings.json"),
     userAlyceDirectory,
+    userConnectionConfigPath: path.join(userAlyceDirectory, "config.json"),
     userSettingsConfigPath: path.join(userAlyceDirectory, "settings.json")
   };
 }
 
 export function buildConnectionConfigState(
-  paths: Pick<RuntimePaths, "connectionConfigPath">,
+  paths: Pick<RuntimePaths, "connectionConfigPath" | "userConnectionConfigPath">,
   layers: {
+    user?: Partial<ConnectionConfig>;
     project?: Partial<ConnectionConfig>;
     env?: Partial<ConnectionConfig>;
     cli?: Partial<ConnectionConfig>;
+    preferredSaveTarget?: ConnectionConfigSaveTarget;
   }
 ): ConnectionConfigState {
+  const user = compactObject(layers.user ?? {});
+  const project = compactObject(layers.project ?? {});
+  const env = compactObject(layers.env ?? {});
+  const cli = compactObject(layers.cli ?? {});
   const orderedLayers: Array<SourceLayer<ConnectionConfig, ConnectionConfigSource>> = [
-    { source: "project", values: compactObject(layers.project ?? {}) },
-    { source: "env", values: compactObject(layers.env ?? {}) },
-    { source: "cli", values: compactObject(layers.cli ?? {}) }
+    { source: "env", values: env },
+    { source: "user", values: user },
+    { source: "project", values: project },
+    { source: "cli", values: cli }
   ];
   const effective = normalizeConnectionConfig(mergeLayers(orderedLayers));
+  const saveTarget = resolveConnectionSaveTarget({
+    preferred: layers.preferredSaveTarget,
+    user,
+    project
+  });
 
   return {
     effective,
-    project: orderedLayers[0]!.values,
-    env: orderedLayers[1]!.values,
-    cli: orderedLayers[2]!.values,
+    user,
+    project,
+    env,
+    cli,
     sources: buildSourceMap(effective, orderedLayers, "default"),
-    saveTargetPath: paths.connectionConfigPath
+    saveTarget,
+    saveTargetPath:
+      saveTarget === "project" ? paths.connectionConfigPath : paths.userConnectionConfigPath,
+    userPath: paths.userConnectionConfigPath,
+    projectPath: paths.connectionConfigPath
   };
 }
 
@@ -228,9 +255,13 @@ export function buildSessionSettingsState(
 
 export async function saveConnectionConfig(
   paths: RuntimePaths,
+  target: ConnectionConfigSaveTarget,
   connection: Partial<ConnectionConfig>
 ): Promise<void> {
-  await writeJsonConfig(paths.connectionConfigPath, serializeConnectionConfig(connection));
+  await writeJsonConfig(
+    target === "project" ? paths.connectionConfigPath : paths.userConnectionConfigPath,
+    serializeConnectionConfig(connection)
+  );
 }
 
 export async function saveUserSessionSettings(
@@ -569,4 +600,24 @@ function compactObject<T extends object>(value: Partial<T>): Partial<T> {
   return Object.fromEntries(
     Object.entries(value).filter(([, entryValue]) => entryValue !== undefined)
   ) as Partial<T>;
+}
+
+function resolveConnectionSaveTarget(options: {
+  preferred?: ConnectionConfigSaveTarget;
+  user: Partial<ConnectionConfig>;
+  project: Partial<ConnectionConfig>;
+}): ConnectionConfigSaveTarget {
+  if (options.preferred) {
+    return options.preferred;
+  }
+
+  if (Object.keys(options.project).length > 0) {
+    return "project";
+  }
+
+  if (Object.keys(options.user).length > 0) {
+    return "user";
+  }
+
+  return "user";
 }

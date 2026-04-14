@@ -212,8 +212,8 @@ export function AgentScreen(props: { controller: SessionController }) {
         settings={settings}
         settingsState={settingsState}
         onClose={() => props.controller.closeDialog()}
-        onSave={async (connectionPatch, settingsPatch) => {
-          await props.controller.saveConfig(connectionPatch, settingsPatch);
+        onSave={async (connectionPatch, settingsPatch, connectionTarget) => {
+          await props.controller.saveConfig(connectionPatch, settingsPatch, connectionTarget);
         }}
         onCtrlCCaptureChange={setCtrlCCapture}
       />
