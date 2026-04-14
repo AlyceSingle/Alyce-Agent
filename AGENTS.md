@@ -1,19 +1,24 @@
 # Repository Guidelines
 
 ## Project Structure & Module Organization
-`src/` contains all runtime code. Entry starts at `src/index.ts`, then flows through `src/cli/` for session startup, `src/config/` for runtime settings, `src/core/` for agent, prompt, API, and memory logic, `src/tools/` for built-in tool implementations, and `src/terminal-ui/` for the Ink React interface. Build output goes to `dist/`. Local state lives under `.alyce/`; treat it as workspace data, not source.
+All runtime code lives in `src/`. Entry starts at `src/index.ts`, then flows through `src/cli/` for session startup and command routing, `src/config/` for runtime settings, `src/core/` for agent, API, prompt, memory, and abort logic, `src/tools/` for built-in tools, and `src/terminal-ui/` for the Ink-based TTY UI. Build output goes to `dist/`. Workspace state and local memory live under `.alyce/`; treat that as generated local data, not source.
 
 ## Build, Test, and Development Commands
-Run `npm install` to install dependencies. Use `npm run dev` to launch the agent in development mode through `tsx`; this must run in an interactive TTY. Use `npm run build` to compile TypeScript into `dist/`, and `npm start` to run the compiled app with Node. There is no separate lint or test script yet, so `npm run build` is the baseline validation step.
+- `npm install`: install dependencies.
+- `npm run build`: compile TypeScript with `tsc` into `dist/`.
+- `npm run dev`: build, then launch the terminal UI locally.
+- `npm start`: run the compiled app from `dist/index.js`.
+
+This app must be run in an interactive TTY. Use `npm run build` as the baseline validation step before submitting changes.
 
 ## Coding Style & Naming Conventions
-This repo uses strict TypeScript with NodeNext modules and React JSX. Match the existing style: 2-space indentation, semicolons, double quotes, and explicit `.js` extensions in relative imports from TypeScript files. Use `PascalCase` for React components and class-like files such as `WebSearchTool.ts`, and `camelCase` for helpers such as `sessionRuntime.ts` or `runAgentTurn.ts`. Keep modules grouped by feature folder rather than by file type.
+Use TypeScript with 2-space indentation, semicolons, double quotes, and explicit `.js` extensions in relative imports. Prefer feature folders over file-type grouping. Use `PascalCase` for React components and tool classes such as `WebSearchTool.ts`, and `camelCase` for helpers such as `sessionRuntime.ts` or `runAgentTurn.ts`. No dedicated formatter or linter is configured, so match the surrounding code closely.
 
 ## Testing Guidelines
-No automated test framework or coverage gate is configured today. For every change, run `npm run build` and then manually exercise the affected flow with `npm run dev`, especially for TTY-only UI behavior, tool approvals, prompt assembly, and memory persistence. If you add tests, prefer colocated `*.test.ts` or `*.test.tsx` files beside the module they cover.
+No automated test framework is configured yet. Validate changes with `npm run build`, then manually exercise affected flows in `npm run dev`, especially TTY UI behavior, tool approvals, prompt assembly, and memory persistence. If you add tests, place `*.test.ts` or `*.test.tsx` beside the module they cover.
 
 ## Commit & Pull Request Guidelines
-Recent commits use short, imperative subjects such as `Add PowerShellTool`, `Refactoring tools`, and `Fix command issues/add auto-summarization`. Follow that pattern: one-line, action-first summaries focused on the user-visible change. Pull requests should include a concise description, impacted areas, manual verification steps, and terminal screenshots when UI behavior changes. Link related issues and note any new environment variables in `.env.example`.
+Recent commit subjects are short, imperative, and action-first, for example `Refine UI framework` or `Refactor API settings`. Follow that pattern and keep the subject to one line. Pull requests should include a concise summary, impacted areas, manual verification steps, and screenshots for terminal UI changes when helpful.
 
 ## Security & Configuration Tips
-Never commit `.env`, `.alyce/`, or generated `dist/` output. Keep approval and sandbox logic intact when editing tool execution paths, and document any new configuration keys in both `README.md` and `.env.example`.
+Do not commit `.env`, `.alyce/`, or generated `dist/` output. Keep workspace path checks, approval gates, and tool sandbox behavior intact when editing `src/tools/` or command execution flows. Document any new environment variables in `README.md` and `.env.example`.
