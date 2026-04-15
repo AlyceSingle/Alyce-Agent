@@ -376,7 +376,6 @@ export function createSessionController(
 
       runtime.beginTurn(turnId);
       activeTurn = checkpoint;
-      store.updateState((state) => setTranscriptSticky(state, true));
 
       runtime.messages.push({
         role: "user",

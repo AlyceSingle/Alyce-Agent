@@ -1,4 +1,4 @@
-import React, { type PropsWithChildren } from 'react'
+import React, { type PropsWithChildren, type Ref } from 'react'
 import type { Except } from 'type-fest'
 import type { DOMElement } from '../dom.js'
 import type { ClickEvent } from '../events/click-event.js'
@@ -8,6 +8,7 @@ import type { Styles } from '../styles.js'
 import * as warn from '../warn.js'
 
 export type Props = Except<Styles, 'textWrap'> & {
+  ref?: Ref<DOMElement>
   tabIndex?: number
   autoFocus?: boolean
   onClick?: (event: ClickEvent) => void
@@ -21,12 +22,13 @@ export type Props = Except<Styles, 'textWrap'> & {
   onMouseLeave?: () => void
 }
 
-const Box = React.forwardRef<DOMElement, PropsWithChildren<Props>>(function Box({
+function Box({
   children,
   flexWrap = 'nowrap',
   flexDirection = 'row',
   flexGrow = 0,
   flexShrink = 1,
+  ref,
   tabIndex,
   autoFocus,
   onClick,
@@ -39,7 +41,7 @@ const Box = React.forwardRef<DOMElement, PropsWithChildren<Props>>(function Box(
   onKeyDown,
   onKeyDownCapture,
   ...style
-}, ref): React.ReactNode {
+}: PropsWithChildren<Props>): React.ReactNode {
   warn.ifNotInteger(style.margin, 'margin')
   warn.ifNotInteger(style.marginX, 'marginX')
   warn.ifNotInteger(style.marginY, 'marginY')
@@ -85,8 +87,6 @@ const Box = React.forwardRef<DOMElement, PropsWithChildren<Props>>(function Box(
       {children}
     </ink-box>
   )
-})
-
-Box.displayName = 'Box'
+}
 
 export default Box

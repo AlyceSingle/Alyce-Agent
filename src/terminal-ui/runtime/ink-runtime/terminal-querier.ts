@@ -39,6 +39,7 @@ type Da1Response = Extract<TerminalResponse, { type: 'da1' }>
 type Da2Response = Extract<TerminalResponse, { type: 'da2' }>
 type KittyResponse = Extract<TerminalResponse, { type: 'kittyKeyboard' }>
 type CursorPosResponse = Extract<TerminalResponse, { type: 'cursorPosition' }>
+type WindowSizeCharsResponse = Extract<TerminalResponse, { type: 'windowSizeChars' }>
 type OscResponse = Extract<TerminalResponse, { type: 'osc' }>
 type XtversionResponse = Extract<TerminalResponse, { type: 'xtversion' }>
 
@@ -88,6 +89,14 @@ export function cursorPosition(): TerminalQuery<CursorPosResponse> {
   return {
     request: csi('?6n'),
     match: (r): r is CursorPosResponse => r.type === 'cursorPosition',
+  }
+}
+
+/** XTWINOPS: request text area size in characters (CSI 18 t). */
+export function windowSizeChars(): TerminalQuery<WindowSizeCharsResponse> {
+  return {
+    request: csi('18t'),
+    match: (r): r is WindowSizeCharsResponse => r.type === 'windowSizeChars',
   }
 }
 

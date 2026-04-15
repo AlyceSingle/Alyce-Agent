@@ -178,21 +178,22 @@ export function MessageReaderScreen(props: {
       flexGrow={1}
       flexShrink={1}
       minHeight={0}
-      height="100%"
       overflow="hidden"
       paddingX={1}
       width="100%"
     >
-      <Text color={terminalUiTheme.colors.chrome} wrap="truncate-end">
-        [{badge}] {props.message.title}
-      </Text>
-      <Text color={terminalUiTheme.colors.muted} wrap="truncate-end">
-        {metadataText}
-      </Text>
-      <Text color={terminalUiTheme.colors.subtle} wrap="truncate-end">
-        Reader mode | Esc / q / Ctrl+C close
-      </Text>
-      <Divider />
+      <Box flexShrink={0} width="100%">
+        <Text color={terminalUiTheme.colors.chrome} wrap="truncate-end">
+          [{badge}] {props.message.title}
+        </Text>
+        <Text color={terminalUiTheme.colors.muted} wrap="truncate-end">
+          {metadataText}
+        </Text>
+        <Text color={terminalUiTheme.colors.subtle} wrap="truncate-end">
+          Reader mode | Esc / q / Ctrl+C close
+        </Text>
+        <Divider />
+      </Box>
       <Box
         flexDirection="column"
         flexGrow={1}
@@ -208,7 +209,6 @@ export function MessageReaderScreen(props: {
           flexGrow={1}
           flexShrink={1}
           minHeight={0}
-          height="100%"
           width="100%"
         >
           {topSpacerHeight > 0 ? <Box height={topSpacerHeight} /> : null}
@@ -223,18 +223,20 @@ export function MessageReaderScreen(props: {
           {bottomSpacerHeight > 0 ? <Box height={bottomSpacerHeight} /> : null}
         </ScrollBox>
       </Box>
-      <Divider />
-      <Text color={terminalUiTheme.colors.subtle} wrap="truncate-end">
-        Lines {lines.length === 0 ? 0 : scrollSnapshot.top + 1}-{lastVisibleLine} of {lines.length}
-        {" | "}
-        Up/Down scroll
-        {" | "}
-        PgUp/PgDn jump
-        {" | "}
-        Home/End
-        {" | "}
-        Ctrl+0 top
-      </Text>
+      <Box flexShrink={0} width="100%">
+        <Divider />
+        <Text color={terminalUiTheme.colors.subtle} wrap="truncate-end">
+          Lines {lines.length === 0 ? 0 : scrollSnapshot.top + 1}-{lastVisibleLine} of {lines.length}
+          {" | "}
+          Up/Down scroll
+          {" | "}
+          PgUp/PgDn jump
+          {" | "}
+          Home/End
+          {" | "}
+          Ctrl+0 top
+        </Text>
+      </Box>
     </Box>
   );
 }

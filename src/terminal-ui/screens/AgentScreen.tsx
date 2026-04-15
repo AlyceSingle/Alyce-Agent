@@ -68,7 +68,6 @@ export function AgentScreen(props: { controller: SessionController }) {
   const messages = useTerminalUiSelector((value) => value.messages);
   const clearOnCtrlCRef = useRef(false);
   const transcriptRef = useRef<MessageListHandle | null>(null);
-  const previousTranscriptStickyRef = useRef(transcriptSticky);
   const [exitConfirmationPending, setExitConfirmationPending] = useState(false);
   const terminalWidth = stdout.columns || 120;
   const terminalHeight = stdout.rows || 36;
@@ -174,23 +173,6 @@ export function AgentScreen(props: { controller: SessionController }) {
     const normalizedInput = input.toLowerCase();
     const isCtrlC = key.ctrl && normalizedInput === "c";
 
-    if (!hasDialog && !isReaderOpen) {
-      if (key.wheelUp) {
-        transcriptRef.current?.scrollBy(-3);
-        return;
-      }
-
-      if (key.wheelDown) {
-        transcriptRef.current?.scrollBy(3);
-        return;
-      }
-
-      if (key.ctrl && (input === "0" || key.raw === "\x00")) {
-        transcriptRef.current?.scrollToTop();
-        return;
-      }
-    }
-
     if (!isCtrlC && exitConfirmationPending) {
       resetExitConfirmation();
     }
@@ -210,14 +192,6 @@ export function AgentScreen(props: { controller: SessionController }) {
       setExitConfirmationPending(true);
     }
   }, { isActive: !isReaderOpen });
-
-  useEffect(() => {
-    if (transcriptSticky && !previousTranscriptStickyRef.current) {
-      transcriptRef.current?.scrollToBottom();
-    }
-
-    previousTranscriptStickyRef.current = transcriptSticky;
-  }, [transcriptSticky]);
 
   useEffect(() => {
     if (!exitConfirmationPending) {
