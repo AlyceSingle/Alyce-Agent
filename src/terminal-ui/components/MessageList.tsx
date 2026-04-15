@@ -158,7 +158,6 @@ const MessageListImpl = forwardRef<MessageListHandle, {
   messages: TerminalUiMessage[];
   selectedMessageId: string | null;
   viewportWidth: number;
-  transcriptSticky: boolean;
   unseenDividerMessageId: string | null;
   unseenMessageCount: number;
   onStickyChange: (sticky: boolean) => void;
@@ -248,18 +247,17 @@ const MessageListImpl = forwardRef<MessageListHandle, {
       flexGrow={1}
       flexShrink={1}
       minHeight={0}
-      height="100%"
       width="100%"
       overflow="hidden"
     >
-      <Text
-        color={props.transcriptSticky ? terminalUiTheme.colors.subtle : terminalUiTheme.colors.warning}
-        wrap="truncate-end"
-      >
-        {props.transcriptSticky ? "Live tail" : "Browsing history"}
-        {" | "}
-        {props.messages.length} {pluralizeMessages(props.messages.length)}
-      </Text>
+      <Box flexShrink={0} width="100%">
+        <Text
+          color={terminalUiTheme.colors.subtle}
+          wrap="truncate-end"
+        >
+          {props.messages.length} {pluralizeMessages(props.messages.length)}
+        </Text>
+      </Box>
       <Box
         flexDirection="column"
         flexGrow={1}
@@ -275,8 +273,10 @@ const MessageListImpl = forwardRef<MessageListHandle, {
           flexGrow={1}
           flexShrink={1}
           minHeight={0}
-          height="100%"
-          stickyScroll={props.transcriptSticky}
+          // Keep the host sticky attribute stable. Manual scrollBy/scrollTo
+          // already sets the imperative sticky flag to false, so toggling the
+          // prop here only risks remount/reset churn when leaving the bottom.
+          stickyScroll
           width="100%"
         >
           {props.messages.length === 0 ? (

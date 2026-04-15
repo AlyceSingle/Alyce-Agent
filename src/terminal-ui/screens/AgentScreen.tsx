@@ -21,10 +21,10 @@ const OPEN_DETAIL_SHORTCUT = getBindingDisplayText("conversation:openDetail", "G
 const PAGE_UP_SHORTCUT = getBindingDisplayText("scroll:pageUp", "Scroll") ?? "PgUp";
 const PAGE_DOWN_SHORTCUT = getBindingDisplayText("scroll:pageDown", "Scroll") ?? "PgDn";
 const LAST_MESSAGE_SHORTCUT = getBindingDisplayText("scroll:bottom", "Scroll") ?? "End";
+const LINE_SCROLL_ROWS = 2;
 
 const ConversationPane = React.memo(React.forwardRef<MessageListHandle, {
   terminalWidth: number;
-  transcriptSticky: boolean;
   unseenDividerMessageId: string | null;
   unseenMessageCount: number;
   onStickyChange: (sticky: boolean) => void;
@@ -38,7 +38,6 @@ const ConversationPane = React.memo(React.forwardRef<MessageListHandle, {
       messages={messages}
       selectedMessageId={selectedMessageId}
       viewportWidth={props.terminalWidth}
-      transcriptSticky={props.transcriptSticky}
       unseenDividerMessageId={props.unseenDividerMessageId}
       unseenMessageCount={props.unseenMessageCount}
       onStickyChange={props.onStickyChange}
@@ -69,6 +68,7 @@ export function AgentScreen(props: { controller: SessionController }) {
   const messages = useTerminalUiSelector((value) => value.messages);
   const clearOnCtrlCRef = useRef(false);
   const transcriptRef = useRef<MessageListHandle | null>(null);
+  const previousTranscriptStickyRef = useRef(transcriptSticky);
   const [exitConfirmationPending, setExitConfirmationPending] = useState(false);
   const terminalWidth = stdout.columns || 120;
   const terminalHeight = stdout.rows || 36;
@@ -139,10 +139,10 @@ export function AgentScreen(props: { controller: SessionController }) {
       transcriptRef.current?.scrollBy(1);
     },
     "scroll:lineUp": () => {
-      transcriptRef.current?.scrollBy(-3);
+      transcriptRef.current?.scrollBy(-LINE_SCROLL_ROWS);
     },
     "scroll:lineDown": () => {
-      transcriptRef.current?.scrollBy(3);
+      transcriptRef.current?.scrollBy(LINE_SCROLL_ROWS);
     },
     "scroll:pageUp": () => {
       transcriptRef.current?.scrollPage(-1);
@@ -210,6 +210,14 @@ export function AgentScreen(props: { controller: SessionController }) {
       setExitConfirmationPending(true);
     }
   }, { isActive: !isReaderOpen });
+
+  useEffect(() => {
+    if (transcriptSticky && !previousTranscriptStickyRef.current) {
+      transcriptRef.current?.scrollToBottom();
+    }
+
+    previousTranscriptStickyRef.current = transcriptSticky;
+  }, [transcriptSticky]);
 
   useEffect(() => {
     if (!exitConfirmationPending) {
@@ -290,7 +298,6 @@ export function AgentScreen(props: { controller: SessionController }) {
         <ConversationPane
           ref={transcriptRef}
           terminalWidth={terminalWidth}
-          transcriptSticky={transcriptSticky}
           unseenDividerMessageId={unseenDividerMessageId}
           unseenMessageCount={unseenMessageCount}
           onStickyChange={syncTranscriptSticky}

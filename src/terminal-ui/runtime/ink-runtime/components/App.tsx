@@ -451,6 +451,7 @@ function processKeysInBatch(app: App, items: ParsedInput[], _unused1: undefined,
   if (items.some(i => i.kind === 'key' || i.kind === 'mouse' && !((i.button & 0x20) !== 0 && (i.button & 0x03) === 3))) {
     updateLastInteractionTime();
   }
+  let suppressNextBareReturn = false;
   for (const item of items) {
     // Terminal responses (DECRPM, DA1, OSC replies, etc.) are not user
     // input — route them to the querier to resolve pending promises.
@@ -466,6 +467,13 @@ function processKeysInBatch(app: App, items: ParsedInput[], _unused1: undefined,
       handleMouseEvent(app, item);
       continue;
     }
+
+    if (suppressNextBareReturn && isBareReturnKey(item)) {
+      suppressNextBareReturn = false;
+      continue;
+    }
+
+    suppressNextBareReturn = shouldTreatAsImeCommitText(item);
     const sequence = item.sequence;
 
     // Handle terminal focus events (DECSET 1004)
@@ -509,6 +517,35 @@ function processKeysInBatch(app: App, items: ParsedInput[], _unused1: undefined,
     // Also dispatch through the DOM tree so onKeyDown handlers fire.
     app.props.dispatchKeyboardEvent(item);
   }
+}
+
+function isBareReturnKey(item: ParsedKey): boolean {
+  return (
+    item.name === 'return' &&
+    !item.ctrl &&
+    !item.meta &&
+    !item.option &&
+    !item.super &&
+    !item.shift
+  );
+}
+
+function shouldTreatAsImeCommitText(item: ParsedKey): boolean {
+  if (item.isPasted || item.ctrl || item.meta || item.option || item.super) {
+    return false;
+  }
+
+  const sequence = item.sequence ?? '';
+  if (!sequence || sequence === '\r' || sequence === '\n') {
+    return false;
+  }
+
+  // Windows IME often commits the selected candidate text and the confirm
+  // Enter in the same stdin batch. If both are forwarded unchanged, the
+  // prompt inserts the committed CJK text and immediately submits it.
+  // Treat a plain non-ASCII text chunk as composition commit text and
+  // suppress the following bare Enter from the same batch only.
+  return /[^\u0000-\u007f]/.test(sequence);
 }
 
 /** Exported for testing. Mutates app.props.selection and click/hover state. */
