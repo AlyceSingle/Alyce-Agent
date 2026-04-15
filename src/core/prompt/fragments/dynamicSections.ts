@@ -41,6 +41,10 @@ function getSessionSpecificGuidanceSection(runtimeContext: PromptRuntimeContext)
     items.push("When user input is required mid-task, prefer AskUserQuestion with concrete options over open-ended back-and-forth in assistant text.");
   }
 
+  if (hasTool(runtimeContext, "TodoWrite")) {
+    items.push("For non-trivial multi-step tasks, keep the todo list current with TodoWrite so only one task is actively in progress at a time.");
+  }
+
   if (runtimeContext.availableTools.length > 1) {
     items.push("Plan for parallel tool calls when no dependency exists between them.");
   }

@@ -40,6 +40,12 @@ import {
   PowerShellInputSchema
 } from "./PowerShellTool/PowerShellTool.js";
 import {
+  executeTodoWriteTool,
+  TODO_WRITE_TOOL_DESCRIPTION,
+  TODO_WRITE_TOOL_NAME,
+  TodoWriteInputSchema
+} from "./TodoWriteTool/TodoWriteTool.js";
+import {
   executeWebFetchTool,
   WEB_FETCH_TOOL_DESCRIPTION,
   WEB_FETCH_TOOL_NAME,
@@ -90,6 +96,12 @@ export const REGISTERED_TOOLS: AgentTool[] = [
     description: GREP_TOOL_DESCRIPTION,
     inputSchema: GrepInputSchema,
     execute: (input, context) => executeGrepTool(input, context)
+  },
+  {
+    name: TODO_WRITE_TOOL_NAME,
+    description: TODO_WRITE_TOOL_DESCRIPTION,
+    inputSchema: TodoWriteInputSchema,
+    execute: (input, context) => executeTodoWriteTool(input, context)
   },
   {
     name: "Edit",

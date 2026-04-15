@@ -15,6 +15,7 @@ import type {
 import type {
   AskUserQuestionRequest,
   AskUserQuestionResponse,
+  TodoItem,
   ToolApprovalRequest,
   ToolPermissionKind
 } from "../../tools/types.js";
@@ -35,6 +36,7 @@ import {
   setSessionApprovalMode,
   setSessionSettingsState,
   setStatusText,
+  setTodos,
   setTranscriptSticky
 } from "../state/actions.js";
 import type { TerminalUiStore } from "../state/store.js";
@@ -103,6 +105,12 @@ export function createSessionController(
 
   const setDraftInputValue = (value: string) => {
     store.updateState((state) => setDraftInput(state, value));
+  };
+
+  const getTodos = () => store.getState().todos;
+
+  const setTodoItems = (todos: TodoItem[]) => {
+    store.updateState((state) => setTodos(state, todos));
   };
 
   const syncApprovalState = () => {
@@ -295,7 +303,7 @@ export function createSessionController(
       store.updateState((state) =>
         setDraftInput(
           replaceMessages(
-            setStatusText(state, "Idle"),
+            setTodos(setStatusText(state, "Idle"), []),
             [createSystemMessage("History and session memory cleared.", "Session")]
           ),
           ""
@@ -453,7 +461,9 @@ export function createSessionController(
             turnId,
             abortSignal: controller.signal,
             requestApproval,
-            askUserQuestions
+            askUserQuestions,
+            getTodos,
+            setTodos: setTodoItems
           }),
           requestPatches: runtime.requestPatches,
           onThinking: (thinking) => {

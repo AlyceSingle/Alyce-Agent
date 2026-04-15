@@ -1,10 +1,11 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { useApp, useStdout, Text } from "../runtime/ink.js";
+import { Box, useApp, useStdout, Text } from "../runtime/ink.js";
 import { FullscreenLayout } from "../components/FullscreenLayout.js";
 import { MessageList, type MessageListHandle } from "../components/MessageList.js";
 import { MessageReaderScreen } from "../components/MessageReaderScreen.js";
 import { PromptInput } from "../components/PromptInput.js";
 import { StatusBar } from "../components/StatusBar.js";
+import { TodoPanel } from "../components/TodoPanel.js";
 import { ApprovalDialog } from "../components/ApprovalDialog.js";
 import { AskUserQuestionDialog } from "../components/AskUserQuestionDialog.js";
 import { SettingsDialog } from "../components/SettingsDialog.js";
@@ -62,6 +63,7 @@ export function AgentScreen(props: { controller: SessionController }) {
   const statusText = useTerminalUiSelector((value) => value.statusText);
   const isLoading = useTerminalUiSelector((value) => value.isLoading);
   const draftInput = useTerminalUiSelector((value) => value.draftInput);
+  const todos = useTerminalUiSelector((value) => value.todos);
   const selectedMessageId = useTerminalUiSelector((value) => value.selectedMessageId);
   const transcriptSticky = useTerminalUiSelector((value) => value.transcriptSticky);
   const unseenDividerMessageId = useTerminalUiSelector((value) => value.unseenDividerMessageId);
@@ -217,6 +219,8 @@ export function AgentScreen(props: { controller: SessionController }) {
   }, [draftInput.length, exitConfirmationPending, resetExitConfirmation]);
 
   const displayedStatusText = exitConfirmationPending ? EXIT_CONFIRMATION_STATUS : statusText;
+  const completedTodoCount = todos.filter((todo) => todo.status === "completed").length;
+  const todoSummary = todos.length > 0 ? `${completedTodoCount}/${todos.length}` : undefined;
 
   const overlay =
     activeDialog?.type === "permission" ? (
@@ -256,11 +260,22 @@ export function AgentScreen(props: { controller: SessionController }) {
     />
   ) : null;
 
-  const pill =
+  const unseenMessagePill =
     !transcriptSticky && unseenMessageCount > 0 ? (
       <Text color={terminalUiTheme.colors.warning} wrap="truncate-end">
         {unseenMessageCount} new message{unseenMessageCount === 1 ? "" : "s"} | {LAST_MESSAGE_SHORTCUT} jump to bottom | {PAGE_UP_SHORTCUT}/{PAGE_DOWN_SHORTCUT} scroll | {OPEN_DETAIL_SHORTCUT} reader
       </Text>
+    ) : null;
+
+  const todoPanel = todos.length > 0 ? <TodoPanel todos={todos} /> : null;
+
+  const pill =
+    todoPanel || unseenMessagePill ? (
+      <Box flexDirection="column" width="100%">
+        {todoPanel}
+        {todoPanel && unseenMessagePill ? <Text color={terminalUiTheme.colors.subtle}> </Text> : null}
+        {unseenMessagePill}
+      </Box>
     ) : null;
 
   return (
@@ -272,6 +287,7 @@ export function AgentScreen(props: { controller: SessionController }) {
           sessionApprovalMode={sessionApprovalMode}
           sessionAllowedKinds={sessionAllowedKinds}
           requestPatchCount={requestPatchCount}
+          todoSummary={todoSummary}
           statusText={displayedStatusText}
         />
       }

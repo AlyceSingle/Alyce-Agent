@@ -21,6 +21,7 @@ export function StatusBar(props: {
   sessionApprovalMode: ApprovalMode;
   sessionAllowedKinds: string[];
   requestPatchCount: number;
+  todoSummary?: string;
   statusText: string;
 }) {
   const isReady = props.connection.apiKey.trim().length > 0;
@@ -30,6 +31,10 @@ export function StatusBar(props: {
   const requestPatchText =
     props.requestPatchCount > 0
       ? ` | Request patches ${props.requestPatchCount}`
+      : "";
+  const todoSummaryText =
+    props.todoSummary && props.todoSummary.trim().length > 0
+      ? ` | Todos ${props.todoSummary}`
       : "";
   const inlineStatusText =
     props.statusText.trim().length > 0 ? ` | ${props.statusText}` : "";
@@ -49,6 +54,7 @@ export function StatusBar(props: {
         Model {props.connection.model}
         {" | "}
         Approval {formatApprovalMode(props.sessionApprovalMode, props.sessionAllowedKinds)}
+        {todoSummaryText}
         <Text color={terminalUiTheme.colors.subtle}>{inlineStatusText}</Text>
       </Text>
     </Box>

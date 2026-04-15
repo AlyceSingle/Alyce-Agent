@@ -22,6 +22,7 @@ import { getRegisteredToolNames } from "../tools/registry.js";
 import type {
   AskUserQuestionRequest,
   AskUserQuestionResponse,
+  TodoItem,
   ToolApprovalRequest,
   ToolExecutionContext
 } from "../tools/types.js";
@@ -65,6 +66,8 @@ export interface SessionRuntime {
       request: AskUserQuestionRequest,
       options?: { signal?: AbortSignal }
     ) => Promise<AskUserQuestionResponse>;
+    getTodos: () => TodoItem[];
+    setTodos: (todos: TodoItem[]) => void;
   }) => ToolExecutionContext;
 }
 
@@ -303,7 +306,14 @@ export async function createSessionRuntime(
     discardTurn: (turnId) => {
       fileHistoryManager.removeTurn(turnId);
     },
-    createToolContext: ({ turnId, abortSignal, requestApproval, askUserQuestions }) => ({
+    createToolContext: ({
+      turnId,
+      abortSignal,
+      requestApproval,
+      askUserQuestions,
+      getTodos,
+      setTodos
+    }) => ({
       // 工具在执行前会先登记 turnId，并在写文件前抓取快照，便于中断后回滚。
       workspaceRoot: config.paths.workspaceRoot,
       commandTimeoutMs: settings.commandTimeoutMs,
@@ -311,6 +321,8 @@ export async function createSessionRuntime(
       abortSignal,
       requestApproval,
       askUserQuestions,
+      getTodos,
+      setTodos,
       captureFileBeforeWrite: (absolutePath) => fileHistoryManager.captureBeforeWrite(turnId, absolutePath)
     })
   };

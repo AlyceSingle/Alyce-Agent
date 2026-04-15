@@ -130,6 +130,10 @@ function getUsingToolsSection(runtimeContext: PromptRuntimeContext) {
     providedToolGuidance.push("Use AskUserQuestion when you need a concrete user decision during execution instead of asking free-form questions in normal assistant text.");
   }
 
+  if (hasTool(runtimeContext, "TodoWrite")) {
+    providedToolGuidance.push("Use TodoWrite to maintain a visible task checklist for complex multi-step work, but skip it for simple one-step tasks.");
+  }
+
   return promptFormatting.buildSection("Using your tools", [
     "Prefer dedicated tools over shell commands whenever a dedicated tool can express the task more clearly.",
     providedToolGuidance.length > 0

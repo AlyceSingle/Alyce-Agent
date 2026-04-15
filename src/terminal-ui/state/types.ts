@@ -7,6 +7,7 @@ import type {
 } from "../../config/runtime.js";
 import type {
   AskUserQuestionRequest,
+  TodoItem,
   ToolApprovalRequest,
   ToolPermissionKind
 } from "../../tools/types.js";
@@ -77,6 +78,7 @@ export interface TerminalUiState {
   dialogQueue: ActiveDialog[];
   activeOverlays: TerminalUiOverlayId[];
   messages: TerminalUiMessage[];
+  todos: TodoItem[];
   selectedMessageId: string | null;
   transcriptSticky: boolean;
   unseenDividerMessageId: string | null;
