@@ -3,7 +3,11 @@ import type {
   ConnectionConfigState,
   SessionSettingsState
 } from "../../config/runtime.js";
-import type { ToolApprovalRequest, ToolPermissionKind } from "../../tools/types.js";
+import type {
+  AskUserQuestionRequest,
+  ToolApprovalRequest,
+  ToolPermissionKind
+} from "../../tools/types.js";
 import type {
   ActiveDialog,
   SettingsSection,
@@ -137,6 +141,17 @@ export function openPermissionDialog(
 ): TerminalUiState {
   return pushDialog(state, {
     type: "permission",
+    layer: "overlay",
+    request
+  });
+}
+
+export function openQuestionDialog(
+  state: TerminalUiState,
+  request: AskUserQuestionRequest
+): TerminalUiState {
+  return pushDialog(state, {
+    type: "question",
     layer: "overlay",
     request
   });

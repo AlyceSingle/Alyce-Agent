@@ -19,7 +19,12 @@ import type { MemorySnapshot } from "../core/memory/types.js";
 import { buildEffectiveSystemPrompt } from "../core/prompt/builder.js";
 import { PromptSectionResolver } from "../core/prompt/sectionResolver.js";
 import { getRegisteredToolNames } from "../tools/registry.js";
-import type { ToolApprovalRequest, ToolExecutionContext } from "../tools/types.js";
+import type {
+  AskUserQuestionRequest,
+  AskUserQuestionResponse,
+  ToolApprovalRequest,
+  ToolExecutionContext
+} from "../tools/types.js";
 import { buildNextTurnContextPreview } from "./contextPreview.js";
 
 export type SessionMessage = OpenAI.Chat.Completions.ChatCompletionMessageParam;
@@ -56,6 +61,10 @@ export interface SessionRuntime {
     turnId: string;
     abortSignal: AbortSignal;
     requestApproval: (request: ToolApprovalRequest) => Promise<boolean>;
+    askUserQuestions: (
+      request: AskUserQuestionRequest,
+      options?: { signal?: AbortSignal }
+    ) => Promise<AskUserQuestionResponse>;
   }) => ToolExecutionContext;
 }
 
@@ -294,13 +303,14 @@ export async function createSessionRuntime(
     discardTurn: (turnId) => {
       fileHistoryManager.removeTurn(turnId);
     },
-    createToolContext: ({ turnId, abortSignal, requestApproval }) => ({
+    createToolContext: ({ turnId, abortSignal, requestApproval, askUserQuestions }) => ({
       // 工具在执行前会先登记 turnId，并在写文件前抓取快照，便于中断后回滚。
       workspaceRoot: config.paths.workspaceRoot,
       commandTimeoutMs: settings.commandTimeoutMs,
       turnId,
       abortSignal,
       requestApproval,
+      askUserQuestions,
       captureFileBeforeWrite: (absolutePath) => fileHistoryManager.captureBeforeWrite(turnId, absolutePath)
     })
   };

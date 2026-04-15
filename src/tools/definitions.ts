@@ -2,6 +2,12 @@ import type OpenAI from "openai";
 import { z } from "zod";
 import { zodToJsonSchema } from "zod-to-json-schema";
 import {
+  ASK_USER_QUESTION_TOOL_DESCRIPTION,
+  ASK_USER_QUESTION_TOOL_NAME,
+  AskUserQuestionInputSchema,
+  executeAskUserQuestionTool
+} from "./AskUserQuestionTool/AskUserQuestionTool.js";
+import {
   BASH_TOOL_DESCRIPTION,
   BASH_TOOL_NAME,
   BashInputSchema,
@@ -49,6 +55,12 @@ export interface AgentTool<TInputSchema extends AnyZodSchema = AnyZodSchema> {
 }
 
 export const REGISTERED_TOOLS: AgentTool[] = [
+  {
+    name: ASK_USER_QUESTION_TOOL_NAME,
+    description: ASK_USER_QUESTION_TOOL_DESCRIPTION,
+    inputSchema: AskUserQuestionInputSchema,
+    execute: (input, context) => executeAskUserQuestionTool(input, context)
+  },
   {
     name: FILE_READ_TOOL_NAME,
     description: DESCRIPTION,

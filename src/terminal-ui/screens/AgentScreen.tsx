@@ -6,6 +6,7 @@ import { MessageReaderScreen } from "../components/MessageReaderScreen.js";
 import { PromptInput } from "../components/PromptInput.js";
 import { StatusBar } from "../components/StatusBar.js";
 import { ApprovalDialog } from "../components/ApprovalDialog.js";
+import { AskUserQuestionDialog } from "../components/AskUserQuestionDialog.js";
 import { SettingsDialog } from "../components/SettingsDialog.js";
 import type { SessionController } from "../adapters/sessionController.js";
 import { useIsOverlayActive } from "../context/overlayContext.js";
@@ -223,6 +224,12 @@ export function AgentScreen(props: { controller: SessionController }) {
         request={activeDialog.request}
         onDecision={(decision) => props.controller.respondToApproval(decision)}
       />
+    ) : activeDialog?.type === "question" ? (
+      <AskUserQuestionDialog
+        request={activeDialog.request}
+        onSubmit={(response) => props.controller.respondToQuestion(response)}
+        onCancel={() => props.controller.respondToQuestion(null)}
+      />
     ) : activeDialog?.type === "settings" ? (
       <SettingsDialog
         visible
@@ -287,7 +294,13 @@ export function AgentScreen(props: { controller: SessionController }) {
           disabled={isLoading || hasDialog}
           disabledReason={
             hasDialog
-              ? `${getActiveDialog(store.getState())?.type === "permission" ? "Resolve the permission request above" : "Resolve the active panel above"} before typing.`
+              ? `${
+                  getActiveDialog(store.getState())?.type === "permission"
+                    ? "Resolve the permission request above"
+                    : getActiveDialog(store.getState())?.type === "question"
+                      ? "Resolve the question dialog above"
+                      : "Resolve the active panel above"
+                } before typing.`
               : isLoading
                 ? "Input locked while Alyce is working. Press ESC to interrupt."
                 : undefined
