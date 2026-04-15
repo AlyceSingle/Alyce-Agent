@@ -762,8 +762,10 @@ function renderNodeToOutput(
         // spacer) making scrollTop >= prevMaxScroll true by artifact, not
         // because the user was at bottom.
         const grew = scrollHeight >= prevScrollHeight
+        const viewportChanged = innerHeight !== prevInnerHeight
+        const wasAtBottom = scrollTopBeforeFollow >= prevMaxScroll
         const atBottom =
-          sticky || (grew && scrollTopBeforeFollow >= prevMaxScroll)
+          sticky || ((grew || viewportChanged) && wasAtBottom)
         if (atBottom && (node.pendingScrollDelta ?? 0) >= 0) {
           node.scrollTop = maxScroll
           node.pendingScrollDelta = undefined
@@ -777,10 +779,7 @@ function renderNodeToOutput(
           // undefined (never set by user action) leave it alone — setting it
           // would make the sticky flag sticky-by-default and lock out
           // direct scrollTop writes (e.g. the alt-screen-perf test).
-          if (
-            node.stickyScroll === false &&
-            scrollTopBeforeFollow >= prevMaxScroll
-          ) {
+          if (node.stickyScroll === false && wasAtBottom) {
             node.stickyScroll = true
           }
         }

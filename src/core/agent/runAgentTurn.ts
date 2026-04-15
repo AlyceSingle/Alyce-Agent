@@ -59,6 +59,7 @@ export async function runAgentTurn(
     }
 
     // 无论下一步是直接结束还是继续调工具，都先把 assistant 原始输出写回上下文。
+    // 这样工具结果会挂在正确的 assistant 消息之后，消息链不会断层。
     messages.push({
       role: "assistant",
       content: next.content ?? "",
@@ -76,6 +77,7 @@ export async function runAgentTurn(
         continue;
       }
 
+      // 这些回调主要给 UI 展示即时反馈；真正供模型消费的是后面的 tool message。
       options.onToolCallStart?.(toolCall.function.name, toolCall.function.arguments);
 
       let result: string;
@@ -120,6 +122,7 @@ function extractThinkingChunks(
   pushUniqueChunk(chunks, extractReasoningFromObject(extended.reasoning));
 
   if (Array.isArray(extended.content)) {
+    // 兼容结构化 content block，把 reasoning/thinking block 内的文本统一抽出来。
     for (const block of extended.content) {
       if (!block || typeof block !== "object") {
         continue;

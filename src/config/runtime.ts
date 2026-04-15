@@ -279,6 +279,7 @@ type SourceLayer<T extends object, Source extends string> = {
 function mergeLayers<T extends object, Source extends string>(
   layers: Array<SourceLayer<T, Source>>
 ): Partial<T> {
+  // 顺序即优先级，后面的 layer 会覆盖前面的同名字段。
   return Object.assign({}, ...layers.map((layer) => layer.values));
 }
 
@@ -291,6 +292,7 @@ function buildSourceMap<T extends object, Source extends string>(
 
   for (const key of Object.keys(effective) as Array<keyof T>) {
     let source = defaultSource;
+    // 这里故意与 mergeLayers 使用同一顺序，便于准确追踪“最终值来自哪一层”。
     for (const layer of layers) {
       if (layer.values[key] !== undefined) {
         source = layer.source;
@@ -611,6 +613,7 @@ function resolveConnectionSaveTarget(options: {
     return options.preferred;
   }
 
+  // 如果项目里已经存在连接配置，默认继续写回 project，避免把团队级配置悄悄写进用户目录。
   if (Object.keys(options.project).length > 0) {
     return "project";
   }

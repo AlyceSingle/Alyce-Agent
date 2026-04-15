@@ -1,5 +1,9 @@
 import { z } from "zod";
-import { throwIfAborted } from "../../core/abort.js";
+import {
+  isTurnInterruptedError,
+  throwIfAborted,
+  toTurnInterruptedError
+} from "../../core/abort.js";
 import { truncate } from "../internal/values.js";
 import type { ToolExecutionContext } from "../types.js";
 import { DESCRIPTION, WEB_FETCH_TOOL_NAME } from "./prompt.js";
@@ -103,6 +107,11 @@ async function fetchWithTimeout(
       }
     });
   } catch (error) {
+    // 用户主动中断必须继续向上冒泡，不能被误判成超时。
+    if (isTurnInterruptedError(error, parentSignal)) {
+      throw toTurnInterruptedError(error, parentSignal);
+    }
+
     if (error instanceof Error && error.name === "AbortError") {
       throw new Error(`WebFetch timed out after ${timeoutMs} ms`);
     }

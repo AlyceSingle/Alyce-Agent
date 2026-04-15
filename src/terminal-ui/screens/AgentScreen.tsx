@@ -218,6 +218,14 @@ export function AgentScreen(props: { controller: SessionController }) {
     }
   }, [draftInput.length, exitConfirmationPending, resetExitConfirmation]);
 
+  useEffect(() => {
+    if (!transcriptSticky || hasDialog || isReaderOpen) {
+      return;
+    }
+
+    transcriptRef.current?.scrollToBottom();
+  }, [hasDialog, isReaderOpen, messages.length, terminalHeight, terminalWidth, transcriptSticky]);
+
   const displayedStatusText = exitConfirmationPending ? EXIT_CONFIRMATION_STATUS : statusText;
   const completedTodoCount = todos.filter((todo) => todo.status === "completed").length;
   const todoSummary = todos.length > 0 ? `${completedTodoCount}/${todos.length}` : undefined;
