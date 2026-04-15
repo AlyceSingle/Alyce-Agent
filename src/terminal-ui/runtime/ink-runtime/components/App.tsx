@@ -13,7 +13,7 @@ import reconciler from '../reconciler.js';
 import { finishSelection, hasSelection, type SelectionState, startSelection } from '../selection.js';
 import { isXtermJs, setXtversionName, supportsExtendedKeys } from '../terminal.js';
 import { getTerminalFocused, setTerminalFocused } from '../terminal-focus-state.js';
-import { TerminalQuerier, xtversion } from '../terminal-querier.js';
+import { TerminalQuerier, windowSizeChars, xtversion } from '../terminal-querier.js';
 import { DISABLE_KITTY_KEYBOARD, DISABLE_MODIFY_OTHER_KEYS, ENABLE_KITTY_KEYBOARD, ENABLE_MODIFY_OTHER_KEYS, FOCUS_IN, FOCUS_OUT } from '../termio/csi.js';
 import { DBP, DFE, DISABLE_MOUSE_TRACKING, EBP, EFE, HIDE_CURSOR, SHOW_CURSOR } from '../termio/dec.js';
 import AppContext from './AppContext.js';
@@ -33,6 +33,7 @@ const SUPPORTS_SUSPEND = process.platform !== 'win32';
 // but no signal reaches us. 5s is well above normal inter-keystroke gaps
 // but short enough that the first scroll after reattach works.
 const STDIN_RESUME_GAP_MS = 5000;
+
 type Props = {
   readonly children: ReactNode;
   readonly stdin: NodeJS.ReadStream;
@@ -77,6 +78,7 @@ type Props = {
   // fullscreen) re-enters alt-screen + mouse tracking. Idempotent on the
   // terminal side. Optional so testing.tsx doesn't need to stub it.
   readonly onStdinResume?: () => void;
+  readonly onTerminalViewportSize?: (columns: number, rows: number) => void;
   // Receives the declared native-cursor position from useDeclaredCursor
   // so ink.tsx can park the terminal cursor there after each frame.
   // Enables IME composition at the input caret and lets screen readers /
@@ -146,6 +148,7 @@ export default class App extends PureComponent<Props, State> {
   // ssh reconnect, laptop wake) and trigger terminal mode re-assert.
   // Initialized to now so startup doesn't false-trigger.
   lastStdinTime = Date.now();
+  pendingViewportSizeQuery = false;
 
   // Determines if TTY is supported on the provided stdin
   isRawModeSupported(): boolean {
@@ -183,9 +186,14 @@ export default class App extends PureComponent<Props, State> {
     if (this.props.stdout.isTTY && !isEnvTruthy(process.env.CLAUDE_CODE_ACCESSIBILITY)) {
       this.props.stdout.write(HIDE_CURSOR);
     }
+
+    if (this.props.stdout.isTTY) {
+      this.props.stdout.on('resize', this.handleTerminalViewportResize);
+    }
   }
   override componentWillUnmount() {
     if (this.props.stdout.isTTY) {
+      this.props.stdout.off('resize', this.handleTerminalViewportResize);
       this.props.stdout.write(SHOW_CURSOR);
     }
 
@@ -251,12 +259,20 @@ export default class App extends PureComponent<Props, State> {
         // init sequence completes — avoids interleaving with alt-screen/mouse
         // tracking enable writes that may happen in the same render cycle.
         setImmediate(() => {
-          void Promise.all([this.querier.send(xtversion()), this.querier.flush()]).then(([r]) => {
-            if (r) {
-              setXtversionName(r.name);
-              logForDebugging(`XTVERSION: terminal identified as "${r.name}"`);
+          void Promise.all([
+            this.querier.send(xtversion()),
+            this.querier.send(windowSizeChars()),
+            this.querier.flush()
+          ]).then(([versionResponse, viewportResponse]) => {
+            if (versionResponse) {
+              setXtversionName(versionResponse.name);
+              logForDebugging(`XTVERSION: terminal identified as "${versionResponse.name}"`);
             } else {
               logForDebugging('XTVERSION: no reply (terminal ignored query)');
+            }
+
+            if (viewportResponse) {
+              this.props.onTerminalViewportSize?.(viewportResponse.cols, viewportResponse.rows);
             }
           });
         });
@@ -365,6 +381,32 @@ export default class App extends PureComponent<Props, State> {
         stdin.addListener('readable', this.handleReadable);
       }
     }
+  };
+  requestTerminalViewportSize = (): void => {
+    if (this.pendingViewportSizeQuery || this.rawModeEnabledCount === 0) {
+      return;
+    }
+
+    this.pendingViewportSizeQuery = true;
+    setImmediate(() => {
+      void Promise.all([
+        this.querier.send(windowSizeChars()),
+        this.querier.flush()
+      ]).then(([viewportResponse]) => {
+        this.pendingViewportSizeQuery = false;
+        if (!viewportResponse) {
+          return;
+        }
+
+        this.props.onTerminalViewportSize?.(viewportResponse.cols, viewportResponse.rows);
+      }).catch((error) => {
+        this.pendingViewportSizeQuery = false;
+        logError(error);
+      });
+    });
+  };
+  handleTerminalViewportResize = (): void => {
+    this.requestTerminalViewportSize();
   };
   handleInput = (input: string | undefined): void => {
     // Exit on Ctrl+C

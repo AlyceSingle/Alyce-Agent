@@ -409,6 +409,7 @@ const reconciler = createReconciler<
   scheduleTimeout: setTimeout,
   cancelTimeout: clearTimeout,
   noTimeout: -1,
+  getCurrentEventPriority: () => dispatcher.resolveEventPriority(),
   getCurrentUpdatePriority: () => dispatcher.currentUpdatePriority,
   beforeActiveInstanceBlur() {},
   afterActiveInstanceBlur() {},

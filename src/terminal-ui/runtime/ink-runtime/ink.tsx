@@ -377,6 +377,36 @@ export default class Ink {
       this.render(this.currentNode);
     }
   };
+  private applyTerminalViewportSize = (cols: number, rows: number) => {
+    if (!Number.isFinite(cols) || !Number.isFinite(rows) || cols <= 0 || rows <= 0) {
+      return;
+    }
+
+    const nextCols = Math.floor(cols);
+    const nextRows = Math.floor(rows);
+    if (nextCols === this.terminalColumns && nextRows === this.terminalRows) {
+      return;
+    }
+
+    logForDebugging(
+      `terminal viewport override: ${this.terminalColumns}x${this.terminalRows} -> ${nextCols}x${nextRows}`,
+    );
+    this.terminalColumns = nextCols;
+    this.terminalRows = nextRows;
+    this.altScreenParkPatch = makeAltScreenParkPatch(this.terminalRows);
+
+    if (this.altScreenActive && !this.isPaused && this.options.stdout.isTTY) {
+      if (this.altScreenMouseTracking) {
+        this.options.stdout.write(ENABLE_MOUSE_TRACKING);
+      }
+      this.resetFramesForAltScreen();
+      this.needsEraseBeforePaint = true;
+    }
+
+    if (this.currentNode !== null) {
+      this.render(this.currentNode);
+    }
+  };
   resolveExitPromise: () => void = () => {};
   rejectExitPromise: (reason?: Error) => void = () => {};
   unsubscribeExit: () => void = () => {};
@@ -468,8 +498,8 @@ export default class Ink {
     // an extra React re-render cycle.
     flushInteractionTime();
     const renderStart = performance.now();
-    const terminalWidth = this.options.stdout.columns || 80;
-    const terminalRows = this.options.stdout.rows || 24;
+    const terminalWidth = this.terminalColumns;
+    const terminalRows = this.terminalRows;
     const frame = this.renderer({
       frontFrame: this.frontFrame,
       backFrame: this.backFrame,
@@ -1473,7 +1503,7 @@ export default class Ink {
   };
   render(node: ReactNode): void {
     this.currentNode = node;
-    const tree = <App stdin={this.options.stdin} stdout={this.options.stdout} stderr={this.options.stderr} exitOnCtrlC={this.options.exitOnCtrlC} onExit={this.unmount} terminalColumns={this.terminalColumns} terminalRows={this.terminalRows} selection={this.selection} onSelectionChange={this.notifySelectionChange} onClickAt={this.dispatchClick} onHoverAt={this.dispatchHover} getHyperlinkAt={this.getHyperlinkAt} onOpenHyperlink={this.openHyperlink} onMultiClick={this.handleMultiClick} onSelectionDrag={this.handleSelectionDrag} onStdinResume={this.reassertTerminalModes} onCursorDeclaration={this.setCursorDeclaration} dispatchKeyboardEvent={this.dispatchKeyboardEvent}>
+    const tree = <App stdin={this.options.stdin} stdout={this.options.stdout} stderr={this.options.stderr} exitOnCtrlC={this.options.exitOnCtrlC} onExit={this.unmount} terminalColumns={this.terminalColumns} terminalRows={this.terminalRows} selection={this.selection} onSelectionChange={this.notifySelectionChange} onClickAt={this.dispatchClick} onHoverAt={this.dispatchHover} getHyperlinkAt={this.getHyperlinkAt} onOpenHyperlink={this.openHyperlink} onMultiClick={this.handleMultiClick} onSelectionDrag={this.handleSelectionDrag} onStdinResume={this.reassertTerminalModes} onTerminalViewportSize={this.applyTerminalViewportSize} onCursorDeclaration={this.setCursorDeclaration} dispatchKeyboardEvent={this.dispatchKeyboardEvent}>
         <TerminalWriteProvider value={this.writeRaw}>
           {node}
         </TerminalWriteProvider>

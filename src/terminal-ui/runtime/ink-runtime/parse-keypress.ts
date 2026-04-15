@@ -49,6 +49,10 @@ const KITTY_FLAGS_RE = /^\x1b\[\?(\d+)u$/
 // Ctrl+F3 = CSI 1;5 R, etc.) — plain CSI row;col R is genuinely ambiguous.
 // eslint-disable-next-line no-control-regex
 const CURSOR_POSITION_RE = /^\x1b\[\?(\d+);(\d+)R$/
+// XTWINOPS text area size in characters: CSI 8 ; rows ; cols t
+// Sent in response to CSI 18 t.
+// eslint-disable-next-line no-control-regex
+const WINDOW_SIZE_CHARS_RE = /^\x1b\[8;(\d+);(\d+)t$/
 // OSC response: OSC code ; data (BEL|ST)
 // eslint-disable-next-line no-control-regex
 const OSC_RESPONSE_RE = /^\x1b\](\d+);(.*?)(?:\x07|\x1b\\)$/s
@@ -104,6 +108,8 @@ export type TerminalResponse =
   | { type: 'kittyKeyboard'; flags: number }
   /** DSR: cursor position report (answer to CSI 6 n) */
   | { type: 'cursorPosition'; row: number; col: number }
+  /** XTWINOPS: text area size in characters (answer to CSI 18 t) */
+  | { type: 'windowSizeChars'; rows: number; cols: number }
   /** OSC response: generic operating-system-command reply (e.g. OSC 11 bg color) */
   | { type: 'osc'; code: number; data: string }
   /** XTVERSION: terminal name/version string (answer to CSI > 0 q).
@@ -149,6 +155,14 @@ function parseTerminalResponse(s: string): TerminalResponse | null {
         type: 'cursorPosition',
         row: parseInt(m[1]!, 10),
         col: parseInt(m[2]!, 10),
+      }
+    }
+
+    if ((m = WINDOW_SIZE_CHARS_RE.exec(s))) {
+      return {
+        type: 'windowSizeChars',
+        rows: parseInt(m[1]!, 10),
+        cols: parseInt(m[2]!, 10),
       }
     }
 

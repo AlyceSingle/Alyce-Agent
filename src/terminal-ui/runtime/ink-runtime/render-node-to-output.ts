@@ -870,15 +870,21 @@ function renderNodeToOutput(
             const delta = contentCached.y - contentY
             const regionTop = Math.floor(y + contentYoga.getComputedTop())
             const regionBottom = regionTop + innerHeight - 1
-            if (
+            const canUseHint =
               cached?.y === y &&
               cached.height === height &&
               innerHeight > 0 &&
               Math.abs(delta) < innerHeight
+            if (
+              canUseHint &&
+              // Manual browsing sets stickyScroll to false. The blit+shift
+              // fast path can then drag sibling divider rows into the
+              // viewport, so fall back to a full viewport repaint instead.
+              sticky !== false
             ) {
               hint = { top: regionTop, bottom: regionBottom, delta }
               scrollHint = hint
-            } else {
+            } else if (sticky !== false) {
               layoutShifted = true
             }
           }
