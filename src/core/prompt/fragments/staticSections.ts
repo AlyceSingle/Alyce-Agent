@@ -118,6 +118,10 @@ function getUsingToolsSection(runtimeContext: PromptRuntimeContext) {
     providedToolGuidance.push("Use WebSearch for current external information, and include cited sources when reporting those facts.");
   }
 
+  if (hasTool(runtimeContext, "AskUserQuestion")) {
+    providedToolGuidance.push("Use AskUserQuestion when you need a concrete user decision during execution instead of asking free-form questions in normal assistant text.");
+  }
+
   return promptFormatting.buildSection("Using your tools", [
     "Prefer dedicated tools over shell commands whenever a dedicated tool can express the task more clearly.",
     providedToolGuidance.length > 0

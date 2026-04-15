@@ -5,7 +5,11 @@ import type {
   SessionSettings,
   SessionSettingsState
 } from "../../config/runtime.js";
-import type { ToolApprovalRequest, ToolPermissionKind } from "../../tools/types.js";
+import type {
+  AskUserQuestionRequest,
+  ToolApprovalRequest,
+  ToolPermissionKind
+} from "../../tools/types.js";
 
 export type TerminalUiMessageKind =
   | "system"
@@ -54,10 +58,11 @@ export type PermissionDecision =
 
 export type ActiveDialog =
   | { type: "permission"; layer: "overlay"; request: ToolApprovalRequest }
+  | { type: "question"; layer: "overlay"; request: AskUserQuestionRequest }
   | { type: "settings"; layer: "overlay"; section: SettingsSection; reason?: string }
   | { type: "reader"; layer: "modal"; messageId: string };
 
-export type TerminalUiOverlayId = "permission" | "settings";
+export type TerminalUiOverlayId = "permission" | "question" | "settings";
 
 export interface TerminalUiState {
   workspaceRoot: string;

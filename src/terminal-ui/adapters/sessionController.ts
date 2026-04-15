@@ -12,7 +12,12 @@ import type {
   ConnectionConfigSaveTarget,
   SessionSettings
 } from "../../config/runtime.js";
-import type { ToolApprovalRequest, ToolPermissionKind } from "../../tools/types.js";
+import type {
+  AskUserQuestionRequest,
+  AskUserQuestionResponse,
+  ToolApprovalRequest,
+  ToolPermissionKind
+} from "../../tools/types.js";
 import {
   appendMessage,
   closeMessageReader,
@@ -20,6 +25,7 @@ import {
   getActiveDialog,
   openMessageReader,
   openPermissionDialog,
+  openQuestionDialog,
   openSettingsDialog,
   replaceMessages,
   setConnectionConfigState,
@@ -65,6 +71,7 @@ export interface SessionController {
   interrupt: () => void;
   restoreLastInterruptedTurn: () => Promise<void>;
   respondToApproval: (decision: PermissionDecision) => void;
+  respondToQuestion: (response: AskUserQuestionResponse | null) => void;
   openSettings: (section?: SettingsSection, reason?: string) => void;
   openMessageReader: (messageId: string) => void;
   closeMessageReader: () => void;
@@ -84,6 +91,7 @@ export function createSessionController(
 ): SessionController {
   let exitHandler: (() => void) | null = null;
   let pendingApprovalResolver: ((decision: PermissionDecision) => void) | null = null;
+  let pendingQuestionResolver: ((response: AskUserQuestionResponse | null) => void) | null = null;
   let sessionApprovalMode = runtime.getSettings().approvalMode;
   const sessionAllowedKinds = new Set<ToolPermissionKind>();
   let activeTurn: TurnCheckpoint | null = null;
@@ -201,6 +209,56 @@ export function createSessionController(
         );
         resolve(approved);
       };
+    });
+  };
+
+  const askUserQuestions = async (
+    request: AskUserQuestionRequest,
+    options: { signal?: AbortSignal } = {}
+  ) => {
+    if (pendingApprovalResolver || pendingQuestionResolver) {
+      throw new Error("Another interactive dialog is already pending.");
+    }
+
+    store.updateState((state) => openQuestionDialog(state, request));
+
+    return new Promise<AskUserQuestionResponse>((resolve, reject) => {
+      const cleanup = () => {
+        options.signal?.removeEventListener("abort", handleAbort);
+      };
+
+      const settle = (response: AskUserQuestionResponse | null) => {
+        pendingQuestionResolver = null;
+        cleanup();
+        setDialogClosed();
+
+        if (!response) {
+          reject(new Error("User declined to answer questions"));
+          return;
+        }
+
+        resolve(response);
+      };
+
+      const handleAbort = () => {
+        if (!pendingQuestionResolver) {
+          cleanup();
+          return;
+        }
+
+        pendingQuestionResolver = null;
+        cleanup();
+        setDialogClosed();
+        reject(new Error("Request interrupted by user"));
+      };
+
+      if (options.signal?.aborted) {
+        handleAbort();
+        return;
+      }
+
+      pendingQuestionResolver = settle;
+      options.signal?.addEventListener("abort", handleAbort, { once: true });
     });
   };
 
@@ -394,7 +452,8 @@ export function createSessionController(
           context: runtime.createToolContext({
             turnId,
             abortSignal: controller.signal,
-            requestApproval
+            requestApproval,
+            askUserQuestions
           }),
           requestPatches: runtime.requestPatches,
           onThinking: (thinking) => {
@@ -514,6 +573,9 @@ export function createSessionController(
     respondToApproval: (decision) => {
       pendingApprovalResolver?.(decision);
     },
+    respondToQuestion: (response) => {
+      pendingQuestionResolver?.(response);
+    },
     openSettings: (section = "session", reason) => {
       store.updateState((state) => openSettingsDialog(state, section, reason));
     },
@@ -525,7 +587,7 @@ export function createSessionController(
     },
     closeDialog: () => {
       const activeDialog = getActiveDialog(store.getState());
-      if (activeDialog?.type === "permission") {
+      if (activeDialog?.type === "permission" || activeDialog?.type === "question") {
         return;
       }
 
