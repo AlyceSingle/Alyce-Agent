@@ -1,4 +1,4 @@
-import inkInstances from "./vendor/ink/instances.js";
+import inkInstances from "./ink-runtime/instances.js";
 
 type InkRenderInstance = {
   invalidatePrevFrame?: () => void;

@@ -1,6 +1,18 @@
 import { useEffect } from "react";
 import { useStdin } from "./ink.js";
-import { nonAlphanumericKeys, parseKeypress } from "./parseKeypress.js";
+
+type InkInputEvent = {
+  input: string;
+  key: BaseInkKey & {
+    home: boolean;
+    end: boolean;
+  };
+  keypress?: {
+    name?: string;
+    raw?: string;
+    sequence?: string;
+  };
+};
 
 type BaseInkKey = {
   upArrow: boolean;
@@ -55,45 +67,35 @@ export function useTerminalInput(inputHandler: InputHandler, options: Options = 
       return;
     }
 
-    const handleData = (data: Buffer | string) => {
-      const keypress = parseKeypress(data);
+    const handleData = (event: InkInputEvent) => {
+      const keypress = event.keypress;
+      const parsedKey = event.key;
       const key: TerminalKey = {
-        upArrow: keypress.name === "up",
-        downArrow: keypress.name === "down",
-        leftArrow: keypress.name === "left",
-        rightArrow: keypress.name === "right",
-        pageDown: keypress.name === "pagedown",
-        pageUp: keypress.name === "pageup",
-        return: keypress.name === "return" || keypress.name === "enter",
-        escape: keypress.name === "escape",
-        ctrl: keypress.ctrl,
-        shift: keypress.shift,
-        tab: keypress.name === "tab",
-        backspace: keypress.name === "backspace",
-        delete: keypress.name === "delete",
-        meta: keypress.meta || keypress.name === "escape" || keypress.option,
-        home: keypress.name === "home",
-        end: keypress.name === "end",
-        space: keypress.name === "space",
-        wheelUp: keypress.name === "wheelup",
-        wheelDown: keypress.name === "wheeldown",
-        name: keypress.name,
-        raw: keypress.raw,
-        sequence: keypress.sequence
+        upArrow: parsedKey.upArrow,
+        downArrow: parsedKey.downArrow,
+        leftArrow: parsedKey.leftArrow,
+        rightArrow: parsedKey.rightArrow,
+        pageDown: parsedKey.pageDown,
+        pageUp: parsedKey.pageUp,
+        return: parsedKey.return,
+        escape: parsedKey.escape,
+        ctrl: parsedKey.ctrl,
+        shift: parsedKey.shift,
+        tab: parsedKey.tab,
+        backspace: parsedKey.backspace,
+        delete: parsedKey.delete,
+        meta: parsedKey.meta,
+        home: parsedKey.home,
+        end: parsedKey.end,
+        space: event.input === " ",
+        wheelUp: parsedKey.wheelUp,
+        wheelDown: parsedKey.wheelDown,
+        name: keypress?.name ?? "",
+        raw: keypress?.raw,
+        sequence: keypress?.sequence ?? event.input
       };
 
-      let input = keypress.ctrl ? keypress.name : keypress.sequence;
-      if (nonAlphanumericKeys.includes(keypress.name)) {
-        input = "";
-      }
-
-      if (input.startsWith("\u001B")) {
-        input = input.slice(1);
-      }
-
-      if (input.length === 1 && /[A-Z]/.test(input)) {
-        key.shift = true;
-      }
+      const input = event.input;
 
       if (!(input === "c" && key.ctrl) || !internal_exitOnCtrlC) {
         inputHandler(input, key);

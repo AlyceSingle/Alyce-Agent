@@ -323,7 +323,11 @@ const MessageListImpl = forwardRef<MessageListHandle, {
                     {timestamp}
                   </Text>
                   {entry.sections.map((section, sectionIndex) => (
-                    <Box key={`${entry.message.id}-section-${sectionIndex}`} flexDirection="column" width="100%">
+                    <Box
+                      key={`${entry.message.id}-section-${sectionIndex}`}
+                      flexDirection="column"
+                      width="100%"
+                    >
                       {section.label ? (
                         <Text color={terminalUiTheme.colors.subtle} wrap="truncate-end">
                           {"  "}

@@ -1,0 +1,182 @@
+<proposed_plan>
+
+# Alyce 滚动系统迁移计划（彻底替换版，禁止并行）
+
+## 1. 目标与硬约束
+
+- 目标：完全删除 Alyce 当前简化滑动链，完整移植 claude code/src/ink 的滚动闭环。
+- 硬约束：不新增 cc-ink/legacy 双 runtime。
+- 硬约束：不保留 fallback 到旧 vendor。
+- 硬约束：迁移期间允许分提交，但每次提交后仓库中只能有一条可编译、可运行的滚动链。
+- 硬约束：wheel/drain/frame continuation 只能由新 runtime 接管，业务层不再并行补帧。
+
+## 2. 当前现状（已核对）
+
+- 入口在 src/terminal-ui/runtime/ink.ts，目前 re-export 到旧 vendor 并拼接本地 ScrollBox。
+- 简化滚动在 src/terminal-ui/runtime/ScrollBox.tsx，直接改 scrollTop，没有 pendingScrollDelta/drain 闭环。
+- 旧滚动内核位于 src/terminal-ui/runtime/vendor/ink/**（约 134 个文件）。
+- UI 主要消费点为 src/terminal-ui/components/MessageList.tsx、src/terminal-ui/components/MessageReaderScreen.tsx、src/terminal-ui/screens/AgentScreen.tsx。
+
+## 3. 目标架构（单轨）
+
+- 运行时唯一来源：以 claude code/src/ink 为蓝本，落地到 Alyce 的单一 runtime 目录（命名可定，但只能保留一套）。
+- 对外唯一入口：src/terminal-ui/runtime/ink.ts 只 re-export 新 runtime，不再导出旧实现。
+- 必须完整保留以下闭环：
+- ScrollBox.pendingScrollDelta 累积。
+- render-node-to-output 按帧 drain（含 proportional drain）。
+- renderer 返回 scrollDrainPending。
+- ink 主循环通过 drainTimer 持续补帧直到 pending 清零。
+- log-update 走 frame diff + scrollHint + scroll region fast path，而不是整屏擦写。
+
+## 4. 强制删除/替换清单
+
+### 4.1 删除旧简化链
+
+- 删除 src/terminal-ui/runtime/ScrollBox.tsx。
+- 删除 src/terminal-ui/runtime/vendor/ink/** 全量文件（含 .js/.d.ts/.map）。
+- 删除或重写依赖旧 vendor 的桥接文件：
+- src/terminal-ui/runtime/AlternateScreen.tsx
+- src/terminal-ui/runtime/CursorDeclarationContext.ts
+- src/terminal-ui/runtime/useDeclaredCursor.ts
+- src/terminal-ui/runtime/instances.ts
+- src/terminal-ui/runtime/ink.ts（重写为新 runtime 唯一出口）
+
+### 4.2 禁止残留规则
+
+- 全仓不得再出现 import "./vendor/ink/..."。
+- 禁止保留 old/new runtime 开关。
+- 禁止保留“新实现失败则回退旧实现”的代码分支。
+
+## 5. 完整迁入清单（来自 claude code/src/ink）
+
+### 5.1 必迁核心（滚动闭环）
+
+- components/ScrollBox.tsx
+- dom.ts
+- render-node-to-output.ts
+- renderer.ts
+- frame.ts
+- screen.ts
+- output.ts
+- optimizer.ts
+- node-cache.ts
+- log-update.ts
+- ink.tsx
+- instances.ts
+- terminal.ts
+- constants.ts
+- termio/csi.ts
+- termio/dec.ts
+- termio/osc.ts
+
+### 5.2 必迁支撑（避免行为缺口）
+
+- reconciler.ts
+- layout/**
+- styles.ts
+- measure-text.ts
+- measure-element.ts
+- get-max-width.ts
+- render-border.ts
+- squash-text-nodes.ts
+- wrap-text.ts
+- widest-line.ts
+- colorize.ts
+- focus.ts
+- events/**
+- hooks/use-input.ts
+- hooks/use-app.ts
+- hooks/use-stdin.ts
+- hooks/use-terminal-viewport.ts
+- useTerminalNotification.ts
+- components/App.tsx
+- components/Box.tsx
+- components/Text.tsx
+- components/AppContext.ts
+- components/StdinContext.ts
+- components/CursorDeclarationContext.ts
+
+## 6. Alyce 适配层（先定义，再批量改 import）
+
+- 新建 src/terminal-ui/runtime/ink-adapters/**，集中承接 claude code ink 的外部依赖。
+- 必须提供最小适配接口：
+- markScrollActivity / updateLastInteractionTime / flushInteractionTime。
+- logForDebugging / logError。
+- getYogaCounters（若 Alyce 暂无原生计数器，先提供兼容返回）。
+- env / envUtils / intl / sliceAnsi / semver 等工具函数。
+- 路径改写规则：
+- src/* 绝对导入全部改为 Alyce 相对路径或 adapter 导入。
+- ../utils/* 导入统一收敛到 Alyce utils 或 ink-adapters。
+
+## 7. 依赖对齐清单（package.json）
+
+- 按真实 import 补齐缺失依赖并固定版本策略，重点关注：
+- auto-bind
+- lodash-es
+- signal-exit
+- type-fest
+- semver
+- wrap-ansi
+- chalk
+- strip-ansi
+- cli-boxes
+- emoji-regex
+- get-east-asian-width
+- 原则：不依赖“碰巧可用”的隐式依赖，npm run build 必须独立通过。
+
+## 8. UI 层改造任务（只消费，不托管滚动时序）
+
+- src/terminal-ui/components/MessageList.tsx
+- 对齐完整 ScrollBoxHandle（至少包含 getPendingDelta、getFreshScrollHeight、isSticky、subscribe）。
+- 删除组件层的滚动排空逻辑（如 queue/timer/drain）。
+- src/terminal-ui/components/MessageReaderScreen.tsx
+- 保留快捷键语义，滚动排空完全交给 runtime。
+- src/terminal-ui/screens/AgentScreen.tsx
+- wheel/line/page/top/bottom 全走新 ScrollBoxHandle。
+- 禁止在 screen 层追加 continuation 队列。
+
+## 9. 执行顺序（严格按序，禁止并行双栈）
+
+1. 建立迁移分支与滚动基线日志，冻结滚动相关变更。
+2. 落地 ink-adapters，先让外部依赖有稳定落点。
+3. 一次性迁入 claude code/src/ink 的核心与支撑模块。
+4. 统一改写 import，解决 src/* 与 utils 依赖路径。
+5. 重写 src/terminal-ui/runtime/ink.ts 为新 runtime 唯一出口。
+6. 删除 src/terminal-ui/runtime/ScrollBox.tsx 与 src/terminal-ui/runtime/vendor/ink/**。
+7. 适配 MessageList / MessageReaderScreen / AgentScreen 到新 handle 语义。
+8. 修复编译与类型错误，打通完整交互路径。
+9. 执行滚动压力测试和性能验证。
+10. 清理临时 shim/noop 与迁移注释，补齐文档。
+
+## 10. 验收标准（全部通过才算完成）
+
+- 编译：npm run build 通过。
+- 链路唯一性：
+- 全仓 vendor/ink 引用为 0。
+- 全仓仅存在一套 ScrollBox/runtime 实现。
+- 行为：
+- 高频滚轮下可持续排空，不出现“只入队不消费”。
+- Up/Down/PgUp/PgDn/Home/End 行为不回归。
+- sticky、未读提示、reader 模式滚动行为不回归。
+- 渲染：
+- 不再出现整屏 eraseLines 风暴。
+- log-update 可命中 scrollHint/scroll region fast path。
+- 日志：可观察到 queued -> drainPending -> pending 清零完整链路。
+
+## 11. 风险与处置
+
+- 风险：迁入后外部依赖缺失导致编译爆炸。
+- 处置：先完成 adapters，再迁核心。
+- 风险：UI 仍残留旧滚动假设，导致双写冲突。
+- 处置：以 ScrollBoxHandle 为边界逐文件清理，禁止并行逻辑。
+- 风险：性能回退。
+- 处置：保留滚动调试指标，对比迁移前后 drain 完成时间与重绘量。
+
+## 12. Definition of Done
+
+- 旧简化滑动链已完全删除。
+- claude code 的滚动闭环已完整迁入并跑通。
+- Alyce 代码库中不存在并行滚动 runtime。
+- 文档与验收记录齐全，可进入后续优化。
+
+</proposed_plan>
