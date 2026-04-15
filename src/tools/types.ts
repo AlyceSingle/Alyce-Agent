@@ -40,6 +40,14 @@ export interface AskUserQuestionResponse {
   annotations?: Record<string, AskUserQuestionAnnotation>;
 }
 
+export type TodoStatus = "pending" | "in_progress" | "completed";
+
+export interface TodoItem {
+  content: string;
+  activeForm: string;
+  status: TodoStatus;
+}
+
 export interface ToolExecutionContext {
   workspaceRoot: string;
   requestApproval: (request: ToolApprovalRequest) => Promise<boolean>;
@@ -49,6 +57,8 @@ export interface ToolExecutionContext {
       signal?: AbortSignal;
     }
   ) => Promise<AskUserQuestionResponse>;
+  getTodos: () => TodoItem[];
+  setTodos: (todos: TodoItem[]) => void;
   commandTimeoutMs: number;
   turnId: string;
   abortSignal: AbortSignal;

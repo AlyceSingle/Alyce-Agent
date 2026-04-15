@@ -94,6 +94,14 @@ function getUsingToolsSection(runtimeContext: PromptRuntimeContext) {
     providedToolGuidance.push("For large files, read targeted ranges instead of reading everything at once.");
   }
 
+  if (hasTool(runtimeContext, "Glob")) {
+    providedToolGuidance.push("Use Glob for filename and path pattern searches instead of shelling out to rg --files or dir listing commands.");
+  }
+
+  if (hasTool(runtimeContext, "Grep")) {
+    providedToolGuidance.push("Use Grep for regex content searches instead of calling grep or rg through Bash or PowerShell.");
+  }
+
   if (hasTool(runtimeContext, "Edit")) {
     providedToolGuidance.push("Use Edit for minimal in-place changes instead of shell text substitution when possible.");
   }
@@ -120,6 +128,10 @@ function getUsingToolsSection(runtimeContext: PromptRuntimeContext) {
 
   if (hasTool(runtimeContext, "AskUserQuestion")) {
     providedToolGuidance.push("Use AskUserQuestion when you need a concrete user decision during execution instead of asking free-form questions in normal assistant text.");
+  }
+
+  if (hasTool(runtimeContext, "TodoWrite")) {
+    providedToolGuidance.push("Use TodoWrite to maintain a visible task checklist for complex multi-step work, but skip it for simple one-step tasks.");
   }
 
   return promptFormatting.buildSection("Using your tools", [

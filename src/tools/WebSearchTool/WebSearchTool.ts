@@ -1,5 +1,9 @@
 import { z } from "zod";
-import { throwIfAborted } from "../../core/abort.js";
+import {
+  isTurnInterruptedError,
+  throwIfAborted,
+  toTurnInterruptedError
+} from "../../core/abort.js";
 import { truncate } from "../internal/values.js";
 import type { ToolExecutionContext } from "../types.js";
 import { WEB_SEARCH_TOOL_DESCRIPTION, WEB_SEARCH_TOOL_NAME } from "./prompt.js";
@@ -103,6 +107,11 @@ async function fetchDuckDuckGoHtml(
 
     return await response.text();
   } catch (error) {
+    // 与 WebFetch 保持一致，保留“用户取消”与“超时”这两个不同语义。
+    if (isTurnInterruptedError(error, parentSignal)) {
+      throw toTurnInterruptedError(error, parentSignal);
+    }
+
     if (error instanceof Error && error.name === "AbortError") {
       throw new Error(`WebSearch timed out after ${timeoutMs} ms`);
     }

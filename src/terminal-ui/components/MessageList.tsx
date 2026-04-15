@@ -11,6 +11,14 @@ import { wrapText } from "../utils/text.js";
 
 const SCROLL_HEADROOM_ROWS = 2;
 
+function isHandleAtBottom(handle: ScrollBoxHandle) {
+  const scrollTop = handle.getScrollTop();
+  const viewportHeight = handle.getViewportHeight();
+  const scrollHeight = Math.max(handle.getScrollHeight(), handle.getFreshScrollHeight());
+
+  return scrollTop + viewportHeight >= Math.max(0, scrollHeight - SCROLL_HEADROOM_ROWS);
+}
+
 type RenderedSection = {
   label?: string;
   lines: string[];
@@ -164,10 +172,20 @@ const MessageListImpl = forwardRef<MessageListHandle, {
 }>(function MessageList(props, ref) {
   const scrollRef = useRef<ScrollBoxHandle | null>(null);
   const detailTargetMessageIdRef = useRef<string | null>(props.selectedMessageId);
+  const stickySnapshotRef = useRef(true);
+  const layoutSignatureRef = useRef<{
+    contentWidth: number;
+    messageCount: number;
+    totalRowCount: number;
+  } | null>(null);
   const contentWidth = Math.max(24, props.viewportWidth - 8);
   const renderedEntries = useMemo(
     () => buildRenderedMessageEntries(props.messages, props.selectedMessageId, contentWidth),
     [contentWidth, props.messages, props.selectedMessageId]
+  );
+  const totalRowCount = useMemo(
+    () => renderedEntries.reduce((sum, entry) => sum + entry.rowCount, 0),
+    [renderedEntries]
   );
   const entryOffsets = useMemo(() => {
     let offset = 0;
@@ -218,11 +236,11 @@ const MessageListImpl = forwardRef<MessageListHandle, {
 
       const scrollTop = currentHandle.getScrollTop();
       const viewportHeight = currentHandle.getViewportHeight();
-      const scrollHeight = currentHandle.getScrollHeight();
-      const isAtBottom =
-        scrollTop + viewportHeight >= Math.max(0, scrollHeight - SCROLL_HEADROOM_ROWS);
+      const isAtBottom = isHandleAtBottom(currentHandle);
+      const effectiveSticky = currentHandle.isSticky() || isAtBottom;
 
-      props.onStickyChange(isAtBottom);
+      stickySnapshotRef.current = effectiveSticky;
+      props.onStickyChange(effectiveSticky);
       detailTargetMessageIdRef.current = resolveDetailTargetMessageId(
         renderedEntries,
         entryOffsets,
@@ -240,6 +258,46 @@ const MessageListImpl = forwardRef<MessageListHandle, {
       unsubscribe();
     };
   }, [entryOffsets, props.onStickyChange, renderedEntries]);
+
+  useEffect(() => {
+    const handle = scrollRef.current;
+    if (!handle) {
+      return;
+    }
+
+    const nextSignature = {
+      contentWidth,
+      messageCount: props.messages.length,
+      totalRowCount
+    };
+    const previousSignature = layoutSignatureRef.current;
+    layoutSignatureRef.current = nextSignature;
+
+    if (props.messages.length === 0) {
+      stickySnapshotRef.current = true;
+      return;
+    }
+
+    if (!previousSignature) {
+      if (handle.isSticky() || isHandleAtBottom(handle)) {
+        handle.scrollToBottom();
+      }
+      return;
+    }
+
+    const viewportChanged = previousSignature.contentWidth !== nextSignature.contentWidth;
+    const contentChanged =
+      previousSignature.messageCount !== nextSignature.messageCount ||
+      previousSignature.totalRowCount !== nextSignature.totalRowCount;
+
+    if (!viewportChanged && !contentChanged) {
+      return;
+    }
+
+    if (stickySnapshotRef.current || handle.isSticky() || isHandleAtBottom(handle)) {
+      handle.scrollToBottom();
+    }
+  }, [contentWidth, props.messages.length, totalRowCount]);
 
   return (
     <Box
@@ -280,14 +338,15 @@ const MessageListImpl = forwardRef<MessageListHandle, {
           width="100%"
         >
           {props.messages.length === 0 ? (
-            <Box flexDirection="column" width="100%">
+            <Box flexDirection="column" width="100%" paddingBottom={1}>
               <Text color={terminalUiTheme.colors.muted}>No messages yet.</Text>
               <Text color={terminalUiTheme.colors.subtle}>
                 Type a prompt below, or open settings before the first model request.
               </Text>
             </Box>
           ) : (
-            renderedEntries.map((entry) => {
+            <Box flexDirection="column" width="100%" paddingBottom={1}>
+              {renderedEntries.map((entry) => {
               const timestamp = new Date(entry.message.createdAt).toLocaleTimeString("zh-CN", {
                 hour: "2-digit",
                 minute: "2-digit"
@@ -363,7 +422,8 @@ const MessageListImpl = forwardRef<MessageListHandle, {
                   ) : null}
                 </Box>
               );
-            })
+            })}
+            </Box>
           )}
         </ScrollBox>
       </Box>

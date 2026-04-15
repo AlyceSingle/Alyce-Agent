@@ -132,6 +132,7 @@ export class FileHistoryManager {
       return existing;
     }
 
+    // beginTurn 是正常入口，这里再兜底一次，避免工具层漏调后完全失去回滚快照。
     const created: TurnFileHistorySnapshot = {
       turnId,
       createdAt: new Date().toISOString(),

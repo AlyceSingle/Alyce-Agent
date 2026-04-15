@@ -47,6 +47,7 @@ export async function executeToolCall(
 
   const parsed = tool.inputSchema.safeParse(args);
   if (!parsed.success) {
+    // 参数错误返回结构化结果，模型还能根据 issues 修正下一次工具调用。
     return JSON.stringify(
       {
         ok: false,
@@ -76,6 +77,7 @@ export async function executeToolCall(
       2
     );
   } catch (error) {
+    // 中断不能在这里被吞成普通工具失败，否则上层无法触发恢复逻辑。
     if (isTurnInterruptedError(error, context.abortSignal)) {
       throw toTurnInterruptedError(error, context.abortSignal);
     }

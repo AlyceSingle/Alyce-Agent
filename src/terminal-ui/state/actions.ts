@@ -5,6 +5,7 @@ import type {
 } from "../../config/runtime.js";
 import type {
   AskUserQuestionRequest,
+  TodoItem,
   ToolApprovalRequest,
   ToolPermissionKind
 } from "../../tools/types.js";
@@ -35,6 +36,7 @@ export function createInitialTerminalUiState(options: {
     dialogQueue: [],
     activeOverlays: [],
     messages: [],
+    todos: [],
     selectedMessageId: null,
     transcriptSticky: true,
     unseenDividerMessageId: null,
@@ -109,6 +111,17 @@ export function setStatusText(state: TerminalUiState, statusText: string): Termi
   return {
     ...state,
     statusText
+  };
+}
+
+export function setTodos(state: TerminalUiState, todos: TodoItem[]): TerminalUiState {
+  if (state.todos === todos) {
+    return state;
+  }
+
+  return {
+    ...state,
+    todos
   };
 }
 

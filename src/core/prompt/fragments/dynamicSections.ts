@@ -13,6 +13,14 @@ function getSessionSpecificGuidanceSection(runtimeContext: PromptRuntimeContext)
     items.push("Use Read first to gather exact context before proposing edits or conclusions.");
   }
 
+  if (hasTool(runtimeContext, "Glob")) {
+    items.push("Use Glob when you need to discover candidate files by path pattern before reading or editing.");
+  }
+
+  if (hasTool(runtimeContext, "Grep")) {
+    items.push("Use Grep for targeted regex searches through file contents instead of shelling out to rg.");
+  }
+
   if (hasTool(runtimeContext, "Edit")) {
     items.push("Prefer Edit for minimal diffs; use Write only when a new file or full replacement is actually intended.");
   }
@@ -31,6 +39,10 @@ function getSessionSpecificGuidanceSection(runtimeContext: PromptRuntimeContext)
 
   if (hasTool(runtimeContext, "AskUserQuestion")) {
     items.push("When user input is required mid-task, prefer AskUserQuestion with concrete options over open-ended back-and-forth in assistant text.");
+  }
+
+  if (hasTool(runtimeContext, "TodoWrite")) {
+    items.push("For non-trivial multi-step tasks, keep the todo list current with TodoWrite so only one task is actively in progress at a time.");
   }
 
   if (runtimeContext.availableTools.length > 1) {

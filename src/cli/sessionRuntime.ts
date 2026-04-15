@@ -22,6 +22,7 @@ import { getRegisteredToolNames } from "../tools/registry.js";
 import type {
   AskUserQuestionRequest,
   AskUserQuestionResponse,
+  TodoItem,
   ToolApprovalRequest,
   ToolExecutionContext
 } from "../tools/types.js";
@@ -65,11 +66,17 @@ export interface SessionRuntime {
       request: AskUserQuestionRequest,
       options?: { signal?: AbortSignal }
     ) => Promise<AskUserQuestionResponse>;
+    getTodos: () => TodoItem[];
+    setTodos: (todos: TodoItem[]) => void;
   }) => ToolExecutionContext;
 }
 
-export function getCurrentDateLabel() {
-  return new Date().toISOString().slice(0, 10);
+export function getCurrentDateLabel(now = new Date()) {
+  // 不用 UTC 截日，避免本地时间接近零点时把 prompt 里的日期算错一天。
+  const year = now.getFullYear();
+  const month = String(now.getMonth() + 1).padStart(2, "0");
+  const day = String(now.getDate()).padStart(2, "0");
+  return `${year}-${month}-${day}`;
 }
 
 export function getHelpText(currentModel: string) {
@@ -134,6 +141,7 @@ export async function createSessionRuntime(
   env: NodeJS.ProcessEnv
 ): Promise<SessionRuntime> {
   const config = await loadRuntimeConfig(argv, env);
+  // 运行时维护一份可变快照，避免直接在初始配置对象上原地修改。
   let connectionState = cloneConnectionConfigState(config.connectionState);
   let settingsState = cloneSessionSettingsState(config.settingsState);
   let connection = connectionState.effective;
@@ -213,6 +221,8 @@ export async function createSessionRuntime(
     patch: Partial<ConnectionConfig>,
     target = connectionSaveTarget
   ) => {
+    // 任何连接更新都重新走一遍“分层合并 -> 归一化 -> 重建 client”的全流程，
+    // 保证 effective / sources / saveTarget 始终一致。
     const sourcePatch = normalizeConnectionPatch(patch, connection);
     rebuildConnectionState({
       user:
@@ -268,6 +278,7 @@ export async function createSessionRuntime(
     },
     updateSettings: async (patch) => {
       const userPatch = normalizeSettingsPatch(patch);
+      // 会话设置只回写 user 层；project / env / cli 仍然参与最终覆盖，但不会被保存动作覆盖掉。
       settingsState = buildSessionSettingsState(config.paths, {
         project: settingsState.project,
         user: mergePersistedSource(settingsState.user, userPatch),
@@ -303,7 +314,14 @@ export async function createSessionRuntime(
     discardTurn: (turnId) => {
       fileHistoryManager.removeTurn(turnId);
     },
-    createToolContext: ({ turnId, abortSignal, requestApproval, askUserQuestions }) => ({
+    createToolContext: ({
+      turnId,
+      abortSignal,
+      requestApproval,
+      askUserQuestions,
+      getTodos,
+      setTodos
+    }) => ({
       // 工具在执行前会先登记 turnId，并在写文件前抓取快照，便于中断后回滚。
       workspaceRoot: config.paths.workspaceRoot,
       commandTimeoutMs: settings.commandTimeoutMs,
@@ -311,6 +329,8 @@ export async function createSessionRuntime(
       abortSignal,
       requestApproval,
       askUserQuestions,
+      getTodos,
+      setTodos,
       captureFileBeforeWrite: (absolutePath) => fileHistoryManager.captureBeforeWrite(turnId, absolutePath)
     })
   };
