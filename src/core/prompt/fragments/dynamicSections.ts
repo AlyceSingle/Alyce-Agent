@@ -13,6 +13,14 @@ function getSessionSpecificGuidanceSection(runtimeContext: PromptRuntimeContext)
     items.push("Use Read first to gather exact context before proposing edits or conclusions.");
   }
 
+  if (hasTool(runtimeContext, "Glob")) {
+    items.push("Use Glob when you need to discover candidate files by path pattern before reading or editing.");
+  }
+
+  if (hasTool(runtimeContext, "Grep")) {
+    items.push("Use Grep for targeted regex searches through file contents instead of shelling out to rg.");
+  }
+
   if (hasTool(runtimeContext, "Edit")) {
     items.push("Prefer Edit for minimal diffs; use Write only when a new file or full replacement is actually intended.");
   }

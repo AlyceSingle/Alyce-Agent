@@ -22,6 +22,18 @@ import {
   FileWriteInputSchema
 } from "./FileWriteTool/FileWriteTool.js";
 import {
+  executeGlobTool,
+  GLOB_TOOL_DESCRIPTION,
+  GLOB_TOOL_NAME,
+  GlobInputSchema
+} from "./GlobTool/GlobTool.js";
+import {
+  executeGrepTool,
+  GREP_TOOL_DESCRIPTION,
+  GREP_TOOL_NAME,
+  GrepInputSchema
+} from "./GrepTool/GrepTool.js";
+import {
   executePowerShellTool,
   POWERSHELL_TOOL_DESCRIPTION,
   POWERSHELL_TOOL_NAME,
@@ -66,6 +78,18 @@ export const REGISTERED_TOOLS: AgentTool[] = [
     description: DESCRIPTION,
     inputSchema: FileReadInputSchema,
     execute: (input, context) => executeFileRead(input, context)
+  },
+  {
+    name: GLOB_TOOL_NAME,
+    description: GLOB_TOOL_DESCRIPTION,
+    inputSchema: GlobInputSchema,
+    execute: (input, context) => executeGlobTool(input, context)
+  },
+  {
+    name: GREP_TOOL_NAME,
+    description: GREP_TOOL_DESCRIPTION,
+    inputSchema: GrepInputSchema,
+    execute: (input, context) => executeGrepTool(input, context)
   },
   {
     name: "Edit",
