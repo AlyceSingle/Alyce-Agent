@@ -4,7 +4,7 @@
 
 ## 核心特性
 
-- UI-only：统一走 React + Ink 终端界面。
+- UI：React + Ink 终端界面。
 - 多步 Agent Turn：模型可在单轮内连续调用多个工具，再汇总输出最终回复。
 - 工具权限控制：命令执行、文件写入、Web 访问都能按会话策略审批。
 - Prompt 工程化：静态段、动态段、persona、附加 system prompt 都通过 builder 统一组装。
