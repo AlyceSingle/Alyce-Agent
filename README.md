@@ -76,35 +76,35 @@ npm start
 │  │  ├─ startReactUiMode.ts            # TTY 检查，创建 runtime/store/controller，启动 UI
 │  │  ├─ sessionRuntime.ts              # 会话级 runtime，整合配置、消息、记忆、文件回滚
 │  │  ├─ commandRouter.ts               # /help /memory /model 等命令解析
-│  │  ├─ contextPreview.ts              # 预览下一轮发给模型的上下文
+│  │  └─ contextPreview.ts              # 预览下一轮发给模型的上下文
 │  ├─ config/
 │  │  └─ runtime.ts                     # 读取 .alyce / ~/.alyce / env / CLI，归一化运行时配置
 │  ├─ core/
+│  │  ├─ abort.ts                       # 中断信号和错误归一化
 │  │  ├─ agent/
 │  │  │  └─ runAgentTurn.ts             # 模型回复 -> 工具执行 -> 工具结果回填 的闭环
 │  │  ├─ api/
 │  │  │  ├─ sendChatCompletion.ts       # OpenAI Chat Completions 请求封装
 │  │  │  └─ requestPatch.ts             # request patch 解析与注入
-│  │  ├─ prompt/
-│  │  │  ├─ builder.ts                  # 构建最终 system prompt
-│  │  │  ├─ sectionResolver.ts          # 动态 section 解析与缓存
-│  │  │  ├─ sectionFactory.ts           # section 工厂
-│  │  │  ├─ sections.ts                 # prompt section 定义
-│  │  │  ├─ types.ts                    # prompt 类型定义
-│  │  │  └─ fragments/
-│  │  │     ├─ staticSections.ts        # 静态提示段
-│  │  │     ├─ dynamicSections.ts       # 动态提示段
-│  │  │     ├─ personaPresets.ts        # 内置 persona preset
-│  │  │     └─ formatting.ts            # prompt 文本格式化工具
+│  │  ├─ file-history/
+│  │  │  └─ fileHistoryManager.ts       # 文件写入前快照与 turn 级回滚
 │  │  ├─ memory/
 │  │  │  ├─ memoryService.ts            # 统一记忆入口，聚合 session / persistent / summary
 │  │  │  ├─ sessionMemoryStore.ts       # 进程内短期记忆
 │  │  │  ├─ persistentMemoryStore.ts    # 持久记忆，写入 .alyce/memory/MEMORY.md
 │  │  │  ├─ autoSummary.ts              # 长对话自动摘要生成
 │  │  │  └─ types.ts                    # 记忆相关类型
-│  │  ├─ file-history/
-│  │  │  └─ fileHistoryManager.ts       # 文件写入前快照与 turn 级回滚
-│  │  └─ abort.ts                       # 中断信号和错误归一化
+│  │  └─ prompt/
+│  │     ├─ builder.ts                  # 构建最终 system prompt
+│  │     ├─ sectionFactory.ts           # section 工厂
+│  │     ├─ sectionResolver.ts          # 动态 section 解析与缓存
+│  │     ├─ sections.ts                 # prompt section 定义
+│  │     ├─ types.ts                    # prompt 类型定义
+│  │     └─ fragments/
+│  │        ├─ staticSections.ts        # 静态提示段
+│  │        ├─ dynamicSections.ts       # 动态提示段
+│  │        ├─ personaPresets.ts        # 内置 persona preset
+│  │        └─ formatting.ts            # prompt 文本格式化工具
 │  ├─ tools/
 │  │  ├─ definitions.ts                 # 内置工具定义集合
 │  │  ├─ registry.ts                    # OpenAI tool schema 注册表
@@ -112,14 +112,48 @@ npm start
 │  │  ├─ types.ts                       # 工具上下文、审批请求、权限类型
 │  │  ├─ internal/
 │  │  │  ├─ pathSandbox.ts              # 工作区路径沙箱
+│  │  │  ├─ ripgrep.ts                  # ripgrep 可用性检测与调用适配
 │  │  │  └─ values.ts                   # 内部常量
-│  │  ├─ BashTool/                      # 通用 shell 命令执行，Windows 下实际走 powershell.exe -Command
-│  │  ├─ PowerShellTool/                # 显式 PowerShell 命令执行，适合 PowerShell 专属脚本或参数
-│  │  ├─ FileReadTool/                  # 文本文件读取，支持 offset/limit 和行号输出
-│  │  ├─ FileWriteTool/                 # 全量写文件，新建/覆盖前会审批并记录文件快照
-│  │  ├─ FileEditTool/                  # 基于 old_string/new_string 的精确替换编辑，默认要求唯一命中
-│  │  ├─ WebFetchTool/                  # 抓取单个网页内容，HTML 转纯文本后可按 prompt 做轻量提取
-│  │  └─ WebSearchTool/                 # 基于 DuckDuckGo HTML 搜索结果页的网页搜索，支持域名过滤
+│  │  ├─ AskUserQuestionTool/           # 结构化追问工具
+│  │  │  ├─ AskUserQuestionTool.ts      # 输入校验、预填答案短路、调用 askUserQuestions
+│  │  │  └─ prompt.ts                   # tool name、描述和约束常量
+│  │  ├─ FileReadTool/                  # 文本读取工具
+│  │  │  ├─ FileReadTool.ts             # offset/limit 读取与输出格式化
+│  │  │  ├─ limits.ts                   # 最大读取大小与默认值
+│  │  │  └─ prompt.ts                   # Read 工具描述
+│  │  ├─ GlobTool/                      # 文件路径匹配工具
+│  │  │  ├─ GlobTool.ts                 # 基于 ripgrep --files --glob 的路径检索
+│  │  │  └─ prompt.ts                   # Glob 工具描述
+│  │  ├─ GrepTool/                      # 内容检索工具
+│  │  │  ├─ GrepTool.ts                 # 正则搜索，支持 files/count/content 三种输出
+│  │  │  └─ prompt.ts                   # Grep 工具描述
+│  │  ├─ TodoWriteTool/                 # 任务清单更新工具
+│  │  │  ├─ constants.ts                # TodoWrite 工具名常量
+│  │  │  ├─ TodoWriteTool.ts            # todo 状态约束校验与 setTodos 写入
+│  │  │  └─ prompt.ts                   # TodoWrite 工具描述
+│  │  ├─ FileEditTool/                  # 精确替换编辑工具
+│  │  │  ├─ FileEditTool.ts             # old_string/new_string 精确替换入口
+│  │  │  ├─ constants.ts
+│  │  │  ├─ types.ts
+│  │  │  ├─ utils.ts
+│  │  │  └─ prompt.ts
+│  │  ├─ FileWriteTool/                 # 全量文件写入工具
+│  │  │  ├─ FileWriteTool.ts            # 新建/覆盖写入与审批
+│  │  │  └─ prompt.ts
+│  │  ├─ BashTool/                      # 通用 shell 命令执行工具
+│  │  │  ├─ BashTool.ts                 # 命令审批、执行与超时控制
+│  │  │  ├─ toolName.ts                 # Bash 工具名常量
+│  │  │  └─ prompt.ts                   # Bash 工具描述
+│  │  ├─ PowerShellTool/                # 显式 PowerShell 命令执行工具
+│  │  │  ├─ PowerShellTool.ts
+│  │  │  ├─ toolName.ts                 # PowerShell 工具名常量
+│  │  │  └─ prompt.ts
+│  │  ├─ WebFetchTool/                  # 单网页抓取工具
+│  │  │  ├─ WebFetchTool.ts
+│  │  │  └─ prompt.ts
+│  │  └─ WebSearchTool/                 # 网页搜索工具
+│  │     ├─ WebSearchTool.ts
+│  │     └─ prompt.ts
 │  └─ terminal-ui/
 │     ├─ entrypoints/
 │     │  └─ startReactUi.tsx            # 调用 Ink render，等待 UI 退出
@@ -131,17 +165,25 @@ npm start
 │     │  ├─ sessionController.ts        # UI 事件和 runtime/agent 的桥接层
 │     │  └─ messageMapper.ts            # 把运行时事件转换成 UI message
 │     ├─ components/
-│     │  ├─ Layout.tsx                  # 页面骨架
-│     │  ├─ StatusBar.tsx               # 顶部状态栏
-│     │  ├─ MessageList.tsx             # 会话消息列表
-│     │  ├─ MessageReaderScreen.tsx     # 单条消息阅读页
-│     │  ├─ PromptInput.tsx             # 输入框
-│     │  ├─ ApprovalDialog.tsx          # 权限审批弹窗
-│     │  └─ SettingsDialog.tsx          # 设置弹窗
-│     ├─ state/
-│     │  ├─ store.tsx                   # useSyncExternalStore 驱动的轻量 store
-│     │  ├─ actions.ts                  # 纯函数状态变换
-│     │  └─ types.ts                    # UI 状态、消息和弹窗类型
+│     │  ├─ ApprovalDialog.tsx
+│     │  ├─ AskUserQuestionDialog.tsx
+│     │  ├─ BaseTextInput.tsx
+│     │  ├─ Divider.tsx
+│     │  ├─ FullscreenLayout.tsx
+│     │  ├─ Layout.tsx
+│     │  ├─ MessageList.tsx
+│     │  ├─ MessageReaderScreen.tsx
+│     │  ├─ Pane.tsx
+│     │  ├─ PromptInput.tsx
+│     │  ├─ SettingsDialog.tsx
+│     │  ├─ StatusBar.tsx
+│     │  ├─ TextInput.tsx
+│     │  └─ TodoPanel.tsx
+│     ├─ context/
+│     │  └─ overlayContext.tsx          # overlay 激活态共享
+│     ├─ hooks/
+│     │  ├─ useDoublePress.ts
+│     │  └─ useTextInput.ts
 │     ├─ keybindings/
 │     │  ├─ defaultBindings.ts          # 默认快捷键
 │     │  ├─ resolver.ts                 # 快捷键解析
@@ -150,20 +192,42 @@ npm start
 │     │  ├─ shortcutDisplay.ts
 │     │  ├─ useKeybindings.ts
 │     │  └─ types.ts
-│     ├─ context/
-│     │  └─ overlayContext.tsx          # overlay 激活态共享
+│     ├─ runtime/
+│     │  ├─ bootstrap/
+│     │  │  └─ state.ts
+│     │  ├─ ink-runtime/                # vendored ink runtime（当前实现主体）
+│     │  │  ├─ components/
+│     │  │  ├─ events/
+│     │  │  ├─ hooks/
+│     │  │  ├─ layout/
+│     │  │  └─ termio/
+│     │  ├─ native-ts/
+│     │  │  └─ yoga-layout/
+│     │  ├─ utils/
+│     │  │  ├─ debug.ts
+│     │  │  ├─ earlyInput.ts
+│     │  │  ├─ env.ts
+│     │  │  ├─ envUtils.ts
+│     │  │  ├─ execFileNoThrow.ts
+│     │  │  ├─ fullscreen.ts
+│     │  │  ├─ intl.ts
+│     │  │  ├─ log.ts
+│     │  │  ├─ semver.ts
+│     │  │  └─ sliceAnsi.ts
+│     │  ├─ CursorDeclarationContext.ts
+│     │  ├─ ink.ts
+│     │  ├─ input.ts
+│     │  ├─ instances.ts
+│     │  ├─ parseKeypress.ts
+│     │  └─ useDeclaredCursor.ts
+│     ├─ state/
+│     │  ├─ store.tsx                   # useSyncExternalStore 驱动的轻量 store
+│     │  ├─ actions.ts                  # 纯函数状态变换
+│     │  └─ types.ts                    # UI 状态、消息和弹窗类型
 │     ├─ theme/
 │     │  └─ theme.ts                    # UI 主题
-│     ├─ runtime/
-│     │  ├─ ink.ts                      # Ink 兼容导出
-│     │  ├─ AlternateScreen.tsx         # 进入终端 alternate screen
-│     │  ├─ input.ts                    # 原始终端输入订阅
-│     │  ├─ parseKeypress.ts            # 键盘事件解析
-│     │  ├─ ScrollBox.tsx               # 滚动容器
-│     │  ├─ CursorDeclarationContext.ts # 光标声明上下文
-│     │  ├─ useDeclaredCursor.ts        # 光标同步 hook
-│     │  ├─ instances.ts                # Ink 实例管理
-│     │  └─ vendor/ink/                 # vendored Ink runtime
+│     ├─ types/
+│     │  └─ textInputTypes.ts
 │     └─ utils/
 │        └─ text.ts                     # 文本处理辅助
 ├─ .alyce/                              # 工作区本地配置、状态和记忆
@@ -171,8 +235,11 @@ npm start
 │  ├─ settings.json                     # 项目级会话设置
 │  └─ memory/
 │     └─ MEMORY.md                      # 持久记忆文件
+├─ AGENTS.md                            # 仓库开发约定
 ├─ dist/                                # TypeScript 构建产物
+├─ .env                                 # 本地环境变量（不提交）
 ├─ .env.example                         # 启动时的环境变量模板
+├─ package-lock.json                    # npm lockfile
 ├─ package.json                         # 脚本与依赖声明
 ├─ tsconfig.json                        # TypeScript 编译配置
 └─ README.md
@@ -370,7 +437,11 @@ default
 
 ## 内置工具说明
 
+- `AskUserQuestion`：向用户发起结构化问题（支持单选/多选题组）；当输入已提供完整 `answers` 时可直接短路返回。
 - `Read`：读取工作区内文本文件，支持按起始行和行数做局部读取；返回结果会附带行号，便于后续精确编辑。
+- `Glob`：按 glob 模式匹配文件路径，默认在工作区内搜索并排除 `.git` 等 VCS 目录，结果按最近修改时间排序。
+- `Grep`：基于 ripgrep 的内容检索，支持 `files_with_matches` / `count` / `content` 输出模式，以及上下文、类型过滤、分页参数。
+- `TodoWrite`：写入当前会话 todo 列表，约束未完成任务场景下必须且仅有一个 `in_progress`；全部完成时会清空列表。
 - `Edit`：对已有文件做字符串级替换；默认要求 `old_string` 只命中一处，避免误改多处内容。
 - `Write`：直接写入完整文件内容；适合新建文件或整体重写文件，落盘前会走 `file-write` 审批。
 - `Bash`：执行通用 shell 命令；会校验工作目录在 workspace 内，执行前走 `command` 审批，并受超时限制。
