@@ -13,12 +13,15 @@ import type { SessionController } from "../adapters/sessionController.js";
 import { useIsOverlayActive } from "../context/overlayContext.js";
 import { useKeybindings } from "../keybindings/useKeybindings.js";
 import { getBindingDisplayText } from "../keybindings/shortcutDisplay.js";
+import { useSelection } from "../runtime/ink-runtime/hooks/use-selection.js";
+import { setClipboard } from "../runtime/ink-runtime/termio/osc.js";
 import { useTerminalInput } from "../runtime/input.js";
-import { getActiveDialog, setTranscriptSticky } from "../state/actions.js";
+import { getActiveDialog, selectRelativeMessage, setTranscriptSticky } from "../state/actions.js";
 import { useTerminalUiSelector, useTerminalUiStore } from "../state/store.js";
 import { terminalUiTheme } from "../theme/theme.js";
 
 const EXIT_CONFIRMATION_STATUS = "Press Ctrl+C again to quit";
+const COPY_STATUS_DURATION_MS = 1800;
 const OPEN_DETAIL_SHORTCUT = getBindingDisplayText("conversation:openDetail", "Global") ?? "Ctrl+O";
 const PAGE_UP_SHORTCUT = getBindingDisplayText("scroll:pageUp", "Scroll") ?? "PgUp";
 const PAGE_DOWN_SHORTCUT = getBindingDisplayText("scroll:pageDown", "Scroll") ?? "PgDn";
@@ -50,6 +53,7 @@ const ConversationPane = React.memo(React.forwardRef<MessageListHandle, {
 export function AgentScreen(props: { controller: SessionController }) {
   const { exit } = useApp();
   const { stdout } = useStdout();
+  const selection = useSelection();
   const store = useTerminalUiStore();
   const dialogQueue = useTerminalUiSelector((value) => value.dialogQueue);
   const connection = useTerminalUiSelector((value) => value.connection);
@@ -71,6 +75,8 @@ export function AgentScreen(props: { controller: SessionController }) {
   const messages = useTerminalUiSelector((value) => value.messages);
   const clearOnCtrlCRef = useRef(false);
   const transcriptRef = useRef<MessageListHandle | null>(null);
+  const copyStatusTimerRef = useRef<NodeJS.Timeout | null>(null);
+  const [copyStatusText, setCopyStatusText] = useState<string | null>(null);
   const [exitConfirmationPending, setExitConfirmationPending] = useState(false);
   const terminalWidth = stdout.columns || 120;
   const terminalHeight = stdout.rows || 36;
@@ -101,6 +107,47 @@ export function AgentScreen(props: { controller: SessionController }) {
   const resetExitConfirmation = useCallback(() => {
     setExitConfirmationPending(false);
   }, []);
+
+  const showCopyStatus = useCallback((status: string) => {
+    if (copyStatusTimerRef.current) {
+      clearTimeout(copyStatusTimerRef.current);
+      copyStatusTimerRef.current = null;
+    }
+
+    setCopyStatusText(status);
+    copyStatusTimerRef.current = setTimeout(() => {
+      copyStatusTimerRef.current = null;
+      setCopyStatusText(null);
+    }, COPY_STATUS_DURATION_MS);
+  }, []);
+
+  useEffect(() => {
+    return () => {
+      if (copyStatusTimerRef.current) {
+        clearTimeout(copyStatusTimerRef.current);
+        copyStatusTimerRef.current = null;
+      }
+    };
+  }, []);
+
+  const copyTextToClipboard = useCallback(async (text: string, successStatus: string) => {
+    if (!text) {
+      return false;
+    }
+
+    try {
+      const sequence = await setClipboard(text);
+      if (sequence) {
+        stdout.write(sequence);
+      }
+
+      showCopyStatus(successStatus);
+      return true;
+    } catch {
+      showCopyStatus("Copy failed.");
+      return false;
+    }
+  }, [showCopyStatus, stdout]);
 
   const syncTranscriptSticky = useCallback((sticky: boolean) => {
     store.updateState((state) => setTranscriptSticky(state, sticky));
@@ -135,10 +182,14 @@ export function AgentScreen(props: { controller: SessionController }) {
       }
     },
     "conversation:previousMessage": () => {
-      transcriptRef.current?.scrollBy(-1);
+      store.updateState((state) =>
+        setTranscriptSticky(selectRelativeMessage(state, -1), false)
+      );
     },
     "conversation:nextMessage": () => {
-      transcriptRef.current?.scrollBy(1);
+      store.updateState((state) =>
+        setTranscriptSticky(selectRelativeMessage(state, 1), false)
+      );
     },
     "scroll:lineUp": () => {
       transcriptRef.current?.scrollBy(-LINE_SCROLL_ROWS);
@@ -164,7 +215,8 @@ export function AgentScreen(props: { controller: SessionController }) {
     isLoading,
     messages,
     props.controller,
-    selectedMessageId
+    selectedMessageId,
+    store
   ]);
 
   useKeybindings(keybindingHandlers, {
@@ -183,6 +235,33 @@ export function AgentScreen(props: { controller: SessionController }) {
     if (key.escape && activeDialog?.type === "permission") {
       props.controller.respondToApproval("reject-once");
       return;
+    }
+
+    if (isCtrlC) {
+      const copiedSelectionText = selection.copySelection();
+      if (copiedSelectionText) {
+        resetExitConfirmation();
+        showCopyStatus(`Copied ${copiedSelectionText.length} chars from selection.`);
+        return;
+      }
+
+      if (!transcriptSticky) {
+        const targetMessageId =
+          transcriptRef.current?.getDetailTargetMessageId() ??
+          selectedMessageId ??
+          messages.at(-1)?.id ??
+          null;
+        const targetMessage =
+          targetMessageId
+            ? messages.find((message) => message.id === targetMessageId)
+            : undefined;
+
+        if (targetMessage?.content) {
+          resetExitConfirmation();
+          void copyTextToClipboard(targetMessage.content, "Copied selected message.");
+          return;
+        }
+      }
     }
 
     if (isCtrlC && !clearOnCtrlCRef.current) {
@@ -226,7 +305,9 @@ export function AgentScreen(props: { controller: SessionController }) {
     transcriptRef.current?.scrollToBottom();
   }, [hasDialog, isReaderOpen, messages.length, terminalHeight, terminalWidth, transcriptSticky]);
 
-  const displayedStatusText = exitConfirmationPending ? EXIT_CONFIRMATION_STATUS : statusText;
+  const displayedStatusText = exitConfirmationPending
+    ? EXIT_CONFIRMATION_STATUS
+    : copyStatusText ?? statusText;
   const completedTodoCount = todos.filter((todo) => todo.status === "completed").length;
   const todoSummary = todos.length > 0 ? `${completedTodoCount}/${todos.length}` : undefined;
 

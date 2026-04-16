@@ -38,6 +38,7 @@ export type BaseTextInputProps = {
   maxVisibleLines?: number;
   cursorOffset: number;
   onChangeCursorOffset: (offset: number) => void;
+  onEscClearPendingChange?: (pending: boolean) => void;
   placeholder?: string;
   placeholderElement?: React.ReactNode;
   dimColor?: boolean;

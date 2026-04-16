@@ -2,6 +2,7 @@ import { useMemo } from "react";
 import type { BaseInputState } from "../types/textInputTypes.js";
 import type { TerminalKey } from "../runtime/input.js";
 import { buildInputEditorViewport, measureCharWidth, moveCursorVertically } from "../utils/text.js";
+import { useDoublePress } from "./useDoublePress.js";
 
 type UseTextInputProps = {
   value: string;
@@ -12,6 +13,7 @@ type UseTextInputProps = {
   maxVisibleLines?: number;
   cursorOffset: number;
   onChangeCursorOffset: (offset: number) => void;
+  onEscClearPendingChange?: (pending: boolean) => void;
 };
 
 function insertText(value: string, cursor: number, text: string) {
@@ -71,6 +73,19 @@ function getDisplayWidth(value: string) {
 }
 
 export function useTextInput(props: UseTextInputProps): BaseInputState {
+  const escapeDoublePress = useDoublePress(
+    (pending) => {
+      props.onEscClearPendingChange?.(pending);
+    },
+    () => {
+      if (!props.value.length) {
+        return;
+      }
+
+      props.onChange("");
+      props.onChangeCursorOffset(0);
+    }
+  );
   const safeColumns = Math.max(20, props.columns);
   const viewport = useMemo(
     () =>
@@ -93,7 +108,19 @@ export function useTextInput(props: UseTextInputProps): BaseInputState {
       props.onChangeCursorOffset(nextCursor);
     };
 
-    if (key.return && !key.shift && !key.meta) {
+    if (key.escape) {
+      if (!props.value.length) {
+        escapeDoublePress.reset();
+        return;
+      }
+
+      escapeDoublePress.trigger();
+      return;
+    }
+
+    escapeDoublePress.reset();
+
+    if (key.return && !key.shift && !key.meta && !key.ctrl) {
       if (props.multiline && props.cursorOffset > 0 && props.value[props.cursorOffset - 1] === "\\") {
         const nextValue =
           props.value.slice(0, props.cursorOffset - 1) + "\n" + props.value.slice(props.cursorOffset);
@@ -109,7 +136,7 @@ export function useTextInput(props: UseTextInputProps): BaseInputState {
       return;
     }
 
-    if (key.return && (key.shift || key.meta)) {
+    if (key.return && (key.shift || key.meta || key.ctrl)) {
       const next = insertText(props.value, props.cursorOffset, "\n");
       commit(next.value, next.cursor);
       return;
@@ -165,21 +192,6 @@ export function useTextInput(props: UseTextInputProps): BaseInputState {
     if (key.ctrl && input.toLowerCase() === "w") {
       const next = removePreviousWord(props.value, props.cursorOffset);
       commit(next.value, next.cursor);
-      return;
-    }
-
-    if (key.ctrl && input.toLowerCase() === "j") {
-      const next = insertText(props.value, props.cursorOffset, "\n");
-      commit(next.value, next.cursor);
-      return;
-    }
-
-    if (key.ctrl && input.toLowerCase() === "c") {
-      if (!props.value.length) {
-        return;
-      }
-
-      commit("", 0);
       return;
     }
 

@@ -14,6 +14,7 @@ export function PromptInput(props: {
   onSubmit: (value: string) => Promise<void> | void;
 }) {
   const [cursorOffset, setCursorOffset] = useState(props.value.length);
+  const [escClearPending, setEscClearPending] = useState(false);
   const previousValueRef = useRef(props.value);
   const pendingLocalValueChangeRef = useRef(false);
   const pendingLocalCursorOffsetRef = useRef<number | null>(null);
@@ -54,6 +55,20 @@ export function PromptInput(props: {
     };
   }, [props.onCtrlCCaptureChange]);
 
+  useEffect(() => {
+    if (!props.disabled) {
+      return;
+    }
+
+    setEscClearPending(false);
+  }, [props.disabled]);
+
+  useEffect(() => {
+    if (props.value.length === 0) {
+      setEscClearPending(false);
+    }
+  }, [props.value.length]);
+
   const handleChange = useCallback((value: string) => {
     pendingLocalValueChangeRef.current = true;
     props.onChange(value);
@@ -69,7 +84,9 @@ export function PromptInput(props: {
 
   const statusHint = props.disabled
     ? props.disabledReason || "Input locked."
-    : props.sublineText;
+    : escClearPending
+      ? "Press Esc again to clear input."
+      : props.sublineText;
 
   return (
     <Box flexDirection="column" width="100%">
@@ -86,6 +103,7 @@ export function PromptInput(props: {
         maxVisibleLines={4}
         cursorOffset={cursorOffset}
         onChangeCursorOffset={handleCursorOffsetChange}
+        onEscClearPendingChange={setEscClearPending}
         placeholder="Ask Alyce to inspect, edit, or explain something..."
       />
       {statusHint ? (

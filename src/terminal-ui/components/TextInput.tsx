@@ -14,7 +14,8 @@ export default function TextInput(props: BaseTextInputProps): React.ReactNode {
     columns: props.columns || stdout.columns || 80,
     maxVisibleLines: props.maxVisibleLines,
     cursorOffset: props.cursorOffset,
-    onChangeCursorOffset: props.onChangeCursorOffset
+    onChangeCursorOffset: props.onChangeCursorOffset,
+    onEscClearPendingChange: props.onEscClearPendingChange
   });
 
   return (

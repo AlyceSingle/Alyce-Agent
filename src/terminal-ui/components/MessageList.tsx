@@ -172,6 +172,7 @@ const MessageListImpl = forwardRef<MessageListHandle, {
 }>(function MessageList(props, ref) {
   const scrollRef = useRef<ScrollBoxHandle | null>(null);
   const detailTargetMessageIdRef = useRef<string | null>(props.selectedMessageId);
+  const selectedMessageSnapshotRef = useRef<string | null>(props.selectedMessageId);
   const stickySnapshotRef = useRef(true);
   const layoutSignatureRef = useRef<{
     contentWidth: number;
@@ -298,6 +299,47 @@ const MessageListImpl = forwardRef<MessageListHandle, {
       handle.scrollToBottom();
     }
   }, [contentWidth, props.messages.length, totalRowCount]);
+
+  useEffect(() => {
+    const handle = scrollRef.current;
+    if (!handle || !props.selectedMessageId) {
+      selectedMessageSnapshotRef.current = props.selectedMessageId;
+      return;
+    }
+
+    const selectedChanged = selectedMessageSnapshotRef.current !== props.selectedMessageId;
+    selectedMessageSnapshotRef.current = props.selectedMessageId;
+    if (!selectedChanged) {
+      return;
+    }
+
+    const selectedIndex = renderedEntries.findIndex(
+      (entry) => entry.message.id === props.selectedMessageId
+    );
+    if (selectedIndex < 0) {
+      return;
+    }
+
+    const selectedEntry = renderedEntries[selectedIndex];
+    if (!selectedEntry) {
+      return;
+    }
+
+    const selectedTop = entryOffsets[selectedIndex] ?? 0;
+    const selectedBottom = selectedTop + Math.max(1, selectedEntry.rowCount) - 1;
+    const viewportHeight = Math.max(1, handle.getViewportHeight());
+    const viewportTop = handle.getScrollTop();
+    const viewportBottom = viewportTop + viewportHeight - 1;
+
+    if (selectedTop < viewportTop) {
+      handle.scrollTo(Math.max(0, selectedTop));
+      return;
+    }
+
+    if (selectedBottom > viewportBottom) {
+      handle.scrollTo(Math.max(0, selectedBottom - viewportHeight + 1));
+    }
+  }, [entryOffsets, props.selectedMessageId, renderedEntries]);
 
   return (
     <Box

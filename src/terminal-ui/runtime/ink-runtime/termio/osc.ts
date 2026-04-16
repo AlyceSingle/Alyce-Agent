@@ -210,11 +210,26 @@ function copyNative(text: string): void {
       })
       return
     }
-    case 'win32':
-      // clip.exe is always available on Windows. Unicode handling is
-      // imperfect (system locale encoding) but good enough for a fallback.
-      void execFileNoThrow('clip', [], opts)
+    case 'win32': {
+      // Prefer PowerShell Set-Clipboard so UTF-8 Chinese text stays intact.
+      // Fall back to clip.exe only if PowerShell is unavailable.
+      void execFileNoThrow(
+        'powershell',
+        [
+          '-NoLogo',
+          '-NoProfile',
+          '-NonInteractive',
+          '-Command',
+          '[Console]::InputEncoding = [System.Text.Encoding]::UTF8; $text = [Console]::In.ReadToEnd(); Set-Clipboard -Value $text',
+        ],
+        opts,
+      ).then(result => {
+        if (result.code !== 0) {
+          void execFileNoThrow('clip', [], opts)
+        }
+      })
       return
+    }
   }
 }
 
