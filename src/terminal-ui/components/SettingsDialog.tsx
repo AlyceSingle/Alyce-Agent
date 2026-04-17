@@ -438,7 +438,7 @@ export function SettingsDialog(props: {
                   ? "Text fields accept \\n for line breaks."
                   : currentField.type === "number"
                     ? "Number fields are persisted as positive integers."
-                    : "Toggle or cycle this field with Enter."}
+                    : "Toggle or cycle this field with Enter. Not set is saved as an explicit clear value."}
             </Text>
           )}
         </Box>

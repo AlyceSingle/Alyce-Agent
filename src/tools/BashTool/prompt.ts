@@ -3,12 +3,12 @@ import { BASH_TOOL_NAME } from "./toolName.js";
 export const DEFAULT_BASH_TIMEOUT_MS = 120_000;
 export const MAX_BASH_TIMEOUT_MS = 600_000;
 
-export const BASH_TOOL_DESCRIPTION = `Execute a shell command in the current workspace.
+export const BASH_TOOL_DESCRIPTION = `Execute a shell command in allowed directories.
 
 Usage:
 - command: shell command string to execute
 - timeout_ms: optional timeout in milliseconds
-- cwd: optional working directory (absolute path or workspace-relative path)
+- cwd: optional working directory (absolute path or workspace-relative path within allowed directories)
 - run_in_background: reserved compatibility field; must be false in this runtime
 
 Notes:

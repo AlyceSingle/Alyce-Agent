@@ -3,12 +3,12 @@ import { POWERSHELL_TOOL_NAME } from "./toolName.js";
 export const DEFAULT_POWERSHELL_TIMEOUT_MS = 120_000;
 export const MAX_POWERSHELL_TIMEOUT_MS = 600_000;
 
-export const POWERSHELL_TOOL_DESCRIPTION = `Execute a PowerShell command in the current workspace.
+export const POWERSHELL_TOOL_DESCRIPTION = `Execute a PowerShell command in allowed directories.
 
 Usage:
 - command: PowerShell command string to execute
 - timeout_ms: optional timeout in milliseconds
-- cwd: optional working directory (absolute path or workspace-relative path)
+- cwd: optional working directory (absolute path or workspace-relative path within allowed directories)
 - run_in_background: reserved compatibility field; must be false in this runtime
 
 Notes:

@@ -1,8 +1,7 @@
 import { spawn } from "node:child_process";
-import path from "node:path";
 import { z } from "zod";
 import { TurnInterruptedError, getAbortReason, throwIfAborted } from "../../core/abort.js";
-import { resolveWorkspacePath, toWorkspaceRelative } from "../internal/pathSandbox.js";
+import { resolvePathFromInput, toWorkspaceRelative } from "../internal/pathSandbox.js";
 import { truncate } from "../internal/values.js";
 import type { ToolExecutionContext } from "../types.js";
 import { BASH_TOOL_DESCRIPTION, DEFAULT_BASH_TIMEOUT_MS, MAX_BASH_TIMEOUT_MS } from "./prompt.js";
@@ -15,7 +14,9 @@ export const BashInputSchema = z
     cwd: z
       .string()
       .optional()
-      .describe("Optional working directory. Absolute path or workspace-relative path"),
+      .describe(
+        "Optional working directory. Absolute path or workspace-relative path within allowed directories"
+      ),
     run_in_background: z
       .boolean()
       .optional()
@@ -56,7 +57,11 @@ export async function executeBashTool(
 
   throwIfAborted(context.abortSignal);
 
-  const workingDirectory = resolveWorkingDirectory(context.workspaceRoot, input.cwd);
+  const workingDirectory = resolveWorkingDirectory(
+    context.workspaceRoot,
+    context.allowedRoots,
+    input.cwd
+  );
   const timeoutMs = normalizeTimeout(input.timeout_ms, context.commandTimeoutMs);
 
   const approved = await context.requestApproval({
@@ -96,23 +101,16 @@ function normalizeTimeout(requestedTimeout: number | undefined, fallback: number
   return Math.min(Math.max(1, Math.trunc(base)), MAX_BASH_TIMEOUT_MS);
 }
 
-function resolveWorkingDirectory(workspaceRoot: string, cwd: string | undefined): string {
+function resolveWorkingDirectory(
+  workspaceRoot: string,
+  allowedRoots: readonly string[],
+  cwd: string | undefined
+): string {
   if (!cwd || cwd.trim().length === 0) {
     return workspaceRoot;
   }
 
-  const normalized = cwd.trim();
-  if (!path.isAbsolute(normalized)) {
-    return resolveWorkspacePath(workspaceRoot, normalized);
-  }
-
-  const absolute = path.resolve(normalized);
-  const relative = path.relative(workspaceRoot, absolute);
-  if (relative.startsWith("..") || path.isAbsolute(relative)) {
-    throw new Error("cwd escapes workspace root");
-  }
-
-  return absolute;
+  return resolvePathFromInput(workspaceRoot, allowedRoots, cwd.trim());
 }
 
 function getShellCommand(command: string): ShellCommand {

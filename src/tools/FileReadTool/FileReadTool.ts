@@ -1,14 +1,15 @@
 import { promises as fs } from "node:fs";
-import path from "node:path";
 import { z } from "zod";
-import { resolveWorkspacePath, toWorkspaceRelative } from "../internal/pathSandbox.js";
+import { resolvePathFromInput, toWorkspaceRelative } from "../internal/pathSandbox.js";
 import type { ToolExecutionContext } from "../types.js";
 import { truncate } from "../internal/values.js";
 import { getDefaultFileReadingLimits } from "./limits.js";
 
 export const FileReadInputSchema = z
   .object({
-    file_path: z.string().describe("Absolute path or workspace-relative path to the file"),
+    file_path: z
+      .string()
+      .describe("Absolute path or workspace-relative path to the file inside allowed directories"),
     offset: z.number().int().positive().optional().describe("1-based start line"),
     limit: z.number().int().positive().optional().describe("Number of lines to read")
   })
@@ -38,7 +39,7 @@ export async function executeFileRead(
     throw new Error(`limit exceeds max allowed lines (${limits.maxLines})`);
   }
 
-  const absolutePath = resolveReadPath(context.workspaceRoot, input.file_path);
+  const absolutePath = resolveReadPath(context.workspaceRoot, context.allowedRoots, input.file_path);
   const stats = await fs.stat(absolutePath);
 
   if (stats.isDirectory()) {
@@ -74,23 +75,17 @@ export async function executeFileRead(
   };
 }
 
-function resolveReadPath(workspaceRoot: string, filePath: string): string {
+function resolveReadPath(
+  workspaceRoot: string,
+  allowedRoots: readonly string[],
+  filePath: string
+): string {
   const normalized = filePath.trim();
   if (!normalized) {
     throw new Error("Read requires non-empty 'file_path'");
   }
 
-  if (!path.isAbsolute(normalized)) {
-    return resolveWorkspacePath(workspaceRoot, normalized);
-  }
-
-  const absolutePath = path.resolve(normalized);
-  const relativeToWorkspace = path.relative(workspaceRoot, absolutePath);
-  if (relativeToWorkspace.startsWith("..") || path.isAbsolute(relativeToWorkspace)) {
-    throw new Error("Path escapes workspace root");
-  }
-
-  return absolutePath;
+  return resolvePathFromInput(workspaceRoot, allowedRoots, normalized);
 }
 
 function renderWithLineNumbers(totalLines: number, startLine: number, lines: string[]): string {

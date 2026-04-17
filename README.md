@@ -7,6 +7,7 @@
 - UI：React + Ink 终端界面。
 - 多步 Agent Turn：模型可在单轮内连续调用多个工具，再汇总输出最终回复。
 - 工具权限控制：命令执行、文件写入、Web 访问都能按会话策略审批。
+- 访问范围控制：默认仅工作区；可通过 `--add-dir`、`/add-dir` 显式授权工作区外目录。
 - Prompt 工程化：静态段、动态段、persona、附加 system prompt 都通过 builder 统一组装。
 - 记忆系统：支持 session memory、persistent memory 和 auto summary，持久化到工作区 `.alyce/`。
 - 中断恢复：文件写入前自动做快照，用户中断后可在可恢复场景下回滚本轮变更。
@@ -48,6 +49,29 @@ npm start
 
 - 应用必须运行在交互式 TTY 终端中，否则 `startReactUiMode()` 会直接报错。
 - 当前 `npm run dev` 实际执行的是先构建、再运行 `dist/index.js`，不是热更新式 dev server。
+
+## 额外目录访问（工作区外）
+
+默认情况下，工具仅能访问当前工作区。你可以显式添加额外目录：
+
+- 启动时：`--add-dir <path>`（可重复）
+- 会话内：`/add-dir <path>`（仅当前会话）
+- 会话内并持久化：`/add-dir --save <path>`（写入用户设置）
+
+也可通过环境变量设置（使用系统路径分隔符）：
+
+- `AGENT_ADDITIONAL_DIRECTORIES`
+
+`settings.json` 示例：
+
+```json
+{
+  "additionalDirectories": [
+    "D:\\shared",
+    "C:\\temp\\workspace-cache"
+  ]
+}
+```
 
 ## 分层架构
 
@@ -436,6 +460,11 @@ default
 也就是 CLI 最高，其次是环境变量，再到用户级和项目级设置。
 
 ## 内置工具说明
+
+- 内置 persona preset（`SessionSettings.personaPreset`，也可通过 `--persona-preset` / `AGENT_PERSONA_PRESET` 指定）：
+  - `alyce-original`
+  - `queen-alyce`
+  - `sweetheart-alyce`
 
 - `AskUserQuestion`：向用户发起结构化问题（支持单选/多选题组）；当输入已提供完整 `answers` 时可直接短路返回。
 - `Read`：读取工作区内文本文件，支持按起始行和行数做局部读取；返回结果会附带行号，便于后续精确编辑。

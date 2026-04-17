@@ -4,6 +4,7 @@ import type { MemoryPromptContext } from "../memory/types.js";
 export interface PromptRuntimeContext {
   model: string;
   workspaceRoot: string;
+  allowedRoots: string[];
   currentDate: string;
   platform: string;
   availableTools: string[];

@@ -9,6 +9,7 @@ export type ParsedCommand =
   | { type: "remember"; note: string; persist: boolean }
   | { type: "memory-view" }
   | { type: "memory-clear"; clearPersistent: boolean }
+  | { type: "add-directory"; directory: string; persist: boolean }
   | { type: "switch-model"; model: string }
   | { type: "context-preview"; nextUserInput?: string };
 
@@ -99,6 +100,48 @@ export function parseReplCommand(input: string): ParsedCommand {
     return {
       type: "context-preview",
       nextUserInput: input.slice(9)
+    };
+  }
+
+  if (input === "/add-dir") {
+    return {
+      type: "command-error",
+      input,
+      message: "缺少目录路径。"
+    };
+  }
+
+  if (input.startsWith("/add-dir ")) {
+    const raw = input.slice(9).trim();
+    if (!raw) {
+      return {
+        type: "command-error",
+        input,
+        message: "缺少目录路径。"
+      };
+    }
+
+    if (raw.startsWith("--save ")) {
+      const directory = raw.slice(7).trim();
+      if (!directory) {
+        return {
+          type: "command-error",
+          input,
+          message: "缺少要持久化的目录路径。"
+        };
+      }
+
+      return {
+        type: "add-directory",
+        directory,
+        persist: true
+      };
+    }
+
+    return {
+      type: "add-directory",
+      directory: raw,
+      persist: false
     };
   }
 

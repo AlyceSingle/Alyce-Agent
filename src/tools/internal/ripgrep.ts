@@ -1,7 +1,8 @@
 import { spawn } from "node:child_process";
 import { promises as fs } from "node:fs";
+import path from "node:path";
 import { TurnInterruptedError, getAbortReason } from "../../core/abort.js";
-import { resolveWorkspacePath } from "./pathSandbox.js";
+import { resolveAllowedPath, toWorkspaceRelative } from "./pathSandbox.js";
 
 export interface RipgrepExecutionResult {
   exitCode: number | null;
@@ -120,17 +121,30 @@ export function splitRipgrepLines(stdout: string): string[] {
 
 export async function sortWorkspaceRelativePathsByModifiedTime(
   workspaceRoot: string,
-  relativePaths: string[]
+  relativePaths: string[],
+  allowedRoots: readonly string[] = [workspaceRoot],
+  baseDirectory = workspaceRoot
 ): Promise<string[]> {
+  const entries = relativePaths.map((entry) => {
+    const absolutePath = path.isAbsolute(entry)
+      ? path.resolve(entry)
+      : resolveAllowedPath(allowedRoots, entry, baseDirectory);
+
+    return {
+      absolutePath,
+      displayPath: toWorkspaceRelative(workspaceRoot, absolutePath)
+    };
+  });
+
   const stats = await Promise.allSettled(
-    relativePaths.map((relativePath) => fs.stat(resolveWorkspacePath(workspaceRoot, relativePath)))
+    entries.map((entry) => fs.stat(entry.absolutePath))
   );
 
-  return relativePaths
-    .map((relativePath, index) => {
+  return entries
+    .map((entry, index) => {
       const statResult = stats[index];
       return [
-        relativePath,
+        entry.displayPath,
         statResult?.status === "fulfilled" ? statResult.value.mtimeMs ?? 0 : 0
       ] as const;
     })

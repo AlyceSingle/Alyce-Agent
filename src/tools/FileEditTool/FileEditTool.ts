@@ -1,7 +1,6 @@
 import { promises as fs } from "node:fs";
-import path from "node:path";
 import type { z } from "zod";
-import { resolveWorkspacePath, toWorkspaceRelative } from "../internal/pathSandbox.js";
+import { resolvePathFromInput, toWorkspaceRelative } from "../internal/pathSandbox.js";
 import type { ToolExecutionContext } from "../types.js";
 import { FILE_EDIT_TOOL_NAME } from "./constants.js";
 import { getEditToolDescription } from "./prompt.js";
@@ -16,7 +15,7 @@ export async function executeFileEdit(
   context: ToolExecutionContext
 ): Promise<FileEditOutput> {
   // 统一先解析为工作区内绝对路径，后续读写都基于同一路径。
-  const fullFilePath = resolveEditPath(context.workspaceRoot, input.file_path);
+  const fullFilePath = resolveEditPath(context.workspaceRoot, context.allowedRoots, input.file_path);
   const relativePath = toWorkspaceRelative(context.workspaceRoot, fullFilePath);
 
   const originalFile = await fs.readFile(fullFilePath, "utf8");
@@ -77,23 +76,17 @@ export async function executeFileEdit(
   };
 }
 
-function resolveEditPath(workspaceRoot: string, filePath: string): string {
+function resolveEditPath(
+  workspaceRoot: string,
+  allowedRoots: readonly string[],
+  filePath: string
+): string {
   const normalized = filePath.trim();
   if (!normalized) {
     throw new Error("Edit requires non-empty 'file_path'");
   }
 
-  if (!path.isAbsolute(normalized)) {
-    return resolveWorkspacePath(workspaceRoot, normalized);
-  }
-
-  const absolutePath = path.resolve(normalized);
-  const relative = path.relative(workspaceRoot, absolutePath);
-  if (relative.startsWith("..") || path.isAbsolute(relative)) {
-    throw new Error("Path escapes workspace root");
-  }
-
-  return absolutePath;
+  return resolvePathFromInput(workspaceRoot, allowedRoots, normalized);
 }
 
 function countMatches(content: string, needle: string): number {

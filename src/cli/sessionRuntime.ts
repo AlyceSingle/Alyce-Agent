@@ -1,4 +1,5 @@
 import process from "node:process";
+import path from "node:path";
 import OpenAI from "openai";
 import {
   buildConnectionConfigState,
@@ -50,6 +51,9 @@ export interface SessionRuntime {
     target?: ConnectionConfigSaveTarget
   ) => Promise<void>;
   updateSettings: (patch: Partial<SessionSettings>) => Promise<void>;
+  getAllowedRoots: () => string[];
+  getSessionAdditionalDirectories: () => string[];
+  setSessionAdditionalDirectories: (directories: string[]) => Promise<void>;
   resetSystemMessage: () => Promise<void>;
   clearConversation: () => Promise<void>;
   clearPromptCache: () => void;
@@ -92,6 +96,8 @@ export function getHelpText(currentModel: string) {
     "  /memory clear      Clear session memory",
     "  /memory clear --all  Clear session and persistent memory",
     "  /context [text]    Show full next-turn AI context payload",
+    "  /add-dir <path>    Allow access to an extra directory for this session",
+    "  /add-dir --save <path>  Add directory and persist it in user settings",
     "  /model <name>      Switch model and persist it (current: " + currentModel + ")",
     "  /exit              Quit",
     "",
@@ -146,6 +152,7 @@ export async function createSessionRuntime(
   let settingsState = cloneSessionSettingsState(config.settingsState);
   let connection = connectionState.effective;
   let settings = settingsState.effective;
+  let sessionAdditionalDirectories: string[] = [];
   let connectionSaveTarget = connectionState.saveTarget;
   let client: OpenAI | null = createClientFromConnection(connection);
 
@@ -164,6 +171,11 @@ export async function createSessionRuntime(
       {
         model: connection.model,
         workspaceRoot: config.paths.workspaceRoot,
+        allowedRoots: resolveAllowedRoots(
+          config.paths.workspaceRoot,
+          settings,
+          sessionAdditionalDirectories
+        ),
         currentDate: getCurrentDateLabel(),
         platform: process.platform,
         availableTools: getRegisteredToolNames(),
@@ -254,6 +266,13 @@ export async function createSessionRuntime(
     getConnectionConfigState: () => cloneConnectionConfigState(connectionState),
     getSettings: () => ({ ...settings }),
     getSettingsState: () => cloneSessionSettingsState(settingsState),
+    getAllowedRoots: () =>
+      resolveAllowedRoots(config.paths.workspaceRoot, settings, sessionAdditionalDirectories),
+    getSessionAdditionalDirectories: () => [...sessionAdditionalDirectories],
+    setSessionAdditionalDirectories: async (directories) => {
+      sessionAdditionalDirectories = normalizeAdditionalDirectories(directories);
+      await resetSystemMessage();
+    },
     requireClient: () => {
       if (!connection.apiKey.trim()) {
         throw new Error("Connection is incomplete. Open settings and fill API key, URL, and model.");
@@ -324,6 +343,11 @@ export async function createSessionRuntime(
     }) => ({
       // 工具在执行前会先登记 turnId，并在写文件前抓取快照，便于中断后回滚。
       workspaceRoot: config.paths.workspaceRoot,
+      allowedRoots: resolveAllowedRoots(
+        config.paths.workspaceRoot,
+        settings,
+        sessionAdditionalDirectories
+      ),
       commandTimeoutMs: settings.commandTimeoutMs,
       turnId,
       abortSignal,
@@ -432,29 +456,77 @@ function normalizeSettingsPatch(patch: Partial<SessionSettings>): Partial<Sessio
   }
 
   if ("languagePreference" in patch) {
-    normalized.languagePreference = normalizeOptionalText(patch.languagePreference);
+    normalized.languagePreference = normalizeOptionalSessionTextPatch(patch.languagePreference);
   }
 
   if ("personaPreset" in patch) {
-    normalized.personaPreset = normalizeOptionalText(patch.personaPreset);
+    normalized.personaPreset = normalizeOptionalSessionTextPatch(patch.personaPreset);
   }
 
   if ("aiPersonalityPrompt" in patch) {
-    normalized.aiPersonalityPrompt = normalizeOptionalText(patch.aiPersonalityPrompt);
+    normalized.aiPersonalityPrompt = normalizeOptionalSessionTextPatch(patch.aiPersonalityPrompt);
   }
 
   if ("customSystemPrompt" in patch) {
-    normalized.customSystemPrompt = normalizeOptionalText(patch.customSystemPrompt);
+    normalized.customSystemPrompt = normalizeOptionalSessionTextPatch(patch.customSystemPrompt);
   }
 
   if ("appendSystemPrompt" in patch) {
-    normalized.appendSystemPrompt = normalizeOptionalText(patch.appendSystemPrompt);
+    normalized.appendSystemPrompt = normalizeOptionalSessionTextPatch(patch.appendSystemPrompt);
+  }
+
+  if ("additionalDirectories" in patch) {
+    normalized.additionalDirectories = normalizeAdditionalDirectories(patch.additionalDirectories);
   }
 
   return normalized;
 }
 
+function normalizeOptionalSessionTextPatch(value: string | undefined): string {
+  // 空字符串用于保留“显式清空”语义，避免删除用户层键后回退到项目默认。
+  if (value === undefined) {
+    return "";
+  }
+
+  const normalized = value.trim();
+  return normalized.length > 0 ? normalized : "";
+}
+
 function normalizeOptionalText(value: string | undefined): string | undefined {
   const normalized = value?.trim();
   return normalized ? normalized : undefined;
+}
+
+function resolveAllowedRoots(
+  workspaceRoot: string,
+  settings: SessionSettings,
+  sessionAdditionalDirectories: readonly string[]
+): string[] {
+  const deduped = new Set<string>([path.resolve(workspaceRoot)]);
+  for (const directory of settings.additionalDirectories) {
+    deduped.add(path.resolve(directory));
+  }
+  for (const directory of sessionAdditionalDirectories) {
+    deduped.add(path.resolve(directory));
+  }
+
+  return [...deduped];
+}
+
+function normalizeAdditionalDirectories(value: string[] | undefined): string[] {
+  if (!value || value.length === 0) {
+    return [];
+  }
+
+  const deduped = new Set<string>();
+  for (const directory of value) {
+    const normalized = normalizeOptionalText(directory);
+    if (!normalized) {
+      continue;
+    }
+
+    deduped.add(path.resolve(normalized));
+  }
+
+  return [...deduped];
 }

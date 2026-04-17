@@ -3,7 +3,7 @@ import path from "node:path";
 import { z } from "zod";
 import { throwIfAborted } from "../../core/abort.js";
 import { truncate } from "../internal/values.js";
-import { resolveWorkspacePath } from "../internal/pathSandbox.js";
+import { resolvePathFromInput } from "../internal/pathSandbox.js";
 import {
   runRipgrep,
   sortWorkspaceRelativePathsByModifiedTime,
@@ -23,7 +23,9 @@ export const GrepInputSchema = z
     path: z
       .string()
       .optional()
-      .describe("Optional file or directory to search within. Defaults to the workspace root."),
+      .describe(
+        "Optional file or directory to search within. Defaults to workspace root and must be inside allowed directories."
+      ),
     glob: z
       .string()
       .optional()
@@ -78,7 +80,11 @@ export async function executeGrepTool(
 ): Promise<GrepResult> {
   throwIfAborted(context.abortSignal);
 
-  const searchTarget = await resolveSearchTarget(context.workspaceRoot, input.path);
+  const searchTarget = await resolveSearchTarget(
+    context.workspaceRoot,
+    context.allowedRoots,
+    input.path
+  );
   const outputMode = input.output_mode ?? "files_with_matches";
   const offset = input.offset ?? 0;
   const headLimit = input.head_limit;
@@ -189,7 +195,8 @@ export async function executeGrepTool(
   const normalizedMatches = rawResults.map(normalizeRelativePath);
   const sortedMatches = await sortWorkspaceRelativePathsByModifiedTime(
     context.workspaceRoot,
-    normalizedMatches
+    normalizedMatches,
+    context.allowedRoots
   );
   const pagedMatches = applyHeadLimit(sortedMatches, headLimit, offset);
 
@@ -243,7 +250,11 @@ function applyHeadLimit<T>(items: T[], limit: number | undefined, offset: number
   };
 }
 
-async function resolveSearchTarget(workspaceRoot: string, requestedPath: string | undefined) {
+async function resolveSearchTarget(
+  workspaceRoot: string,
+  allowedRoots: readonly string[],
+  requestedPath: string | undefined
+) {
   if (!requestedPath || requestedPath.trim().length === 0) {
     return {
       absolutePath: workspaceRoot,
@@ -252,28 +263,15 @@ async function resolveSearchTarget(workspaceRoot: string, requestedPath: string 
   }
 
   const normalizedPath = requestedPath.trim();
-  const absolutePath = resolvePathWithinWorkspace(workspaceRoot, normalizedPath);
+  const absolutePath = resolvePathFromInput(workspaceRoot, allowedRoots, normalizedPath);
   await fs.stat(absolutePath);
 
   const relativePath = path.relative(workspaceRoot, absolutePath);
+  const isInsideWorkspace = !relativePath.startsWith("..") && !path.isAbsolute(relativePath);
   return {
     absolutePath,
-    ripgrepPath: relativePath.length > 0 ? relativePath : "."
+    ripgrepPath: isInsideWorkspace ? (relativePath.length > 0 ? relativePath : ".") : absolutePath
   };
-}
-
-function resolvePathWithinWorkspace(workspaceRoot: string, requestedPath: string) {
-  if (!path.isAbsolute(requestedPath)) {
-    return resolveWorkspacePath(workspaceRoot, requestedPath);
-  }
-
-  const absolutePath = path.resolve(requestedPath);
-  const relativePath = path.relative(workspaceRoot, absolutePath);
-  if (relativePath.startsWith("..") || path.isAbsolute(relativePath)) {
-    throw new Error("Path escapes workspace root");
-  }
-
-  return absolutePath;
 }
 
 function parseGlobPatterns(rawGlob: string | undefined) {

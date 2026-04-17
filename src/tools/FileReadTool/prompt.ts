@@ -5,10 +5,10 @@ export const FILE_READ_TOOL_NAME = "Read";
 export const DESCRIPTION = renderPromptTemplate(MAX_LINES_TO_READ);
 
 export function renderPromptTemplate(maxLines: number): string {
-  return `Read a text file from the workspace.
+  return `Read a text file from allowed directories.
 
 Usage:
-- file_path: absolute path or workspace-relative path
+- file_path: absolute path or workspace-relative path (must be inside allowed directories)
 - offset: optional 1-based start line
 - limit: optional number of lines to read
 - By default, at most ${maxLines} lines are returned

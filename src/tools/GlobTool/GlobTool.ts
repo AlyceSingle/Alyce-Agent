@@ -2,7 +2,7 @@ import { promises as fs } from "node:fs";
 import path from "node:path";
 import { z } from "zod";
 import { throwIfAborted } from "../../core/abort.js";
-import { resolveWorkspacePath } from "../internal/pathSandbox.js";
+import { resolvePathFromInput } from "../internal/pathSandbox.js";
 import {
   runRipgrep,
   sortWorkspaceRelativePathsByModifiedTime,
@@ -20,7 +20,9 @@ export const GlobInputSchema = z
     path: z
       .string()
       .optional()
-      .describe("Optional directory to search in. Defaults to the workspace root.")
+      .describe(
+        "Optional directory to search in. Defaults to workspace root and must be inside allowed directories."
+      )
   })
   .strict();
 
@@ -39,7 +41,11 @@ export async function executeGlobTool(
 ): Promise<GlobResult> {
   throwIfAborted(context.abortSignal);
 
-  const searchRoot = await resolveDirectoryTarget(context.workspaceRoot, input.path);
+  const searchRoot = await resolveDirectoryTarget(
+    context.workspaceRoot,
+    context.allowedRoots,
+    input.path
+  );
   const args = ["--files", "--hidden", "--glob", input.pattern];
   for (const excludedDirectory of VCS_DIRECTORIES_TO_EXCLUDE) {
     args.push("--glob", `!${excludedDirectory}`);
@@ -48,7 +54,7 @@ export async function executeGlobTool(
 
   const outcome = await runRipgrep(
     args,
-    context.workspaceRoot,
+    searchRoot.absolutePath,
     context.commandTimeoutMs,
     context.abortSignal
   );
@@ -61,8 +67,14 @@ export async function executeGlobTool(
     throw new Error(buildRipgrepErrorMessage("Glob", outcome.exitCode, outcome.stderr));
   }
 
-  const matches = splitRipgrepLines(outcome.stdout).map(normalizeRelativePath);
-  const sortedMatches = await sortWorkspaceRelativePathsByModifiedTime(context.workspaceRoot, matches);
+  const matches = splitRipgrepLines(outcome.stdout).map((matchedPath) =>
+    normalizeMatchedPath(matchedPath, searchRoot.absolutePath)
+  );
+  const sortedMatches = await sortWorkspaceRelativePathsByModifiedTime(
+    context.workspaceRoot,
+    matches,
+    context.allowedRoots
+  );
   const truncated = sortedMatches.length > DEFAULT_GLOB_LIMIT;
   const filenames = sortedMatches.slice(0, DEFAULT_GLOB_LIMIT);
 
@@ -74,7 +86,11 @@ export async function executeGlobTool(
   };
 }
 
-async function resolveDirectoryTarget(workspaceRoot: string, requestedPath: string | undefined) {
+async function resolveDirectoryTarget(
+  workspaceRoot: string,
+  allowedRoots: readonly string[],
+  requestedPath: string | undefined
+) {
   if (!requestedPath || requestedPath.trim().length === 0) {
     return {
       absolutePath: workspaceRoot,
@@ -83,36 +99,26 @@ async function resolveDirectoryTarget(workspaceRoot: string, requestedPath: stri
   }
 
   const normalizedPath = requestedPath.trim();
-  const absolutePath = resolvePathWithinWorkspace(workspaceRoot, normalizedPath);
+  const absolutePath = resolvePathFromInput(workspaceRoot, allowedRoots, normalizedPath);
   const stats = await fs.stat(absolutePath);
 
   if (!stats.isDirectory()) {
     throw new Error(`Glob requires a directory path: ${requestedPath}`);
   }
 
-  const relativePath = path.relative(workspaceRoot, absolutePath);
   return {
     absolutePath,
-    ripgrepPath: relativePath.length > 0 ? relativePath : "."
+    ripgrepPath: "."
   };
 }
 
-function resolvePathWithinWorkspace(workspaceRoot: string, requestedPath: string) {
-  if (!path.isAbsolute(requestedPath)) {
-    return resolveWorkspacePath(workspaceRoot, requestedPath);
+function normalizeMatchedPath(matchedPath: string, searchRoot: string) {
+  const normalized = matchedPath.replace(/^[.][\\/]/, "");
+  if (path.isAbsolute(normalized)) {
+    return path.resolve(normalized);
   }
 
-  const absolutePath = path.resolve(requestedPath);
-  const relativePath = path.relative(workspaceRoot, absolutePath);
-  if (relativePath.startsWith("..") || path.isAbsolute(relativePath)) {
-    throw new Error("Path escapes workspace root");
-  }
-
-  return absolutePath;
-}
-
-function normalizeRelativePath(relativePath: string) {
-  return path.normalize(relativePath.replace(/^[.][\\/]/, ""));
+  return path.resolve(searchRoot, path.normalize(normalized));
 }
 
 function buildRipgrepErrorMessage(toolName: string, exitCode: number | null, stderr: string) {

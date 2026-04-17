@@ -50,6 +50,7 @@ export interface TodoItem {
 
 export interface ToolExecutionContext {
   workspaceRoot: string;
+  allowedRoots: string[];
   requestApproval: (request: ToolApprovalRequest) => Promise<boolean>;
   askUserQuestions: (
     request: AskUserQuestionRequest,

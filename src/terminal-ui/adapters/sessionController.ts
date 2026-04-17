@@ -1,4 +1,6 @@
 import { randomUUID } from "node:crypto";
+import { promises as fs } from "node:fs";
+import path from "node:path";
 import { runAgentTurn } from "../../agent.js";
 import { isTurnInterruptedError, throwIfAborted } from "../../core/abort.js";
 import { parseReplCommand } from "../../cli/commandRouter.js";
@@ -270,6 +272,39 @@ export function createSessionController(
     });
   };
 
+  const resolveAdditionalDirectory = async (directory: string): Promise<string> => {
+    const normalized = directory.trim();
+    if (!normalized) {
+      throw new Error("Directory path is required.");
+    }
+
+    const absolutePath = path.isAbsolute(normalized)
+      ? path.resolve(normalized)
+      : path.resolve(runtime.workspaceRoot, normalized);
+    let stats;
+    try {
+      stats = await fs.stat(absolutePath);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      throw new Error(`Directory not found: ${absolutePath}. ${message}`);
+    }
+
+    if (!stats.isDirectory()) {
+      throw new Error(`Path is not a directory: ${absolutePath}`);
+    }
+
+    return absolutePath;
+  };
+
+  const dedupeDirectories = (directories: string[]) => {
+    const deduped = new Set<string>();
+    for (const directory of directories) {
+      deduped.add(path.resolve(directory));
+    }
+
+    return [...deduped];
+  };
+
   const handleCommand = async (
     parsedCommand: ReturnType<typeof parseReplCommand>
   ): Promise<boolean> => {
@@ -365,6 +400,50 @@ export function createSessionController(
       return true;
     }
 
+    if (parsedCommand.type === "add-directory") {
+      const absolutePath = await resolveAdditionalDirectory(parsedCommand.directory);
+      const alreadyAllowed = runtime.getAllowedRoots().includes(absolutePath);
+
+      if (alreadyAllowed) {
+        appendUiMessage(
+          createSystemMessage(`Directory is already allowed: ${absolutePath}`, "Permissions")
+        );
+        return true;
+      }
+
+      if (parsedCommand.persist) {
+        const nextPersistentDirectories = dedupeDirectories([
+          ...runtime.getSettings().additionalDirectories,
+          absolutePath
+        ]);
+        await runtime.updateSettings({
+          additionalDirectories: nextPersistentDirectories
+        });
+        const nextSessionDirectories = runtime
+          .getSessionAdditionalDirectories()
+          .filter((directory) => directory !== absolutePath);
+        await runtime.setSessionAdditionalDirectories(nextSessionDirectories);
+
+        store.updateState((state) =>
+          setSessionSettingsState(setStatusText(state, "Idle"), runtime.getSettingsState())
+        );
+        appendUiMessage(
+          createSystemMessage(`Allowed and saved directory: ${absolutePath}`, "Permissions")
+        );
+        return true;
+      }
+
+      const nextSessionDirectories = dedupeDirectories([
+        ...runtime.getSessionAdditionalDirectories(),
+        absolutePath
+      ]);
+      await runtime.setSessionAdditionalDirectories(nextSessionDirectories);
+      appendUiMessage(
+        createSystemMessage(`Allowed directory for this session: ${absolutePath}`, "Permissions")
+      );
+      return true;
+    }
+
     if (parsedCommand.type === "switch-model") {
       await runtime.setCurrentModel(parsedCommand.model);
       store.updateState((state) => setConnectionConfigState(state, runtime.getConnectionConfigState()));
@@ -382,6 +461,7 @@ export function createSessionController(
         createSystemMessage(
           [
             "Workspace: " + runtime.workspaceRoot,
+            "Allowed roots: " + runtime.getAllowedRoots().join(", "),
             "Model: " + runtime.getCurrentModel(),
             "Approval: " + sessionApprovalMode,
             runtime.hasConnectionConfig()

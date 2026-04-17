@@ -46,6 +46,7 @@ export interface SessionSettings extends PromptOverrideConfig {
   maxSteps: number;
   commandTimeoutMs: number;
   autoSummaryEnabled: boolean;
+  additionalDirectories: string[];
 }
 
 export type ConnectionConfigSource = "default" | "user" | "project" | "env" | "cli";
@@ -113,7 +114,8 @@ const SessionSettingsFileSchema = z
     personaPreset: z.string().optional(),
     aiPersonalityPrompt: z.string().optional(),
     customSystemPrompt: z.string().optional(),
-    appendSystemPrompt: z.string().optional()
+    appendSystemPrompt: z.string().optional(),
+    additionalDirectories: z.array(z.string()).optional()
   })
   .strict();
 
@@ -372,6 +374,25 @@ function getArgValue(argv: string[], flag: string): string | undefined {
   return argv[index + 1];
 }
 
+function getArgValues(argv: string[], flag: string): string[] | undefined {
+  const values: string[] = [];
+
+  for (let index = 0; index < argv.length; index += 1) {
+    if (argv[index] !== flag) {
+      continue;
+    }
+
+    const candidate = argv[index + 1];
+    if (typeof candidate !== "string" || candidate.startsWith("--")) {
+      continue;
+    }
+
+    values.push(candidate);
+  }
+
+  return values.length > 0 ? values : undefined;
+}
+
 function hasFlag(argv: string[], flag: string): boolean {
   return argv.includes(flag);
 }
@@ -466,7 +487,8 @@ function normalizeSessionSettings(input: Partial<SessionSettings>): SessionSetti
     personaPreset: resolvePersonaPreset(normalizeOptionalText(input.personaPreset)),
     aiPersonalityPrompt: normalizeOptionalText(input.aiPersonalityPrompt),
     customSystemPrompt: normalizeOptionalText(input.customSystemPrompt),
-    appendSystemPrompt: normalizeOptionalText(input.appendSystemPrompt)
+    appendSystemPrompt: normalizeOptionalText(input.appendSystemPrompt),
+    additionalDirectories: normalizeAdditionalDirectories(input.additionalDirectories)
   };
 }
 
@@ -478,24 +500,47 @@ function serializeSessionSettings(settings: Partial<SessionSettings>): Partial<S
     autoSummaryEnabled:
       "autoSummaryEnabled" in settings ? settings.autoSummaryEnabled : undefined,
     languagePreference:
-      "languagePreference" in settings ? normalizeOptionalText(settings.languagePreference) : undefined,
+      "languagePreference" in settings
+        ? serializeOptionalTextSetting(settings.languagePreference)
+        : undefined,
     personaPreset:
       "personaPreset" in settings
-        ? resolvePersonaPreset(normalizeOptionalText(settings.personaPreset))
+        ? serializePersonaPresetSetting(settings.personaPreset)
         : undefined,
     aiPersonalityPrompt:
       "aiPersonalityPrompt" in settings
-        ? normalizeOptionalText(settings.aiPersonalityPrompt)
+        ? serializeOptionalTextSetting(settings.aiPersonalityPrompt)
         : undefined,
     customSystemPrompt:
       "customSystemPrompt" in settings
-        ? normalizeOptionalText(settings.customSystemPrompt)
+        ? serializeOptionalTextSetting(settings.customSystemPrompt)
         : undefined,
     appendSystemPrompt:
       "appendSystemPrompt" in settings
-        ? normalizeOptionalText(settings.appendSystemPrompt)
+        ? serializeOptionalTextSetting(settings.appendSystemPrompt)
+        : undefined,
+    additionalDirectories:
+      "additionalDirectories" in settings
+        ? normalizeAdditionalDirectories(settings.additionalDirectories)
         : undefined
   });
+}
+
+function serializeOptionalTextSetting(value: string | undefined): string | undefined {
+  // 空字符串是“显式清空用户层值”的标记，用于覆盖项目层默认值。
+  if (value === "") {
+    return "";
+  }
+
+  return normalizeOptionalText(value);
+}
+
+function serializePersonaPresetSetting(value: string | undefined): string | undefined {
+  if (value === "") {
+    return "";
+  }
+
+  return resolvePersonaPreset(normalizeOptionalText(value));
 }
 
 function resolveConnectionFromEnv(env: NodeJS.ProcessEnv): Partial<ConnectionConfig> {
@@ -521,7 +566,8 @@ function resolveSettingsFromEnv(env: NodeJS.ProcessEnv): Partial<SessionSettings
     personaPreset: resolvePersonaPreset(env.AGENT_PERSONA_PRESET),
     aiPersonalityPrompt: env.AGENT_AI_PERSONALITY,
     customSystemPrompt: env.AGENT_SYSTEM_PROMPT,
-    appendSystemPrompt: env.AGENT_APPEND_SYSTEM_PROMPT
+    appendSystemPrompt: env.AGENT_APPEND_SYSTEM_PROMPT,
+    additionalDirectories: parsePathListFromEnv(env.AGENT_ADDITIONAL_DIRECTORIES)
   });
 }
 
@@ -542,7 +588,8 @@ function resolveSettingsFromCli(argv: string[]): Partial<SessionSettings> {
       directFlag: "--append-system-prompt",
       fileFlag: "--append-system-prompt-file",
       label: "append system prompt"
-    })
+    }),
+    additionalDirectories: getArgValues(argv, "--add-dir")
   });
 }
 
@@ -596,6 +643,37 @@ function clampPositiveInt(value: number | undefined, fallback: number): number {
 function normalizeOptionalText(value: string | undefined): string | undefined {
   const normalized = value?.trim();
   return normalized ? normalized : undefined;
+}
+
+function normalizeAdditionalDirectories(value: string[] | undefined): string[] {
+  if (!value || value.length === 0) {
+    return [];
+  }
+
+  const deduped = new Set<string>();
+  for (const directory of value) {
+    const normalized = normalizeOptionalText(directory);
+    if (!normalized) {
+      continue;
+    }
+
+    deduped.add(path.resolve(normalized));
+  }
+
+  return [...deduped];
+}
+
+function parsePathListFromEnv(value: string | undefined): string[] | undefined {
+  if (!value) {
+    return undefined;
+  }
+
+  const parsed = value
+    .split(path.delimiter)
+    .map((entry) => entry.trim())
+    .filter((entry) => entry.length > 0);
+
+  return parsed.length > 0 ? parsed : undefined;
 }
 
 function compactObject<T extends object>(value: Partial<T>): Partial<T> {
