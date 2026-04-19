@@ -21,7 +21,7 @@ export const GlobInputSchema = z
       .string()
       .optional()
       .describe(
-        "Optional directory to search in. Defaults to workspace root and must be inside allowed directories."
+        "Optional directory. Absolute path preferred; supports ~ and ~/..., plus workspace-relative paths on the local filesystem."
       )
   })
   .strict();

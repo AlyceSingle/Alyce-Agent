@@ -19,7 +19,7 @@ export const PowerShellInputSchema = z
       .string()
       .optional()
       .describe(
-        "Optional working directory. Absolute path or workspace-relative path within allowed directories"
+        "Optional working directory. Absolute path preferred; supports ~ and ~/..., plus workspace-relative paths on the local filesystem"
       ),
     run_in_background: z
       .boolean()

@@ -1,5 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { promises as fs } from "node:fs";
+import os from "node:os";
 import path from "node:path";
 import { runAgentTurn } from "../../agent.js";
 import { isTurnInterruptedError, throwIfAborted } from "../../core/abort.js";
@@ -278,9 +279,7 @@ export function createSessionController(
       throw new Error("Directory path is required.");
     }
 
-    const absolutePath = path.isAbsolute(normalized)
-      ? path.resolve(normalized)
-      : path.resolve(runtime.workspaceRoot, normalized);
+    const absolutePath = resolveDirectoryInput(normalized, runtime.workspaceRoot);
     let stats;
     try {
       stats = await fs.stat(absolutePath);
@@ -296,13 +295,50 @@ export function createSessionController(
     return absolutePath;
   };
 
-  const dedupeDirectories = (directories: string[]) => {
-    const deduped = new Set<string>();
-    for (const directory of directories) {
-      deduped.add(path.resolve(directory));
+  const resolveDirectoryInput = (directory: string, workspaceRoot: string): string => {
+    const normalized = directory.trim();
+    if (normalized === "~") {
+      return path.resolve(os.homedir());
     }
 
-    return [...deduped];
+    if (normalized.startsWith("~/") || normalized.startsWith("~\\")) {
+      return path.resolve(path.join(os.homedir(), normalized.slice(2)));
+    }
+
+    return path.resolve(workspaceRoot, normalized);
+  };
+
+  const normalizePathForComparison = (directory: string) => {
+    const normalized = path.resolve(directory);
+    return process.platform === "win32" ? normalized.toLowerCase() : normalized;
+  };
+
+  const dedupeDirectories = (directories: string[]) => {
+    const deduped = new Map<string, string>();
+    for (const directory of directories) {
+      const absolutePath = path.resolve(directory);
+      const key = normalizePathForComparison(absolutePath);
+      if (!deduped.has(key)) {
+        deduped.set(key, absolutePath);
+      }
+    }
+
+    return [...deduped.values()];
+  };
+
+  const buildAccessScopeSnapshot = () => {
+    return [
+      "Workspace: " + runtime.workspaceRoot,
+      "Path scope: local filesystem paths are available to tools.",
+      "Execution may still require user approval depending on the tool."
+    ];
+  };
+
+  const isDirectoryAlreadyAllowed = (directory: string) => {
+    const targetKey = normalizePathForComparison(directory);
+    return runtime
+      .getAllowedRoots()
+      .some((allowedRoot) => normalizePathForComparison(allowedRoot) === targetKey);
   };
 
   const handleCommand = async (
@@ -402,11 +438,16 @@ export function createSessionController(
 
     if (parsedCommand.type === "add-directory") {
       const absolutePath = await resolveAdditionalDirectory(parsedCommand.directory);
-      const alreadyAllowed = runtime.getAllowedRoots().includes(absolutePath);
+      const alreadyAllowed = isDirectoryAlreadyAllowed(absolutePath);
 
       if (alreadyAllowed) {
         appendUiMessage(
-          createSystemMessage(`Directory is already allowed: ${absolutePath}`, "Permissions")
+          createSystemMessage(
+            [`Directory is already allowed: ${absolutePath}`, ...buildAccessScopeSnapshot()].join(
+              "\n"
+            ),
+            "Permissions"
+          )
         );
         return true;
       }
@@ -419,16 +460,22 @@ export function createSessionController(
         await runtime.updateSettings({
           additionalDirectories: nextPersistentDirectories
         });
+        const normalizedTarget = normalizePathForComparison(absolutePath);
         const nextSessionDirectories = runtime
           .getSessionAdditionalDirectories()
-          .filter((directory) => directory !== absolutePath);
+          .filter((directory) => normalizePathForComparison(directory) !== normalizedTarget);
         await runtime.setSessionAdditionalDirectories(nextSessionDirectories);
 
         store.updateState((state) =>
           setSessionSettingsState(setStatusText(state, "Idle"), runtime.getSettingsState())
         );
         appendUiMessage(
-          createSystemMessage(`Allowed and saved directory: ${absolutePath}`, "Permissions")
+          createSystemMessage(
+            [`Allowed and saved directory: ${absolutePath}`, ...buildAccessScopeSnapshot()].join(
+              "\n"
+            ),
+            "Permissions"
+          )
         );
         return true;
       }
@@ -439,7 +486,12 @@ export function createSessionController(
       ]);
       await runtime.setSessionAdditionalDirectories(nextSessionDirectories);
       appendUiMessage(
-        createSystemMessage(`Allowed directory for this session: ${absolutePath}`, "Permissions")
+        createSystemMessage(
+          [`Allowed directory for this session: ${absolutePath}`, ...buildAccessScopeSnapshot()].join(
+            "\n"
+          ),
+          "Permissions"
+        )
       );
       return true;
     }
@@ -460,8 +512,7 @@ export function createSessionController(
       appendUiMessage(
         createSystemMessage(
           [
-            "Workspace: " + runtime.workspaceRoot,
-            "Allowed roots: " + runtime.getAllowedRoots().join(", "),
+            ...buildAccessScopeSnapshot(),
             "Model: " + runtime.getCurrentModel(),
             "Approval: " + sessionApprovalMode,
             runtime.hasConnectionConfig()

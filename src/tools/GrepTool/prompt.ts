@@ -1,10 +1,11 @@
 export const GREP_TOOL_NAME = "Grep";
 
-export const GREP_TOOL_DESCRIPTION = `Search file contents in allowed directories with ripgrep.
+export const GREP_TOOL_DESCRIPTION = `Search file contents on the local filesystem with ripgrep.
 
 Usage:
 - pattern: required regular expression pattern
-- path: optional file or directory inside allowed directories
+- path: optional file or directory; absolute path is preferred and "~"/"~/" paths are supported
+- workspace-relative paths are also supported and resolve from workspace root
 - glob: optional file glob filter such as "*.ts" or "*.{ts,tsx}"
 - output_mode: "files_with_matches" (default), "content", or "count"
 

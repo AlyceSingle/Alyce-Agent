@@ -1,4 +1,5 @@
 import process from "node:process";
+import os from "node:os";
 import path from "node:path";
 import OpenAI from "openai";
 import {
@@ -96,8 +97,6 @@ export function getHelpText(currentModel: string) {
     "  /memory clear      Clear session memory",
     "  /memory clear --all  Clear session and persistent memory",
     "  /context [text]    Show full next-turn AI context payload",
-    "  /add-dir <path>    Allow access to an extra directory for this session",
-    "  /add-dir --save <path>  Add directory and persist it in user settings",
     "  /model <name>      Switch model and persist it (current: " + currentModel + ")",
     "  /exit              Quit",
     "",
@@ -270,7 +269,10 @@ export async function createSessionRuntime(
       resolveAllowedRoots(config.paths.workspaceRoot, settings, sessionAdditionalDirectories),
     getSessionAdditionalDirectories: () => [...sessionAdditionalDirectories],
     setSessionAdditionalDirectories: async (directories) => {
-      sessionAdditionalDirectories = normalizeAdditionalDirectories(directories);
+      sessionAdditionalDirectories = normalizeAdditionalDirectories(
+        directories,
+        config.paths.workspaceRoot
+      );
       await resetSystemMessage();
     },
     requireClient: () => {
@@ -296,7 +298,7 @@ export async function createSessionRuntime(
       await applyConnectionPatch(patch, target);
     },
     updateSettings: async (patch) => {
-      const userPatch = normalizeSettingsPatch(patch);
+      const userPatch = normalizeSettingsPatch(patch, config.paths.workspaceRoot);
       // 会话设置只回写 user 层；project / env / cli 仍然参与最终覆盖，但不会被保存动作覆盖掉。
       settingsState = buildSessionSettingsState(config.paths, {
         project: settingsState.project,
@@ -436,7 +438,10 @@ function normalizeConnectionPatch(
   return normalized;
 }
 
-function normalizeSettingsPatch(patch: Partial<SessionSettings>): Partial<SessionSettings> {
+function normalizeSettingsPatch(
+  patch: Partial<SessionSettings>,
+  workspaceRoot: string
+): Partial<SessionSettings> {
   const normalized: Partial<SessionSettings> = {};
 
   if ("approvalMode" in patch) {
@@ -476,7 +481,10 @@ function normalizeSettingsPatch(patch: Partial<SessionSettings>): Partial<Sessio
   }
 
   if ("additionalDirectories" in patch) {
-    normalized.additionalDirectories = normalizeAdditionalDirectories(patch.additionalDirectories);
+    normalized.additionalDirectories = normalizeAdditionalDirectories(
+      patch.additionalDirectories,
+      workspaceRoot
+    );
   }
 
   return normalized;
@@ -504,16 +512,16 @@ function resolveAllowedRoots(
 ): string[] {
   const deduped = new Set<string>([path.resolve(workspaceRoot)]);
   for (const directory of settings.additionalDirectories) {
-    deduped.add(path.resolve(directory));
+    deduped.add(resolveDirectoryInput(directory, workspaceRoot));
   }
   for (const directory of sessionAdditionalDirectories) {
-    deduped.add(path.resolve(directory));
+    deduped.add(resolveDirectoryInput(directory, workspaceRoot));
   }
 
   return [...deduped];
 }
 
-function normalizeAdditionalDirectories(value: string[] | undefined): string[] {
+function normalizeAdditionalDirectories(value: string[] | undefined, workspaceRoot: string): string[] {
   if (!value || value.length === 0) {
     return [];
   }
@@ -525,8 +533,21 @@ function normalizeAdditionalDirectories(value: string[] | undefined): string[] {
       continue;
     }
 
-    deduped.add(path.resolve(normalized));
+    deduped.add(resolveDirectoryInput(normalized, workspaceRoot));
   }
 
   return [...deduped];
+}
+
+function resolveDirectoryInput(directory: string, workspaceRoot: string): string {
+  const normalized = directory.trim();
+  if (normalized === "~") {
+    return path.resolve(os.homedir());
+  }
+
+  if (normalized.startsWith("~/") || normalized.startsWith("~\\")) {
+    return path.resolve(path.join(os.homedir(), normalized.slice(2)));
+  }
+
+  return path.resolve(workspaceRoot, normalized);
 }

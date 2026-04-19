@@ -1,3 +1,4 @@
+import os from "node:os";
 import path from "node:path";
 
 function isPathInsideRoot(rootPath: string, absolutePath: string) {
@@ -13,7 +14,7 @@ export function normalizeAllowedRoots(allowedRoots: readonly string[]): string[]
       continue;
     }
 
-    deduped.add(path.resolve(normalized));
+    deduped.add(path.resolve(expandHomePath(normalized)));
   }
 
   return [...deduped];
@@ -30,12 +31,8 @@ export function resolveAllowedPath(
   maybeRelative: string,
   baseDirectory: string
 ): string {
-  const resolvedPath = path.resolve(baseDirectory, maybeRelative);
-  if (isPathAllowed(allowedRoots, resolvedPath)) {
-    return resolvedPath;
-  }
-
-  throw new Error(`Path escapes allowed roots: ${formatAllowedRoots(allowedRoots)}`);
+  void allowedRoots;
+  return path.resolve(baseDirectory, expandHomePath(maybeRelative));
 }
 
 export function resolvePathFromInput(
@@ -48,16 +45,14 @@ export function resolvePathFromInput(
     throw new Error("Path must not be empty");
   }
 
-  if (path.isAbsolute(normalizedInput)) {
-    const absolutePath = path.resolve(normalizedInput);
-    if (isPathAllowed(allowedRoots, absolutePath)) {
-      return absolutePath;
-    }
+  const expandedInput = expandHomePath(normalizedInput);
 
-    throw new Error(`Path escapes allowed roots: ${formatAllowedRoots(allowedRoots)}`);
+  if (path.isAbsolute(expandedInput)) {
+    void allowedRoots;
+    return path.resolve(expandedInput);
   }
 
-  return resolveAllowedPath(allowedRoots, normalizedInput, workspaceRoot);
+  return resolveAllowedPath(allowedRoots, expandedInput, workspaceRoot);
 }
 
 export function resolveWorkspacePath(workspaceRoot: string, maybeRelative: string): string {
@@ -75,11 +70,16 @@ export function toWorkspaceRelative(workspaceRoot: string, absolutePath: string)
   return relative.length === 0 ? "." : relative;
 }
 
-function formatAllowedRoots(allowedRoots: readonly string[]) {
-  const normalizedRoots = normalizeAllowedRoots(allowedRoots);
-  if (normalizedRoots.length === 0) {
-    return "(none)";
+function expandHomePath(inputPath: string): string {
+  const trimmedPath = inputPath.trim();
+  if (trimmedPath === "~") {
+    return os.homedir();
   }
 
-  return normalizedRoots.join(", ");
+  if (trimmedPath.startsWith("~/") || trimmedPath.startsWith("~\\")) {
+    return path.join(os.homedir(), trimmedPath.slice(2));
+  }
+
+  return trimmedPath;
 }
+

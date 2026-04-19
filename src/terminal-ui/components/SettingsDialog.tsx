@@ -443,6 +443,11 @@ export function SettingsDialog(props: {
           )}
         </Box>
       ) : null}
+      {section === "session" ? (
+        <Text color={terminalUiTheme.colors.subtle} wrap="truncate-end">
+          External path access is available directly on the local filesystem.
+        </Text>
+      ) : null}
       {errorText ? (
         <Text color={terminalUiTheme.colors.danger} wrap="truncate-end">
           {errorText}

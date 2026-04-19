@@ -227,7 +227,7 @@ export function buildConnectionConfigState(
 }
 
 export function buildSessionSettingsState(
-  paths: Pick<RuntimePaths, "settingsConfigPath" | "userSettingsConfigPath">,
+  paths: Pick<RuntimePaths, "workspaceRoot" | "settingsConfigPath" | "userSettingsConfigPath">,
   layers: {
     project?: Partial<SessionSettings>;
     user?: Partial<SessionSettings>;
@@ -241,7 +241,7 @@ export function buildSessionSettingsState(
     { source: "env", values: compactObject(layers.env ?? {}) },
     { source: "cli", values: compactObject(layers.cli ?? {}) }
   ];
-  const effective = normalizeSessionSettings(mergeLayers(orderedLayers));
+  const effective = normalizeSessionSettings(mergeLayers(orderedLayers), paths.workspaceRoot);
 
   return {
     effective,
@@ -270,7 +270,10 @@ export async function saveUserSessionSettings(
   paths: RuntimePaths,
   settings: Partial<SessionSettings>
 ): Promise<void> {
-  await writeJsonConfig(paths.userSettingsConfigPath, serializeSessionSettings(settings));
+  await writeJsonConfig(
+    paths.userSettingsConfigPath,
+    serializeSessionSettings(settings, paths.workspaceRoot)
+  );
 }
 
 type SourceLayer<T extends object, Source extends string> = {
@@ -477,7 +480,10 @@ function serializeConnectionConfig(connection: Partial<ConnectionConfig>): Parti
   });
 }
 
-function normalizeSessionSettings(input: Partial<SessionSettings>): SessionSettings {
+function normalizeSessionSettings(
+  input: Partial<SessionSettings>,
+  workspaceRoot: string
+): SessionSettings {
   return {
     approvalMode: input.approvalMode === "auto" ? "auto" : "manual",
     maxSteps: clampPositiveInt(input.maxSteps, 8),
@@ -488,11 +494,14 @@ function normalizeSessionSettings(input: Partial<SessionSettings>): SessionSetti
     aiPersonalityPrompt: normalizeOptionalText(input.aiPersonalityPrompt),
     customSystemPrompt: normalizeOptionalText(input.customSystemPrompt),
     appendSystemPrompt: normalizeOptionalText(input.appendSystemPrompt),
-    additionalDirectories: normalizeAdditionalDirectories(input.additionalDirectories)
+    additionalDirectories: normalizeAdditionalDirectories(input.additionalDirectories, workspaceRoot)
   };
 }
 
-function serializeSessionSettings(settings: Partial<SessionSettings>): Partial<SessionSettings> {
+function serializeSessionSettings(
+  settings: Partial<SessionSettings>,
+  workspaceRoot: string
+): Partial<SessionSettings> {
   return compactObject({
     approvalMode: "approvalMode" in settings ? settings.approvalMode : undefined,
     maxSteps: "maxSteps" in settings ? settings.maxSteps : undefined,
@@ -521,7 +530,7 @@ function serializeSessionSettings(settings: Partial<SessionSettings>): Partial<S
         : undefined,
     additionalDirectories:
       "additionalDirectories" in settings
-        ? normalizeAdditionalDirectories(settings.additionalDirectories)
+        ? normalizeAdditionalDirectories(settings.additionalDirectories, workspaceRoot)
         : undefined
   });
 }
@@ -645,7 +654,7 @@ function normalizeOptionalText(value: string | undefined): string | undefined {
   return normalized ? normalized : undefined;
 }
 
-function normalizeAdditionalDirectories(value: string[] | undefined): string[] {
+function normalizeAdditionalDirectories(value: string[] | undefined, workspaceRoot: string): string[] {
   if (!value || value.length === 0) {
     return [];
   }
@@ -657,10 +666,23 @@ function normalizeAdditionalDirectories(value: string[] | undefined): string[] {
       continue;
     }
 
-    deduped.add(path.resolve(normalized));
+    deduped.add(resolveDirectoryInput(normalized, workspaceRoot));
   }
 
   return [...deduped];
+}
+
+function resolveDirectoryInput(directory: string, workspaceRoot: string): string {
+  const normalized = directory.trim();
+  if (normalized === "~") {
+    return path.resolve(os.homedir());
+  }
+
+  if (normalized.startsWith("~/") || normalized.startsWith("~\\")) {
+    return path.resolve(path.join(os.homedir(), normalized.slice(2)));
+  }
+
+  return path.resolve(workspaceRoot, normalized);
 }
 
 function parsePathListFromEnv(value: string | undefined): string[] | undefined {

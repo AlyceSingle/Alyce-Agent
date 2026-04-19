@@ -9,7 +9,9 @@ export const FileReadInputSchema = z
   .object({
     file_path: z
       .string()
-      .describe("Absolute path or workspace-relative path to the file inside allowed directories"),
+      .describe(
+        "Absolute path preferred; supports ~ and ~/..., plus workspace-relative paths, on the local filesystem"
+      ),
     offset: z.number().int().positive().optional().describe("1-based start line"),
     limit: z.number().int().positive().optional().describe("Number of lines to read")
   })

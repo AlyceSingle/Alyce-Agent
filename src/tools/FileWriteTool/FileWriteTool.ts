@@ -9,7 +9,9 @@ export const FileWriteInputSchema = z
   .object({
     file_path: z
       .string()
-      .describe("Absolute path or workspace-relative path to the file inside allowed directories"),
+      .describe(
+        "Absolute path preferred; supports ~ and ~/..., plus workspace-relative paths, on the local filesystem"
+      ),
     content: z.string().describe("Full file content to write")
   })
   .strict();

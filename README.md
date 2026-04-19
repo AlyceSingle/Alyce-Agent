@@ -7,7 +7,7 @@
 - UI：React + Ink 终端界面。
 - 多步 Agent Turn：模型可在单轮内连续调用多个工具，再汇总输出最终回复。
 - 工具权限控制：命令执行、文件写入、Web 访问都能按会话策略审批。
-- 访问范围控制：默认仅工作区；可通过 `--add-dir`、`/add-dir` 显式授权工作区外目录。
+- 访问范围控制：支持本地文件系统路径访问，执行型操作仍可按会话策略审批。
 - Prompt 工程化：静态段、动态段、persona、附加 system prompt 都通过 builder 统一组装。
 - 记忆系统：支持 session memory、persistent memory 和 auto summary，持久化到工作区 `.alyce/`。
 - 中断恢复：文件写入前自动做快照，用户中断后可在可恢复场景下回滚本轮变更。
@@ -50,28 +50,14 @@ npm start
 - 应用必须运行在交互式 TTY 终端中，否则 `startReactUiMode()` 会直接报错。
 - 当前 `npm run dev` 实际执行的是先构建、再运行 `dist/index.js`，不是热更新式 dev server。
 
-## 额外目录访问（工作区外）
+## 本地路径访问
 
-默认情况下，工具仅能访问当前工作区。你可以显式添加额外目录：
+工具支持直接访问本地文件系统路径，不再要求先通过 `/add-dir` 授权目录。
 
-- 启动时：`--add-dir <path>`（可重复）
-- 会话内：`/add-dir <path>`（仅当前会话）
-- 会话内并持久化：`/add-dir --save <path>`（写入用户设置）
-
-也可通过环境变量设置（使用系统路径分隔符）：
-
-- `AGENT_ADDITIONAL_DIRECTORIES`
-
-`settings.json` 示例：
-
-```json
-{
-  "additionalDirectories": [
-    "D:\\shared",
-    "C:\\temp\\workspace-cache"
-  ]
-}
-```
+- 推荐使用绝对路径
+- 支持 `~` 和 `~/...`（会解析到用户主目录）
+- 也支持相对路径（相对工作区根目录解析）
+- 执行型工具仍遵循会话审批流程，用户可在运行前确认或拒绝
 
 ## 分层架构
 

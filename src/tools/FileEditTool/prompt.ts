@@ -4,7 +4,8 @@ export function getEditToolDescription(): string {
   return `Edit file content by replacing old_string with new_string.
 
 Usage:
-- file_path: absolute path or workspace-relative path inside allowed directories
+- file_path: absolute path is preferred; "~" and "~/..." resolve to the user home directory
+- workspace-relative paths are also supported and resolve from workspace root
 - old_string: target text to replace
 - new_string: replacement text
 - replace_all: optional, replace all matches when true

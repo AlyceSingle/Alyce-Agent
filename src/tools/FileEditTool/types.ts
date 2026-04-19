@@ -5,7 +5,9 @@ export const inputSchema = () =>
     .object({
       file_path: z
         .string()
-        .describe("Absolute path or workspace-relative path to the file inside allowed directories"),
+        .describe(
+          "Absolute path preferred; supports ~ and ~/..., plus workspace-relative paths, on the local filesystem"
+        ),
       old_string: z.string().describe("The text to replace"),
       new_string: z.string().describe("The text to replace with"),
       replace_all: z.boolean().optional().default(false)

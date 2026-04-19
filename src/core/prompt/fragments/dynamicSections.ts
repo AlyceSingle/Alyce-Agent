@@ -86,15 +86,12 @@ function getMemorySection(runtimeContext: PromptRuntimeContext) {
 }
 
 function getRuntimeEnvironmentSection(runtimeContext: PromptRuntimeContext) {
-  const allowedRoots = runtimeContext.allowedRoots.length
-    ? runtimeContext.allowedRoots.join(", ")
-    : runtimeContext.workspaceRoot;
-
   return promptFormatting.buildSection("Environment", [
     `Date: ${runtimeContext.currentDate}`,
     `Platform: ${runtimeContext.platform}`,
     `Workspace root: ${runtimeContext.workspaceRoot}`,
-    `Allowed roots: ${allowedRoots}`,
+    "Path notation: absolute paths are preferred; ~ and ~/... resolve to the user's home directory.",
+    "Path scope: local filesystem paths are allowed; the runtime may require user approval for execution.",
     `Model: ${runtimeContext.model}`
   ]);
 }

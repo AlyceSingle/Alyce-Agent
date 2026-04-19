@@ -24,7 +24,7 @@ export const GrepInputSchema = z
       .string()
       .optional()
       .describe(
-        "Optional file or directory to search within. Defaults to workspace root and must be inside allowed directories."
+        "Optional file or directory. Absolute path preferred; supports ~ and ~/..., plus workspace-relative paths on the local filesystem."
       ),
     glob: z
       .string()
