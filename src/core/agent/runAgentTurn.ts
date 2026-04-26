@@ -1,4 +1,5 @@
 import OpenAI from "openai";
+import type { SessionMessageTimestampMetadata } from "../conversation/messageMetadata.js";
 import { executeToolCall, TOOL_SCHEMAS, type ToolExecutionContext } from "../../tools.js";
 import { isTurnInterruptedError, throwIfAborted, toTurnInterruptedError } from "../abort.js";
 import { sendChatCompletion } from "../api/sendChatCompletion.js";
@@ -12,11 +13,18 @@ export interface AgentTurnOptions {
   model: string;
   maxSteps: number;
   context: ToolExecutionContext;
+  gcliGeminiCompat?: boolean;
   requestPatches?: RequestPatchOperation[];
   abortSignal?: AbortSignal;
   onThinking?: (content: string) => void;
   onToolCallStart?: (toolName: string, rawArguments: string) => void;
   onToolCallResult?: (toolName: string, result: string) => void;
+  messageTimestampsEnabled?: boolean;
+  getMessageTimestampMetadata?: (
+    message: MessageParam,
+    index: number
+  ) => SessionMessageTimestampMetadata | undefined;
+  onAssistantMessageCreated?: (message: MessageParam) => void;
 }
 
 export async function runAgentTurn(
@@ -36,6 +44,9 @@ export async function runAgentTurn(
         tools: TOOL_SCHEMAS,
         toolChoice: "auto",
         temperature: 0.2,
+        gcliGeminiCompat: options.gcliGeminiCompat,
+        messageTimestampsEnabled: options.messageTimestampsEnabled,
+        getMessageTimestampMetadata: options.getMessageTimestampMetadata,
         requestPatches: options.requestPatches,
         abortSignal: options.abortSignal
       });
@@ -60,11 +71,13 @@ export async function runAgentTurn(
 
     // 无论下一步是直接结束还是继续调工具，都先把 assistant 原始输出写回上下文。
     // 这样工具结果会挂在正确的 assistant 消息之后，消息链不会断层。
-    messages.push({
+    const assistantMessage: MessageParam = {
       role: "assistant",
-      content: next.content ?? "",
+      content: next.content,
       tool_calls: next.tool_calls
-    });
+    };
+    messages.push(assistantMessage);
+    options.onAssistantMessageCreated?.(assistantMessage);
 
     if (toolCalls.length === 0) {
       return (next.content ?? "").trim() || "(No text output from model)";

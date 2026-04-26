@@ -1,4 +1,3 @@
-import React from "react";
 import type { TodoItem } from "../../tools/types.js";
 import { Box, Text } from "../runtime/ink.js";
 import { terminalUiTheme } from "../theme/theme.js";

@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { Box, Text } from "../runtime/ink.js";
 import { terminalUiTheme } from "../theme/theme.js";
 import TextInput from "./TextInput.js";

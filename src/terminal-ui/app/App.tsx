@@ -1,4 +1,3 @@
-import React from "react";
 import type { SessionController } from "../adapters/sessionController.js";
 import { AlternateScreen } from "../runtime/ink.js";
 import { AgentScreen } from "../screens/AgentScreen.js";

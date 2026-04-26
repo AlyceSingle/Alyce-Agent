@@ -1,4 +1,3 @@
-import React from "react";
 import type { ApprovalMode, ConnectionConfig, SessionSettings } from "../../config/runtime.js";
 import { Box, Text } from "../runtime/ink.js";
 import { terminalUiTheme } from "../theme/theme.js";

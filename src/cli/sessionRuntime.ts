@@ -1,11 +1,13 @@
 import process from "node:process";
-import os from "node:os";
 import path from "node:path";
 import OpenAI from "openai";
 import {
   buildConnectionConfigState,
   buildSessionSettingsState,
   loadRuntimeConfig,
+  normalizeAdditionalDirectories,
+  normalizeStartupInstructionFiles,
+  resolveDirectoryInput,
   saveConnectionConfig,
   saveUserSessionSettings,
   type ConnectionConfig,
@@ -15,11 +17,15 @@ import {
   type SessionSettings,
   type SessionSettingsState
 } from "../config/runtime.js";
+import { ConversationCompactor, DEFAULT_CONVERSATION_COMPACTION_CONFIG } from "../core/conversation/conversationCompactor.js";
+import type { SessionMessageTimestampMetadata } from "../core/conversation/messageMetadata.js";
 import { MemoryService } from "../core/memory/memoryService.js";
 import { FileHistoryManager, type FileHistoryRestoreResult } from "../core/file-history/fileHistoryManager.js";
 import type { MemorySnapshot } from "../core/memory/types.js";
 import { buildEffectiveSystemPrompt } from "../core/prompt/builder.js";
 import { PromptSectionResolver } from "../core/prompt/sectionResolver.js";
+import { loadStartupInstructions, type StartupInstruction } from "../core/prompt/startupInstructions.js";
+import { formatCurrentDateLabel, formatSystemDateTime } from "../core/time/systemTime.js";
 import { getRegisteredToolNames } from "../tools/registry.js";
 import type {
   AskUserQuestionRequest,
@@ -59,6 +65,20 @@ export interface SessionRuntime {
   clearConversation: () => Promise<void>;
   clearPromptCache: () => void;
   buildContextPreview: (nextUserInput?: string) => string;
+  setMessageTimestampMetadata: (
+    message: SessionMessage,
+    metadata: SessionMessageTimestampMetadata
+  ) => void;
+  getMessageTimestampMetadata: (
+    message: SessionMessage
+  ) => SessionMessageTimestampMetadata | undefined;
+  maybeCompactConversation: (options: {
+    client: OpenAI;
+    model: string;
+    abortSignal?: AbortSignal;
+  }) => Promise<boolean>;
+  getLoadedStartupInstructionFiles: () => string[];
+  consumeStartupInstructionWarnings: () => string[];
   beginTurn: (turnId: string) => void;
   hasTrackedFileChanges: (turnId: string) => boolean;
   restoreFilesForTurn: (turnId: string) => Promise<FileHistoryRestoreResult>;
@@ -76,12 +96,9 @@ export interface SessionRuntime {
   }) => ToolExecutionContext;
 }
 
-export function getCurrentDateLabel(now = new Date()) {
+function getCurrentDateLabel(now = new Date()) {
   // 不用 UTC 截日，避免本地时间接近零点时把 prompt 里的日期算错一天。
-  const year = now.getFullYear();
-  const month = String(now.getMonth() + 1).padStart(2, "0");
-  const day = String(now.getDate()).padStart(2, "0");
-  return `${year}-${month}-${day}`;
+  return formatCurrentDateLabel(now);
 }
 
 export function getHelpText(currentModel: string) {
@@ -154,15 +171,33 @@ export async function createSessionRuntime(
   let sessionAdditionalDirectories: string[] = [];
   let connectionSaveTarget = connectionState.saveTarget;
   let client: OpenAI | null = createClientFromConnection(connection);
+  let startupInstructions: StartupInstruction[] = [];
+  let startupInstructionWarnings: string[] = [];
+  const messageTimestampMetadata = new WeakMap<SessionMessage, SessionMessageTimestampMetadata>();
 
   const promptResolver = new PromptSectionResolver();
   const fileHistoryManager = new FileHistoryManager();
+  const conversationCompactor = new ConversationCompactor(
+    DEFAULT_CONVERSATION_COMPACTION_CONFIG
+  );
   const memoryService = new MemoryService({
     workspaceRoot: config.paths.workspaceRoot,
     ...config.memory
   });
   memoryService.setAutoSummaryEnabled(settings.autoSummaryEnabled);
   await memoryService.initialize();
+
+  const getAllowedRootsSnapshot = () =>
+    resolveAllowedRoots(config.paths.workspaceRoot, settings, sessionAdditionalDirectories);
+  const reloadStartupInstructions = async () => {
+    const result = await loadStartupInstructions({
+      filePaths: settings.startupInstructionFiles,
+      allowedRoots: getAllowedRootsSnapshot()
+    });
+    startupInstructions = result.instructions;
+    startupInstructionWarnings = result.warnings;
+  };
+  await reloadStartupInstructions();
 
   // system prompt 始终由当前模型、环境、工具能力和记忆视图重新生成。
   const buildSystemPrompt = async () =>
@@ -178,7 +213,8 @@ export async function createSessionRuntime(
         currentDate: getCurrentDateLabel(),
         platform: process.platform,
         availableTools: getRegisteredToolNames(),
-        memory: await memoryService.getPromptContext()
+        memory: await memoryService.getPromptContext(),
+        startupInstructions
       },
       settings,
       promptResolver
@@ -265,14 +301,14 @@ export async function createSessionRuntime(
     getConnectionConfigState: () => cloneConnectionConfigState(connectionState),
     getSettings: () => ({ ...settings }),
     getSettingsState: () => cloneSessionSettingsState(settingsState),
-    getAllowedRoots: () =>
-      resolveAllowedRoots(config.paths.workspaceRoot, settings, sessionAdditionalDirectories),
+    getAllowedRoots: () => getAllowedRootsSnapshot(),
     getSessionAdditionalDirectories: () => [...sessionAdditionalDirectories],
     setSessionAdditionalDirectories: async (directories) => {
       sessionAdditionalDirectories = normalizeAdditionalDirectories(
         directories,
         config.paths.workspaceRoot
       );
+      await reloadStartupInstructions();
       await resetSystemMessage();
     },
     requireClient: () => {
@@ -308,25 +344,74 @@ export async function createSessionRuntime(
       });
       settings = settingsState.effective;
       memoryService.setAutoSummaryEnabled(settings.autoSummaryEnabled);
+      promptResolver.clearSessionCache();
       await persistSettings();
+      await reloadStartupInstructions();
       await resetSystemMessage();
     },
     resetSystemMessage,
     clearConversation: async () => {
       // 清空会话时保留连接与设置，仅重置对话、记忆缓存和文件回滚历史。
       memoryService.clearSession();
+      conversationCompactor.clear();
       promptResolver.clearSessionCache();
       fileHistoryManager.clearAll();
       messages.splice(1);
+      await reloadStartupInstructions();
       await resetSystemMessage();
     },
     clearPromptCache: () => promptResolver.clearSessionCache(),
-    buildContextPreview: (nextUserInput) =>
-      buildNextTurnContextPreview({
+    buildContextPreview: (nextUserInput) => {
+      const previewTimestamp = formatSystemDateTime(new Date());
+      const trimmedInput = nextUserInput?.trim();
+      const previewUserMessage: SessionMessage | undefined = trimmedInput
+        ? {
+            role: "user",
+            content: trimmedInput
+          }
+        : undefined;
+
+      return buildNextTurnContextPreview({
         currentModel: connection.model,
+        messages: previewUserMessage ? [...messages, previewUserMessage] : messages,
+        messageTimestampsEnabled: settings.messageTimestampsEnabled,
+        currentRequestTimestamp: previewTimestamp,
+        getMessageTimestampMetadata: (message) => {
+          if (previewUserMessage && message === previewUserMessage) {
+            return {
+              submittedAt: previewTimestamp
+            };
+          }
+
+          return messageTimestampMetadata.get(message as SessionMessage);
+        }
+      });
+    },
+    setMessageTimestampMetadata: (message, metadata) => {
+      messageTimestampMetadata.set(message, { ...metadata });
+    },
+    getMessageTimestampMetadata: (message) => {
+      const metadata = messageTimestampMetadata.get(message);
+      return metadata ? { ...metadata } : undefined;
+    },
+    maybeCompactConversation: async ({ client: compactClient, model, abortSignal }) => {
+      if (!settings.conversationCompactionEnabled) {
+        return false;
+      }
+
+      return conversationCompactor.maybeCompact({
+        client: compactClient,
+        model,
         messages,
-        nextUserInput
-      }),
+        abortSignal
+      });
+    },
+    getLoadedStartupInstructionFiles: () => startupInstructions.map((instruction) => instruction.path),
+    consumeStartupInstructionWarnings: () => {
+      const warnings = [...startupInstructionWarnings];
+      startupInstructionWarnings = [];
+      return warnings;
+    },
     beginTurn: (turnId) => {
       fileHistoryManager.beginTurn(turnId);
     },
@@ -460,6 +545,14 @@ function normalizeSettingsPatch(
     normalized.autoSummaryEnabled = patch.autoSummaryEnabled;
   }
 
+  if ("messageTimestampsEnabled" in patch) {
+    normalized.messageTimestampsEnabled = patch.messageTimestampsEnabled;
+  }
+
+  if ("conversationCompactionEnabled" in patch) {
+    normalized.conversationCompactionEnabled = patch.conversationCompactionEnabled;
+  }
+
   if ("languagePreference" in patch) {
     normalized.languagePreference = normalizeOptionalSessionTextPatch(patch.languagePreference);
   }
@@ -472,10 +565,6 @@ function normalizeSettingsPatch(
     normalized.aiPersonalityPrompt = normalizeOptionalSessionTextPatch(patch.aiPersonalityPrompt);
   }
 
-  if ("customSystemPrompt" in patch) {
-    normalized.customSystemPrompt = normalizeOptionalSessionTextPatch(patch.customSystemPrompt);
-  }
-
   if ("appendSystemPrompt" in patch) {
     normalized.appendSystemPrompt = normalizeOptionalSessionTextPatch(patch.appendSystemPrompt);
   }
@@ -483,6 +572,13 @@ function normalizeSettingsPatch(
   if ("additionalDirectories" in patch) {
     normalized.additionalDirectories = normalizeAdditionalDirectories(
       patch.additionalDirectories,
+      workspaceRoot
+    );
+  }
+
+  if ("startupInstructionFiles" in patch) {
+    normalized.startupInstructionFiles = normalizeStartupInstructionFiles(
+      patch.startupInstructionFiles,
       workspaceRoot
     );
   }
@@ -500,11 +596,6 @@ function normalizeOptionalSessionTextPatch(value: string | undefined): string {
   return normalized.length > 0 ? normalized : "";
 }
 
-function normalizeOptionalText(value: string | undefined): string | undefined {
-  const normalized = value?.trim();
-  return normalized ? normalized : undefined;
-}
-
 function resolveAllowedRoots(
   workspaceRoot: string,
   settings: SessionSettings,
@@ -519,35 +610,4 @@ function resolveAllowedRoots(
   }
 
   return [...deduped];
-}
-
-function normalizeAdditionalDirectories(value: string[] | undefined, workspaceRoot: string): string[] {
-  if (!value || value.length === 0) {
-    return [];
-  }
-
-  const deduped = new Set<string>();
-  for (const directory of value) {
-    const normalized = normalizeOptionalText(directory);
-    if (!normalized) {
-      continue;
-    }
-
-    deduped.add(resolveDirectoryInput(normalized, workspaceRoot));
-  }
-
-  return [...deduped];
-}
-
-function resolveDirectoryInput(directory: string, workspaceRoot: string): string {
-  const normalized = directory.trim();
-  if (normalized === "~") {
-    return path.resolve(os.homedir());
-  }
-
-  if (normalized.startsWith("~/") || normalized.startsWith("~\\")) {
-    return path.resolve(path.join(os.homedir(), normalized.slice(2)));
-  }
-
-  return path.resolve(workspaceRoot, normalized);
 }

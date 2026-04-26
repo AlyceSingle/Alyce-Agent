@@ -1,4 +1,3 @@
-import React from "react";
 import { useDeclaredCursor } from "../runtime/useDeclaredCursor.js";
 import { Box, Text } from "../runtime/ink.js";
 import { useTerminalInput } from "../runtime/input.js";

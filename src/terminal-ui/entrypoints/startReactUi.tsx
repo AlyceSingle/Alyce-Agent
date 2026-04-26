@@ -1,4 +1,3 @@
-import React from "react";
 import { App } from "../app/App.js";
 import type { SessionController } from "../adapters/sessionController.js";
 import { render } from "../runtime/ink.js";

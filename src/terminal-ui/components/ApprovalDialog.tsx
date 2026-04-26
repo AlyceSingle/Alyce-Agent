@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from "react";
+import { useEffect, useState } from "react";
 import type { ToolApprovalRequest } from "../../tools/types.js";
 import { useRegisterOverlay } from "../context/overlayContext.js";
 import { Box, Text, useInput } from "../runtime/ink.js";

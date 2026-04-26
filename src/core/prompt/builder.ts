@@ -30,17 +30,14 @@ export async function buildDefaultSystemPrompt(
   return sections.join("\n\n");
 }
 
-// 支持默认提示词、整段覆盖和追加指令三种模式，便于后续实验与扩展。
+// 支持默认提示词和追加指令两种模式，便于后续实验与扩展。
 export async function buildEffectiveSystemPrompt(
   runtimeContext: PromptRuntimeContext,
   options: PromptBuildOptions,
   resolver: PromptSectionResolver
 ): Promise<string> {
   const appendPart = options.appendSystemPrompt?.trim();
-
-  const primaryPrompt = options.customSystemPrompt?.trim()
-    ? options.customSystemPrompt.trim()
-    : await buildDefaultSystemPrompt(runtimeContext, options, resolver);
+  const primaryPrompt = await buildDefaultSystemPrompt(runtimeContext, options, resolver);
 
   if (!appendPart) {
     return primaryPrompt;

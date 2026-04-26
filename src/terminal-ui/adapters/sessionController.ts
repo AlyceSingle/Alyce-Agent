@@ -4,6 +4,7 @@ import os from "node:os";
 import path from "node:path";
 import { runAgentTurn } from "../../agent.js";
 import { isTurnInterruptedError, throwIfAborted } from "../../core/abort.js";
+import { formatSystemDateTime } from "../../core/time/systemTime.js";
 import { parseReplCommand } from "../../cli/commandRouter.js";
 import {
   formatMemorySnapshot,
@@ -127,6 +128,29 @@ export function createSessionController(
 
   const setDialogClosed = () => {
     store.updateState((state) => closeDialog(state));
+  };
+
+  const appendStartupInstructionNotices = (options: {
+    title: string;
+    includeLoadedFiles?: boolean;
+  }) => {
+    const loadedFiles = runtime.getLoadedStartupInstructionFiles();
+    const warnings = runtime.consumeStartupInstructionWarnings();
+
+    if (options.includeLoadedFiles && loadedFiles.length > 0) {
+      appendUiMessage(
+        createSystemMessage(
+          ["Loaded startup instructions:", ...loadedFiles.map((filePath) => `- ${filePath}`)].join(
+            "\n"
+          ),
+          options.title
+        )
+      );
+    }
+
+    if (warnings.length > 0) {
+      appendUiMessage(createSystemMessage(warnings.join("\n"), options.title));
+    }
   };
 
   const discardInterruptedTurn = () => {
@@ -380,6 +404,9 @@ export function createSessionController(
           ""
         )
       );
+      appendStartupInstructionNotices({
+        title: "Startup"
+      });
       return true;
     }
 
@@ -469,6 +496,9 @@ export function createSessionController(
         store.updateState((state) =>
           setSessionSettingsState(setStatusText(state, "Idle"), runtime.getSettingsState())
         );
+        appendStartupInstructionNotices({
+          title: "Startup"
+        });
         appendUiMessage(
           createSystemMessage(
             [`Allowed and saved directory: ${absolutePath}`, ...buildAccessScopeSnapshot()].join(
@@ -485,6 +515,9 @@ export function createSessionController(
         absolutePath
       ]);
       await runtime.setSessionAdditionalDirectories(nextSessionDirectories);
+      appendStartupInstructionNotices({
+        title: "Startup"
+      });
       appendUiMessage(
         createSystemMessage(
           [`Allowed directory for this session: ${absolutePath}`, ...buildAccessScopeSnapshot()].join(
@@ -528,6 +561,11 @@ export function createSessionController(
           openSettingsDialog(state, "connection", "Connection setup is required before the first model request.")
         );
       }
+
+      appendStartupInstructionNotices({
+        title: "Startup",
+        includeLoadedFiles: true
+      });
     },
     submit: async (input) => {
       const normalized = input.trim();
@@ -575,9 +613,14 @@ export function createSessionController(
       activeTurn = checkpoint;
 
       store.updateState((state) => setTranscriptSticky(state, true));
-      runtime.messages.push({
+      const submittedAt = formatSystemDateTime(new Date());
+      const userMessage = {
         role: "user",
         content: normalized
+      } as const;
+      runtime.messages.push(userMessage);
+      runtime.setMessageTimestampMetadata(userMessage, {
+        submittedAt
       });
       appendUiMessage(createUserMessage(normalized));
       store.updateState((state) => setLoading(setStatusText(state, "Thinking..."), true));
@@ -585,9 +628,17 @@ export function createSessionController(
       try {
         // 每轮都绑定独立的 abort controller 和 tool context，确保取消只影响当前轮次。
         const client = runtime.requireClient();
+        const currentModel = runtime.getCurrentModel();
+        const gcliGeminiCompat = shouldUseGcliGeminiCompat(
+          runtime.getConnectionConfig().baseURL,
+          currentModel
+        );
         const reply = await runAgentTurn(client, runtime.messages, {
-          model: runtime.getCurrentModel(),
+          model: currentModel,
           maxSteps: runtime.getSettings().maxSteps,
+          gcliGeminiCompat,
+          messageTimestampsEnabled: runtime.getSettings().messageTimestampsEnabled,
+          getMessageTimestampMetadata: (message) => runtime.getMessageTimestampMetadata(message),
           abortSignal: controller.signal,
           context: runtime.createToolContext({
             turnId,
@@ -616,6 +667,11 @@ export function createSessionController(
           },
           onToolCallResult: (toolName, result) => {
             appendUiMessage(createToolResultMessage(toolName, result));
+          },
+          onAssistantMessageCreated: (message) => {
+            runtime.setMessageTimestampMetadata(message, {
+              generatedAt: formatSystemDateTime(new Date())
+            });
           }
         });
 
@@ -625,16 +681,33 @@ export function createSessionController(
 
         const summaryUpdated = await runtime.memoryService.maybeRefreshAutoSummary({
           client,
-          model: runtime.getCurrentModel(),
+          model: currentModel,
           messages: runtime.messages,
           abortSignal: controller.signal
         });
 
         throwIfAborted(controller.signal);
 
-        if (summaryUpdated) {
+        const compacted = await runtime.maybeCompactConversation({
+          client,
+          model: currentModel,
+          abortSignal: controller.signal
+        });
+
+        throwIfAborted(controller.signal);
+
+        if (summaryUpdated || compacted) {
           await runtime.resetSystemMessage();
+        }
+
+        if (summaryUpdated) {
           appendUiMessage(createSystemMessage("Auto session summary updated.", "Memory"));
+        }
+
+        if (compacted) {
+          appendUiMessage(
+            createSystemMessage("Conversation was compacted to keep the prompt context bounded.", "Context")
+          );
         }
 
         runtime.discardTurn(turnId);
@@ -774,6 +847,10 @@ export function createSessionController(
           "Settings"
         )
       );
+      appendStartupInstructionNotices({
+        title: "Startup",
+        includeLoadedFiles: true
+      });
     },
     requestExit: () => {
       exitHandler?.();
@@ -782,4 +859,20 @@ export function createSessionController(
       exitHandler = handler;
     }
   };
+}
+
+function shouldUseGcliGeminiCompat(baseURL: string | undefined, model: string): boolean {
+  if (!baseURL) {
+    return false;
+  }
+
+  if (!model.trim().toLowerCase().startsWith("gemini")) {
+    return false;
+  }
+
+  try {
+    return new URL(baseURL).hostname.toLowerCase() === "gcli.ggchan.dev";
+  } catch {
+    return false;
+  }
 }

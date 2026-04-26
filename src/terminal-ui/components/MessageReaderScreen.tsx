@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Box, ScrollBox, Text, type ScrollBoxHandle } from "../runtime/ink.js";
 import { useTerminalInput } from "../runtime/input.js";
 import type { TerminalUiMessage } from "../state/types.js";

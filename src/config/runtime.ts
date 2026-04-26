@@ -12,7 +12,6 @@ export interface PromptOverrideConfig {
   languagePreference?: string;
   personaPreset?: string;
   aiPersonalityPrompt?: string;
-  customSystemPrompt?: string;
   appendSystemPrompt?: string;
 }
 
@@ -46,7 +45,10 @@ export interface SessionSettings extends PromptOverrideConfig {
   maxSteps: number;
   commandTimeoutMs: number;
   autoSummaryEnabled: boolean;
+  messageTimestampsEnabled: boolean;
+  conversationCompactionEnabled: boolean;
   additionalDirectories: string[];
+  startupInstructionFiles: string[];
 }
 
 export type ConnectionConfigSource = "default" | "user" | "project" | "env" | "cli";
@@ -110,12 +112,14 @@ const SessionSettingsFileSchema = z
     maxSteps: z.number().int().positive().optional(),
     commandTimeoutMs: z.number().int().positive().optional(),
     autoSummaryEnabled: z.boolean().optional(),
+    messageTimestampsEnabled: z.boolean().optional(),
+    conversationCompactionEnabled: z.boolean().optional(),
     languagePreference: z.string().optional(),
     personaPreset: z.string().optional(),
     aiPersonalityPrompt: z.string().optional(),
-    customSystemPrompt: z.string().optional(),
     appendSystemPrompt: z.string().optional(),
-    additionalDirectories: z.array(z.string()).optional()
+    additionalDirectories: z.array(z.string()).optional(),
+    startupInstructionFiles: z.array(z.string()).optional()
   })
   .strict();
 
@@ -489,12 +493,17 @@ function normalizeSessionSettings(
     maxSteps: clampPositiveInt(input.maxSteps, 8),
     commandTimeoutMs: clampPositiveInt(input.commandTimeoutMs, 120_000),
     autoSummaryEnabled: input.autoSummaryEnabled ?? true,
+    messageTimestampsEnabled: input.messageTimestampsEnabled ?? false,
+    conversationCompactionEnabled: input.conversationCompactionEnabled ?? true,
     languagePreference: normalizeOptionalText(input.languagePreference),
     personaPreset: resolvePersonaPreset(normalizeOptionalText(input.personaPreset)),
     aiPersonalityPrompt: normalizeOptionalText(input.aiPersonalityPrompt),
-    customSystemPrompt: normalizeOptionalText(input.customSystemPrompt),
     appendSystemPrompt: normalizeOptionalText(input.appendSystemPrompt),
-    additionalDirectories: normalizeAdditionalDirectories(input.additionalDirectories, workspaceRoot)
+    additionalDirectories: normalizeAdditionalDirectories(input.additionalDirectories, workspaceRoot),
+    startupInstructionFiles: normalizeStartupInstructionFiles(
+      input.startupInstructionFiles,
+      workspaceRoot
+    )
   };
 }
 
@@ -508,6 +517,12 @@ function serializeSessionSettings(
     commandTimeoutMs: "commandTimeoutMs" in settings ? settings.commandTimeoutMs : undefined,
     autoSummaryEnabled:
       "autoSummaryEnabled" in settings ? settings.autoSummaryEnabled : undefined,
+    messageTimestampsEnabled:
+      "messageTimestampsEnabled" in settings ? settings.messageTimestampsEnabled : undefined,
+    conversationCompactionEnabled:
+      "conversationCompactionEnabled" in settings
+        ? settings.conversationCompactionEnabled
+        : undefined,
     languagePreference:
       "languagePreference" in settings
         ? serializeOptionalTextSetting(settings.languagePreference)
@@ -520,10 +535,6 @@ function serializeSessionSettings(
       "aiPersonalityPrompt" in settings
         ? serializeOptionalTextSetting(settings.aiPersonalityPrompt)
         : undefined,
-    customSystemPrompt:
-      "customSystemPrompt" in settings
-        ? serializeOptionalTextSetting(settings.customSystemPrompt)
-        : undefined,
     appendSystemPrompt:
       "appendSystemPrompt" in settings
         ? serializeOptionalTextSetting(settings.appendSystemPrompt)
@@ -531,6 +542,10 @@ function serializeSessionSettings(
     additionalDirectories:
       "additionalDirectories" in settings
         ? normalizeAdditionalDirectories(settings.additionalDirectories, workspaceRoot)
+        : undefined,
+    startupInstructionFiles:
+      "startupInstructionFiles" in settings
+        ? normalizeStartupInstructionFiles(settings.startupInstructionFiles, workspaceRoot)
         : undefined
   });
 }
@@ -574,7 +589,6 @@ function resolveSettingsFromEnv(env: NodeJS.ProcessEnv): Partial<SessionSettings
     languagePreference: env.AGENT_LANGUAGE,
     personaPreset: resolvePersonaPreset(env.AGENT_PERSONA_PRESET),
     aiPersonalityPrompt: env.AGENT_AI_PERSONALITY,
-    customSystemPrompt: env.AGENT_SYSTEM_PROMPT,
     appendSystemPrompt: env.AGENT_APPEND_SYSTEM_PROMPT,
     additionalDirectories: parsePathListFromEnv(env.AGENT_ADDITIONAL_DIRECTORIES)
   });
@@ -586,12 +600,6 @@ function resolveSettingsFromCli(argv: string[]): Partial<SessionSettings> {
     languagePreference: getArgValue(argv, "--lang"),
     personaPreset: resolvePersonaPreset(getArgValue(argv, "--persona-preset")),
     aiPersonalityPrompt: getArgValue(argv, "--persona"),
-    customSystemPrompt: resolvePromptTextFromCli({
-      argv,
-      directFlag: "--system-prompt",
-      fileFlag: "--system-prompt-file",
-      label: "system prompt"
-    }),
     appendSystemPrompt: resolvePromptTextFromCli({
       argv,
       directFlag: "--append-system-prompt",
@@ -654,7 +662,10 @@ function normalizeOptionalText(value: string | undefined): string | undefined {
   return normalized ? normalized : undefined;
 }
 
-function normalizeAdditionalDirectories(value: string[] | undefined, workspaceRoot: string): string[] {
+export function normalizeAdditionalDirectories(
+  value: string[] | undefined,
+  workspaceRoot: string
+): string[] {
   if (!value || value.length === 0) {
     return [];
   }
@@ -672,7 +683,28 @@ function normalizeAdditionalDirectories(value: string[] | undefined, workspaceRo
   return [...deduped];
 }
 
-function resolveDirectoryInput(directory: string, workspaceRoot: string): string {
+export function normalizeStartupInstructionFiles(
+  value: string[] | undefined,
+  workspaceRoot: string
+): string[] {
+  if (!value || value.length === 0) {
+    return [];
+  }
+
+  const deduped = new Set<string>();
+  for (const filePath of value) {
+    const normalized = normalizeOptionalText(filePath);
+    if (!normalized) {
+      continue;
+    }
+
+    deduped.add(resolveDirectoryInput(normalized, workspaceRoot));
+  }
+
+  return [...deduped];
+}
+
+export function resolveDirectoryInput(directory: string, workspaceRoot: string): string {
   const normalized = directory.trim();
   if (normalized === "~") {
     return path.resolve(os.homedir());

@@ -1,7 +1,6 @@
 import { z } from "zod";
 import type {
   AskUserQuestionAnnotation,
-  AskUserQuestionResponse,
   ToolExecutionContext
 } from "../types.js";
 import {

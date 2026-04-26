@@ -1,4 +1,3 @@
-import React from "react";
 import { Text, useStdout } from "../runtime/ink.js";
 import { terminalUiTheme } from "../theme/theme.js";
 
