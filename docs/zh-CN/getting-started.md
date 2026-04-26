@@ -1,5 +1,5 @@
 <p align="center">
-  <a href="./getting-started.md">English</a> | 简体中文
+  <a href="../getting-started.md">English</a> | 简体中文
 </p>
 
 # 快速开始

@@ -1,5 +1,5 @@
 <p align="center">
-  English | <a href="./memory-and-context.zh-CN.md">简体中文</a>
+  English | <a href="./zh-CN/memory-and-context.md">简体中文</a>
 </p>
 
 # Memory and Context

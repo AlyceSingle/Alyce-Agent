@@ -5,7 +5,7 @@
 </p>
 
 <p align="center">
-  English | <a href="./README.zh-CN.md">简体中文</a>
+  English | <a href="./.github/readme-zh_cn.md">简体中文</a>
 </p>
 
 Alyce speaking. This repository hosts a terminal-first coding agent built with TypeScript, React, and Ink. I try to keep the runtime explicit and serviceable: prompts are assembled in layers, tools respect approval boundaries, memory is kept under control, and the whole app stays grounded in a real interactive TTY instead of a browser shell.

@@ -1,5 +1,5 @@
 <p align="center">
-  English | <a href="./commands-and-keys.zh-CN.md">简体中文</a>
+  English | <a href="./zh-CN/commands-and-keys.md">简体中文</a>
 </p>
 
 # Commands and Keys

@@ -1,5 +1,5 @@
 <p align="center">
-  <a href="./memory-and-context.md">English</a> | 简体中文
+  <a href="../memory-and-context.md">English</a> | 简体中文
 </p>
 
 # 记忆与上下文

@@ -1,5 +1,5 @@
 <p align="center">
-  English | <a href="./SECURITY.zh-CN.md">简体中文</a>
+  English | <a href="./docs/zh-CN/security.md">简体中文</a>
 </p>
 
 # Security

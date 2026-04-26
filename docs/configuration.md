@@ -1,5 +1,5 @@
 <p align="center">
-  English | <a href="./configuration.zh-CN.md">简体中文</a>
+  English | <a href="./zh-CN/configuration.md">简体中文</a>
 </p>
 
 # Configuration

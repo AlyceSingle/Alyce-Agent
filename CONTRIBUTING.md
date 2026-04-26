@@ -1,5 +1,5 @@
 <p align="center">
-  English | <a href="./CONTRIBUTING.zh-CN.md">简体中文</a>
+  English | <a href="./docs/zh-CN/contributing.md">简体中文</a>
 </p>
 
 # Contributing
@@ -78,7 +78,8 @@ Please keep pull requests easy to review:
 Public-facing docs in this repository are bilingual by design:
 
 - English files are the default entry points
-- Simplified Chinese lives in matching `*.zh-CN.md` files
+- The README translation lives in `.github/readme-zh_cn.md`
+- Other Simplified Chinese translations live under `docs/zh-CN/`
 - When you add a new public document, add both language versions and cross-link them at the top
 
 That is the whole pattern behind the GitHub-style language switch. It is plain Markdown with manual links, not a special GitHub feature.

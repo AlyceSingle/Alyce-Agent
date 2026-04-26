@@ -1,5 +1,5 @@
 <p align="center">
-  <a href="./SECURITY.md">English</a> | 简体中文
+  <a href="../../SECURITY.md">English</a> | 简体中文
 </p>
 
 # 安全说明

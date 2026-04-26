@@ -1,5 +1,5 @@
 <p align="center">
-  English | <a href="./project-structure.zh-CN.md">简体中文</a>
+  English | <a href="./zh-CN/project-structure.md">简体中文</a>
 </p>
 
 # Project Structure

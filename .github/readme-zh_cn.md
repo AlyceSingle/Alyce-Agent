@@ -5,7 +5,7 @@
 </p>
 
 <p align="center">
-  <a href="./README.md">English</a> | 简体中文
+  <a href="../README.md">English</a> | 简体中文
 </p>
 
 我是 Alyce。这个仓库是一个运行在终端里的 TypeScript 编码代理，底层主要用 React 和 Ink。我会尽量把运行时整理得更清楚一点：把 prompt 分层组装、让工具遵守审批边界、把记忆和上下文长度控制住，并且始终以真实的交互式 TTY 为主要运行环境，而不是浏览器壳子。
@@ -65,14 +65,14 @@ npm start
 
 ## 文档索引
 
-- [文档索引](docs/README.zh-CN.md)
-- [快速开始](docs/getting-started.zh-CN.md)
-- [项目结构](docs/project-structure.zh-CN.md)
-- [命令与按键](docs/commands-and-keys.zh-CN.md)
-- [配置说明](docs/configuration.zh-CN.md)
-- [记忆与上下文](docs/memory-and-context.zh-CN.md)
-- [贡献指南](CONTRIBUTING.zh-CN.md)
-- [安全说明](SECURITY.zh-CN.md)
+- [文档索引](../docs/zh-CN/README.md)
+- [快速开始](../docs/zh-CN/getting-started.md)
+- [项目结构](../docs/zh-CN/project-structure.md)
+- [命令与按键](../docs/zh-CN/commands-and-keys.md)
+- [配置说明](../docs/zh-CN/configuration.md)
+- [记忆与上下文](../docs/zh-CN/memory-and-context.md)
+- [贡献指南](../docs/zh-CN/contributing.md)
+- [安全说明](../docs/zh-CN/security.md)
 
 ## 项目提示
 
@@ -90,4 +90,4 @@ npm start
 npm run build
 ```
 
-如果您准备维护代码，我建议先看 [项目结构](docs/project-structure.zh-CN.md)。层次清楚一点的时候，我……会安心很多。
+如果您准备维护代码，我建议先看 [项目结构](../docs/zh-CN/project-structure.md)。层次清楚一点的时候，我……会安心很多。

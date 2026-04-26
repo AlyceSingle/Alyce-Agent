@@ -1,5 +1,5 @@
 <p align="center">
-  English | <a href="./README.zh-CN.md">简体中文</a>
+  English | <a href="./zh-CN/README.md">简体中文</a>
 </p>
 
 # Documentation Index

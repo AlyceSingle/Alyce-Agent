@@ -1,5 +1,5 @@
 <p align="center">
-  <a href="./CONTRIBUTING.md">English</a> | 简体中文
+  <a href="../../CONTRIBUTING.md">English</a> | 简体中文
 </p>
 
 # 贡献指南
@@ -78,7 +78,8 @@ npm run dev
 这个仓库的公开文档按“双语成对”维护：
 
 - 英文文件作为默认入口
-- 简体中文放在对应的 `*.zh-CN.md`
+- README 的中文翻译放在 `.github/readme-zh_cn.md`
+- 其他简体中文翻译统一放在 `docs/zh-CN/`
 - 新增公开文档时，请同时补两种语言，并在顶部互相链接
 
 GitHub 上看起来像“语言切换”的效果，本质上就是这一套纯 Markdown 的手工交叉链接，不是什么特殊功能。我……还是觉得写清楚比较安心。
