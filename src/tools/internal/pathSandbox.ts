@@ -1,3 +1,4 @@
+import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 
@@ -22,8 +23,11 @@ export function normalizeAllowedRoots(allowedRoots: readonly string[]): string[]
 
 export function isPathAllowed(allowedRoots: readonly string[], absolutePath: string): boolean {
   const normalizedPath = path.resolve(absolutePath);
+  const checkedPath = resolvePathForSandboxCheck(normalizedPath);
   const roots = normalizeAllowedRoots(allowedRoots);
-  return roots.some((rootPath) => isPathInsideRoot(rootPath, normalizedPath));
+  return roots.some((rootPath) =>
+    isPathInsideRoot(resolvePathForSandboxCheck(rootPath), checkedPath)
+  );
 }
 
 export function resolveAllowedPath(
@@ -57,10 +61,6 @@ export function resolvePathFromInput(
   return resolveAllowedPath(allowedRoots, expandedInput, workspaceRoot);
 }
 
-export function resolveWorkspacePath(workspaceRoot: string, maybeRelative: string): string {
-  return resolveAllowedPath([workspaceRoot], maybeRelative, workspaceRoot);
-}
-
 export function toWorkspaceRelative(workspaceRoot: string, absolutePath: string): string {
   const normalizedAbsolute = path.resolve(absolutePath);
   const normalizedWorkspace = path.resolve(workspaceRoot);
@@ -83,6 +83,41 @@ function expandHomePath(inputPath: string): string {
   }
 
   return trimmedPath;
+}
+
+function resolvePathForSandboxCheck(absolutePath: string): string {
+  const normalizedPath = path.resolve(absolutePath);
+  const existingPath = findNearestExistingPath(normalizedPath);
+  if (!existingPath) {
+    return normalizedPath;
+  }
+
+  const realExistingPath = realpathOrResolved(existingPath);
+  const remainingPath = path.relative(existingPath, normalizedPath);
+  return remainingPath ? path.resolve(realExistingPath, remainingPath) : realExistingPath;
+}
+
+function findNearestExistingPath(absolutePath: string): string | null {
+  let currentPath = path.resolve(absolutePath);
+
+  while (!fs.existsSync(currentPath)) {
+    const parentPath = path.dirname(currentPath);
+    if (parentPath === currentPath) {
+      return null;
+    }
+
+    currentPath = parentPath;
+  }
+
+  return currentPath;
+}
+
+function realpathOrResolved(existingPath: string): string {
+  try {
+    return fs.realpathSync.native(existingPath);
+  } catch {
+    return path.resolve(existingPath);
+  }
 }
 
 function assertPathAllowed(allowedRoots: readonly string[], absolutePath: string) {

@@ -74,7 +74,10 @@ export interface SessionRuntime {
   createToolContext: (options: {
     turnId: string;
     abortSignal: AbortSignal;
-    requestApproval: (request: ToolApprovalRequest) => Promise<boolean>;
+    requestApproval: (
+      request: ToolApprovalRequest,
+      options?: { signal?: AbortSignal }
+    ) => Promise<boolean>;
     askUserQuestions: (
       request: AskUserQuestionRequest,
       options?: { signal?: AbortSignal }
@@ -388,7 +391,7 @@ export async function createSessionRuntime(
       commandTimeoutMs: settings.commandTimeoutMs,
       turnId,
       abortSignal,
-      requestApproval,
+      requestApproval: (request) => requestApproval(request, { signal: abortSignal }),
       askUserQuestions,
       getTodos,
       setTodos,

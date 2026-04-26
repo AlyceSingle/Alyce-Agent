@@ -5,7 +5,7 @@ import type { ToolExecutionContext } from "../types.js";
 import { FILE_EDIT_TOOL_NAME } from "./constants.js";
 import { getEditToolDescription } from "./prompt.js";
 import { type FileEditOutput, inputSchema } from "./types.js";
-import { findActualString, getPatchForEdit, preserveQuoteStyle } from "./utils.js";
+import { getPatchForEdit } from "./utils.js";
 
 export const FileEditInputSchema = inputSchema();
 export const FILE_EDIT_TOOL_DESCRIPTION = getEditToolDescription();
@@ -23,25 +23,23 @@ export async function executeFileEdit(
     throw new Error("No changes to make: old_string and new_string are identical");
   }
 
-  const actualOldString = findActualString(originalFile, input.old_string);
-  if (!actualOldString) {
+  if (!originalFile.includes(input.old_string)) {
     throw new Error("String to replace was not found in the target file");
   }
 
   // 默认要求 old_string 唯一命中，避免误改多处内容。
-  const matchCount = countMatches(originalFile, actualOldString);
+  const matchCount = countMatches(originalFile, input.old_string);
   if (matchCount > 1 && !input.replace_all) {
     throw new Error(
       `Found ${matchCount} matches. Set replace_all=true or provide more unique old_string context.`
     );
   }
 
-  const adjustedNewString = preserveQuoteStyle(input.old_string, actualOldString, input.new_string);
   const patchResult = getPatchForEdit({
     filePath: relativePath,
     fileContents: originalFile,
-    oldString: actualOldString,
-    newString: adjustedNewString,
+    oldString: input.old_string,
+    newString: input.new_string,
     replaceAll: input.replace_all
   });
 
@@ -67,8 +65,7 @@ export async function executeFileEdit(
   return {
     filePath: relativePath,
     oldString: input.old_string,
-    newString: adjustedNewString,
-    originalFile,
+    newString: input.new_string,
     structuredPatch: patchResult.patch,
     userModified: false,
     replaceAll: Boolean(input.replace_all),

@@ -166,7 +166,12 @@ export function createSessionController(
     }
   };
 
-  const requestApproval = async (request: ToolApprovalRequest) => {
+  const requestApproval = async (
+    request: ToolApprovalRequest,
+    options: { signal?: AbortSignal } = {}
+  ) => {
+    throwIfAborted(options.signal);
+
     if (sessionApprovalMode === "auto") {
       return true;
     }
@@ -184,10 +189,15 @@ export function createSessionController(
 
     store.updateState((state) => openPermissionDialog(state, request));
 
-    return new Promise<boolean>((resolve) => {
+    return new Promise<boolean>((resolve, reject) => {
+      const cleanup = () => {
+        options.signal?.removeEventListener("abort", handleAbort);
+      };
+
       // 审批结果既影响当前请求，也可能提升为“本会话允许该类操作”或“全会话自动批准”。
-      pendingApprovalResolver = (decision) => {
+      const settle = (decision: PermissionDecision) => {
         pendingApprovalResolver = null;
+        cleanup();
         setDialogClosed();
 
         let approved = false;
@@ -220,6 +230,26 @@ export function createSessionController(
         );
         resolve(approved);
       };
+
+      const handleAbort = () => {
+        if (!pendingApprovalResolver) {
+          cleanup();
+          return;
+        }
+
+        pendingApprovalResolver = null;
+        cleanup();
+        setDialogClosed();
+        reject(new Error("Request interrupted by user"));
+      };
+
+      if (options.signal?.aborted) {
+        handleAbort();
+        return;
+      }
+
+      pendingApprovalResolver = settle;
+      options.signal?.addEventListener("abort", handleAbort, { once: true });
     });
   };
 

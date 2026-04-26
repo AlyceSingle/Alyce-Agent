@@ -1,13 +1,5 @@
 import type { FileEdit } from "./types.js";
 
-export function findActualString(fileContent: string, searchString: string): string | null {
-  return fileContent.includes(searchString) ? searchString : null;
-}
-
-export function preserveQuoteStyle(_oldString: string, _actualOldString: string, newString: string): string {
-  return newString;
-}
-
 export function applyEditToFile(fileContent: string, edit: FileEdit): string {
   // replace_all=true 时做全量替换，否则只替换首个命中。
   return edit.replace_all

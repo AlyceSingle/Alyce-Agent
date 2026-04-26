@@ -36,14 +36,3 @@ export function buildNextTurnContextPreview(options: {
 
   return JSON.stringify(payloadPreview, null, 2);
 }
-
-// 打印下一轮请求 payload，便于排查上下文拼装问题。
-export function printNextTurnContextPreview(options: {
-  currentModel: string;
-  messages: OpenAI.Chat.Completions.ChatCompletionMessageParam[];
-  nextUserInput?: string;
-}) {
-  console.log("\n=== Next Turn Context Preview ===");
-  console.log(buildNextTurnContextPreview(options));
-  console.log("=== End Context Preview ===\n");
-}

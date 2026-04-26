@@ -8,7 +8,7 @@ export const inputSchema = () =>
         .describe(
           "Absolute path preferred; supports ~ and ~/..., plus workspace-relative paths, on the local filesystem"
         ),
-      old_string: z.string().describe("The text to replace"),
+      old_string: z.string().min(1).describe("The text to replace"),
       new_string: z.string().describe("The text to replace with"),
       replace_all: z.boolean().optional().default(false)
     })
@@ -28,7 +28,6 @@ export const outputSchema = () =>
     filePath: z.string(),
     oldString: z.string(),
     newString: z.string(),
-    originalFile: z.string(),
     structuredPatch: z.array(hunkSchema()),
     userModified: z.boolean(),
     replaceAll: z.boolean(),
