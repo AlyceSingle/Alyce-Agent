@@ -379,7 +379,12 @@ function getArgValue(argv: string[], flag: string): string | undefined {
     return undefined;
   }
 
-  return argv[index + 1];
+  const value = argv[index + 1];
+  if (typeof value !== "string" || value.startsWith("--")) {
+    throw new Error(`Missing value for ${flag}.`);
+  }
+
+  return value;
 }
 
 function getArgValues(argv: string[], flag: string): string[] | undefined {
@@ -392,7 +397,7 @@ function getArgValues(argv: string[], flag: string): string[] | undefined {
 
     const candidate = argv[index + 1];
     if (typeof candidate !== "string" || candidate.startsWith("--")) {
-      continue;
+      throw new Error(`Missing value for ${flag}.`);
     }
 
     values.push(candidate);

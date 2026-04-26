@@ -1,5 +1,6 @@
-import { promises as fs } from "node:fs";
+import { createReadStream, promises as fs } from "node:fs";
 import { z } from "zod";
+import { throwIfAborted } from "../../core/abort.js";
 import { resolvePathFromInput, toWorkspaceRelative } from "../internal/pathSandbox.js";
 import type { ToolExecutionContext } from "../types.js";
 import { truncate } from "../internal/values.js";
@@ -36,6 +37,7 @@ export async function executeFileRead(
   const limits = getDefaultFileReadingLimits();
   const requestedStartLine = input.offset ?? 1;
   const requestedLimit = input.limit ?? limits.maxLines;
+  const hasExplicitLimit = input.limit !== undefined;
 
   if (requestedLimit > limits.maxLines) {
     throw new Error(`limit exceeds max allowed lines (${limits.maxLines})`);
@@ -48,22 +50,20 @@ export async function executeFileRead(
     throw new Error(`Read only supports files: ${input.file_path}`);
   }
 
-  // 未指定 limit 时，限制总文件大小，避免一次性读取过大文本。
-  if (!input.limit && stats.size > limits.maxSizeBytes) {
+  // 未指定 limit 时，限制总文件大小；指定 limit 时走流式读取，避免整文件进内存。
+  if (!hasExplicitLimit && stats.size > limits.maxSizeBytes) {
     throw new Error(
       `File is too large (${formatBytes(stats.size)}). Please provide offset and limit for partial reads.`
     );
   }
 
-  const raw = await fs.readFile(absolutePath, "utf8");
-  if (looksLikeBinary(raw)) {
-    throw new Error("Read only supports text-like files");
-  }
-
-  const allLines = raw.length === 0 ? [] : raw.split(/\r?\n/);
-  const startIndex = requestedStartLine - 1;
-  const selectedLines = allLines.slice(startIndex, startIndex + requestedLimit);
-  const rendered = renderWithLineNumbers(allLines.length, requestedStartLine, selectedLines);
+  const { selectedLines, totalLines } = await readLineWindow(
+    absolutePath,
+    requestedStartLine,
+    requestedLimit,
+    context.abortSignal
+  );
+  const rendered = renderWithLineNumbers(totalLines, requestedStartLine, selectedLines);
 
   return {
     type: "text",
@@ -72,8 +72,80 @@ export async function executeFileRead(
       content: truncate(rendered),
       numLines: selectedLines.length,
       startLine: requestedStartLine,
-      totalLines: allLines.length
+      totalLines
     }
+  };
+}
+
+async function readLineWindow(
+  absolutePath: string,
+  startLine: number,
+  limit: number,
+  abortSignal?: AbortSignal
+) {
+  throwIfAborted(abortSignal);
+
+  const selectedLines: string[] = [];
+  const endLineExclusive = startLine + limit;
+  const stream = createReadStream(absolutePath, {
+    encoding: "utf8"
+  });
+  let totalLines = 0;
+  let pending = "";
+  let endedWithLineBreak = false;
+
+  const handleAbort = () => {
+    stream.destroy(new Error("File read interrupted by user"));
+  };
+
+  if (abortSignal?.aborted) {
+    handleAbort();
+  } else {
+    abortSignal?.addEventListener("abort", handleAbort, { once: true });
+  }
+
+  const pushLine = (line: string) => {
+    totalLines += 1;
+    if (totalLines >= startLine && totalLines < endLineExclusive) {
+      selectedLines.push(line);
+    }
+  };
+
+  try {
+    for await (const chunk of stream) {
+      throwIfAborted(abortSignal);
+
+      if (chunk.includes("\u0000")) {
+        throw new Error("Read only supports text-like files");
+      }
+
+      pending += chunk;
+      let lineBreakIndex = pending.indexOf("\n");
+      while (lineBreakIndex !== -1) {
+        const line = pending.slice(0, lineBreakIndex).replace(/\r$/, "");
+        pushLine(line);
+        pending = pending.slice(lineBreakIndex + 1);
+        endedWithLineBreak = true;
+        lineBreakIndex = pending.indexOf("\n");
+      }
+
+      if (pending.length > 0) {
+        endedWithLineBreak = false;
+      }
+    }
+
+    if (pending.length > 0) {
+      pushLine(pending);
+    } else if (endedWithLineBreak) {
+      pushLine("");
+    }
+  } finally {
+    abortSignal?.removeEventListener("abort", handleAbort);
+  }
+
+  return {
+    selectedLines,
+    totalLines
   };
 }
 
@@ -102,10 +174,6 @@ function renderWithLineNumbers(totalLines: number, startLine: number, lines: str
   return lines
     .map((line, index) => `${String(startLine + index).padStart(6, " ")}\t${line}`)
     .join("\n");
-}
-
-function looksLikeBinary(content: string): boolean {
-  return content.includes("\u0000");
 }
 
 function formatBytes(bytes: number): string {

@@ -80,7 +80,7 @@ export async function executeGlobTool(
 
   return {
     durationMs: outcome.durationMs,
-    numFiles: filenames.length,
+    numFiles: sortedMatches.length,
     filenames,
     truncated
   };

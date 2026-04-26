@@ -1,4 +1,6 @@
 import { lookup } from "node:dns/promises";
+import type { IncomingHttpHeaders } from "node:http";
+import { request as httpsRequest } from "node:https";
 import { isIP } from "node:net";
 import { z } from "zod";
 import {
@@ -13,6 +15,22 @@ import { DESCRIPTION, WEB_FETCH_TOOL_NAME } from "./prompt.js";
 const DEFAULT_MAX_CHARS = 8_000;
 const MAX_MAX_CHARS = 40_000;
 const MAX_REDIRECTS = 10;
+
+interface PublicFetchTarget {
+  url: string;
+  address: string;
+  family: 4 | 6;
+}
+
+interface PinnedFetchResponse {
+  url: string;
+  status: number;
+  statusText: string;
+  headers: {
+    get: (name: string) => string | null;
+  };
+  text: () => Promise<string>;
+}
 
 export const WebFetchInputSchema = z
   .object({
@@ -50,7 +68,6 @@ export async function executeWebFetchTool(
   throwIfAborted(context.abortSignal);
 
   const normalizedUrl = normalizeUrl(input.url);
-  await assertPublicFetchUrl(normalizedUrl);
   const maxChars = input.max_chars ?? DEFAULT_MAX_CHARS;
   const timeoutMs = Math.max(1, context.commandTimeoutMs);
 
@@ -91,7 +108,7 @@ async function fetchWithTimeout(
   url: string,
   timeoutMs: number,
   parentSignal?: AbortSignal
-): Promise<Response> {
+): Promise<PinnedFetchResponse> {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), timeoutMs);
   const handleAbort = () => controller.abort(parentSignal?.reason);
@@ -105,15 +122,8 @@ async function fetchWithTimeout(
 
     let currentUrl = url;
     for (let redirectCount = 0; redirectCount <= MAX_REDIRECTS; redirectCount += 1) {
-      await assertPublicFetchUrl(currentUrl);
-
-      const response = await fetch(currentUrl, {
-        signal: controller.signal,
-        redirect: "manual",
-        headers: {
-          "user-agent": "AlyceAgent/0.1"
-        }
-      });
+      const target = await resolvePublicFetchTarget(currentUrl);
+      const response = await requestPinnedUrl(target, controller.signal);
 
       if (!isRedirectResponse(response.status)) {
         return response;
@@ -125,11 +135,9 @@ async function fetchWithTimeout(
       }
 
       if (redirectCount >= MAX_REDIRECTS) {
-        await response.body?.cancel();
         throw new Error(`WebFetch stopped after ${MAX_REDIRECTS} redirects`);
       }
 
-      await response.body?.cancel();
       currentUrl = normalizeUrl(new URL(location, currentUrl).toString());
     }
 
@@ -164,16 +172,21 @@ function normalizeUrl(rawUrl: string): string {
   return parsed.toString();
 }
 
-async function assertPublicFetchUrl(url: string): Promise<void> {
+async function resolvePublicFetchTarget(url: string): Promise<PublicFetchTarget> {
   const parsed = new URL(url);
   const hostname = normalizeHostname(parsed.hostname);
   if (!hostname || hostname === "localhost" || hostname.endsWith(".localhost")) {
     throw new Error(`WebFetch requires a public hostname: ${parsed.hostname}`);
   }
 
-  if (isIP(hostname) !== 0) {
+  const directIpVersion = isIP(hostname);
+  if (directIpVersion !== 0) {
     assertPublicIpAddress(hostname, parsed.hostname);
-    return;
+    return {
+      url,
+      address: hostname,
+      family: toPublicIpVersion(directIpVersion)
+    };
   }
 
   let addresses;
@@ -194,6 +207,78 @@ async function assertPublicFetchUrl(url: string): Promise<void> {
   for (const address of addresses) {
     assertPublicIpAddress(address.address, parsed.hostname);
   }
+
+  const selectedAddress = addresses[0]!;
+  return {
+    url,
+    address: selectedAddress.address,
+    family: toPublicIpVersion(selectedAddress.family)
+  };
+}
+
+function requestPinnedUrl(
+  target: PublicFetchTarget,
+  signal: AbortSignal
+): Promise<PinnedFetchResponse> {
+  return new Promise((resolve, reject) => {
+    const parsed = new URL(target.url);
+    const request = httpsRequest(
+      parsed,
+      {
+        signal,
+        headers: {
+          "user-agent": "AlyceAgent/0.1"
+        },
+        lookup: (_hostname, _options, callback) => {
+          callback(null, target.address, target.family);
+        }
+      },
+      (response) => {
+        const chunks: Buffer[] = [];
+
+        response.on("error", reject);
+
+        response.on("data", (chunk: Buffer | string) => {
+          chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
+        });
+
+        response.on("end", () => {
+          const body = Buffer.concat(chunks).toString("utf8");
+          resolve({
+            url: target.url,
+            status: response.statusCode ?? 0,
+            statusText: response.statusMessage ?? "",
+            headers: createHeaderLookup(response.headers),
+            text: async () => body
+          });
+        });
+      }
+    );
+
+    request.on("error", reject);
+    request.end();
+  });
+}
+
+function createHeaderLookup(headers: IncomingHttpHeaders) {
+  return {
+    get: (name: string) => {
+      const value = headers[name.toLowerCase()];
+      if (Array.isArray(value)) {
+        return value.join(", ");
+      }
+
+      return value ?? null;
+    }
+  };
+}
+
+function toPublicIpVersion(ipVersion: number): 4 | 6 {
+  if (ipVersion === 4 || ipVersion === 6) {
+    return ipVersion;
+  }
+
+  throw new Error(`Invalid IP version: ${ipVersion}`);
 }
 
 function normalizeHostname(hostname: string): string {

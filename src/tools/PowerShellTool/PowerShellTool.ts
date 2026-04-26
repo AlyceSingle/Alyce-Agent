@@ -2,6 +2,7 @@ import { spawn } from "node:child_process";
 import { z } from "zod";
 import { TurnInterruptedError, getAbortReason, throwIfAborted } from "../../core/abort.js";
 import { resolvePathFromInput, toWorkspaceRelative } from "../internal/pathSandbox.js";
+import { shouldSpawnDetachedProcessGroup, terminateProcessTree } from "../internal/processTree.js";
 import { truncate } from "../internal/values.js";
 import type { ToolExecutionContext } from "../types.js";
 import {
@@ -145,6 +146,7 @@ function runPowerShellCommand(
     const child = spawn(executable, ["-NoProfile", "-Command", command], {
       cwd,
       env: process.env,
+      detached: shouldSpawnDetachedProcessGroup(),
       windowsHide: true
     });
 
@@ -188,7 +190,7 @@ function runPowerShellCommand(
     };
 
     const handleAbort = () => {
-      child.kill();
+      terminateProcessTree(child);
       finishReject(
         new TurnInterruptedError(
           getAbortReason(abortSignal) ?? "aborted",
@@ -206,7 +208,7 @@ function runPowerShellCommand(
 
     timer = setTimeout(() => {
       timedOut = true;
-      child.kill();
+      terminateProcessTree(child);
     }, timeoutMs);
 
     child.stdout.on("data", (chunk: Buffer | string) => {

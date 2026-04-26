@@ -1,5 +1,6 @@
 import { promises as fs } from "node:fs";
 import type { z } from "zod";
+import { throwIfAborted } from "../../core/abort.js";
 import { resolvePathFromInput, toWorkspaceRelative } from "../internal/pathSandbox.js";
 import type { ToolExecutionContext } from "../types.js";
 import { FILE_EDIT_TOOL_NAME } from "./constants.js";
@@ -58,6 +59,8 @@ export async function executeFileEdit(
   if (!approved) {
     throw new Error("User rejected Edit tool request");
   }
+
+  throwIfAborted(context.abortSignal);
 
   await context.captureFileBeforeWrite(fullFilePath);
   await fs.writeFile(fullFilePath, patchResult.updatedFile, "utf8");

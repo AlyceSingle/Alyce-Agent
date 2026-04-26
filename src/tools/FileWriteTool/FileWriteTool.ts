@@ -1,6 +1,7 @@
 import { promises as fs } from "node:fs";
 import path from "node:path";
 import { z } from "zod";
+import { throwIfAborted } from "../../core/abort.js";
 import { resolvePathFromInput, toWorkspaceRelative } from "../internal/pathSandbox.js";
 import type { ToolExecutionContext } from "../types.js";
 import { FILE_WRITE_TOOL_NAME, getWriteToolDescription } from "./prompt.js";
@@ -47,6 +48,8 @@ export async function executeFileWrite(
   if (!approved) {
     throw new Error("User rejected Write tool request");
   }
+
+  throwIfAborted(context.abortSignal);
 
   // 写入前确保父目录存在，兼容创建新文件场景。
   await context.captureFileBeforeWrite(fullFilePath);
