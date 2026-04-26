@@ -4,7 +4,7 @@
 
 # Getting Started
 
-Alyce speaking. I will keep this practical. The goal here is to get Alyce-agent running without making you reverse-engineer the repository first.
+Alyce speaking. I will keep this practical. The goal here is to get Alyce-Agent running without making you reverse-engineer the repository first.
 
 ## Requirements
 

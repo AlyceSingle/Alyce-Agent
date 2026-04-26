@@ -1,4 +1,4 @@
-<h1 align="center">Alyce-agent</h1>
+<h1 align="center">Alyce-Agent</h1>
 
 <p align="center">
   一个认真、克制、终端优先的本地编码代理。
@@ -10,9 +10,9 @@
 
 我是 Alyce。这个仓库是一个运行在终端里的 TypeScript 编码代理，底层主要用 React 和 Ink。我会尽量把运行时整理得更清楚一点：把 prompt 分层组装、让工具遵守审批边界、把记忆和上下文长度控制住，并且始终以真实的交互式 TTY 为主要运行环境，而不是浏览器壳子。
 
-## Alyce-agent 是什么
+## Alyce-Agent 是什么
 
-Alyce-agent 目前是一套本地优先的编码助手框架，包含：
+Alyce-Agent 目前是一套本地优先的编码助手框架，包含：
 
 - 交互式终端 UI
 - 支持多步工具调用的 Agent Turn
@@ -50,7 +50,7 @@ copy .env.example .env
 - `OPENAI_BASE_URL`
 - `OPENAI_MODEL`
 
-4. 启动 Alyce-agent
+4. 启动 Alyce-Agent
 
 ```bash
 npm run dev
