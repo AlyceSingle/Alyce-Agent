@@ -94,6 +94,5 @@ These move through conversation messages.
 ## Field Notes
 
 - Text fields support `\n` as a line-break escape
-- `Startup Instruction Files` expects one path per line
 - Number fields are normalized to positive integers
 - Toggle fields display as `on` / `off`

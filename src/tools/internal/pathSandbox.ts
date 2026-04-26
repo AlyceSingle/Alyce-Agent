@@ -31,8 +31,9 @@ export function resolveAllowedPath(
   maybeRelative: string,
   baseDirectory: string
 ): string {
-  void allowedRoots;
-  return path.resolve(baseDirectory, expandHomePath(maybeRelative));
+  const resolvedPath = path.resolve(baseDirectory, expandHomePath(maybeRelative));
+  assertPathAllowed(allowedRoots, resolvedPath);
+  return resolvedPath;
 }
 
 export function resolvePathFromInput(
@@ -48,8 +49,9 @@ export function resolvePathFromInput(
   const expandedInput = expandHomePath(normalizedInput);
 
   if (path.isAbsolute(expandedInput)) {
-    void allowedRoots;
-    return path.resolve(expandedInput);
+    const resolvedPath = path.resolve(expandedInput);
+    assertPathAllowed(allowedRoots, resolvedPath);
+    return resolvedPath;
   }
 
   return resolveAllowedPath(allowedRoots, expandedInput, workspaceRoot);
@@ -81,5 +83,16 @@ function expandHomePath(inputPath: string): string {
   }
 
   return trimmedPath;
+}
+
+function assertPathAllowed(allowedRoots: readonly string[], absolutePath: string) {
+  if (isPathAllowed(allowedRoots, absolutePath)) {
+    return;
+  }
+
+  const normalizedRoots = normalizeAllowedRoots(allowedRoots);
+  const rootsLabel =
+    normalizedRoots.length > 0 ? normalizedRoots.join(", ") : "(no allowed roots configured)";
+  throw new Error(`Path is outside the allowed roots: ${absolutePath}. Allowed roots: ${rootsLabel}`);
 }
 

@@ -19,7 +19,7 @@ type EditableConfig = ConnectionConfig & SessionSettings;
 type FieldDefinition = {
   key: keyof EditableConfig;
   label: string;
-  type: "text" | "number" | "toggle" | "select" | "path-list";
+  type: "text" | "number" | "toggle" | "select";
   section: SettingsSection;
   options?: string[];
   secret?: boolean;
@@ -43,7 +43,7 @@ const FIELD_DEFINITIONS: FieldDefinition[] = [
   { key: "autoSummaryEnabled", label: "Auto Summary", type: "toggle", section: "session" },
   {
     key: "messageTimestampsEnabled",
-    label: "Message Timestamps",
+    label: "Current System Time",
     type: "toggle",
     section: "session"
   },
@@ -72,12 +72,6 @@ const FIELD_DEFINITIONS: FieldDefinition[] = [
     label: "Append Prompt",
     type: "text",
     section: "session"
-  },
-  {
-    key: "startupInstructionFiles",
-    label: "Startup Instruction Files",
-    type: "path-list",
-    section: "session"
   }
 ];
 
@@ -105,10 +99,6 @@ function getFieldValue(config: EditableConfig, field: FieldDefinition): string {
 
   if (field.type === "select") {
     return String(value ?? "");
-  }
-
-  if (field.type === "path-list") {
-    return encodeTextValue(Array.isArray(value) ? value.join("\n") : undefined);
   }
 
   return encodeTextValue(typeof value === "string" ? value : undefined);
@@ -450,10 +440,8 @@ export function SettingsDialog(props: {
             <Text color={terminalUiTheme.colors.subtle} wrap="truncate-end">
               {currentField.section === "connection"
                 ? "Text fields accept \\n for line breaks. Press P to switch the connection save scope."
-                : currentField.type === "text" || currentField.type === "path-list"
-                  ? currentField.type === "path-list"
-                    ? "Use \\n to separate file paths. Paths are normalized and deduplicated when saved."
-                    : "Text fields accept \\n for line breaks."
+                : currentField.type === "text"
+                  ? "Text fields accept \\n for line breaks."
                   : currentField.type === "number"
                     ? "Number fields are persisted as positive integers."
                     : "Toggle or cycle this field with Enter. Not set is saved as an explicit clear value."}
@@ -514,17 +502,6 @@ export function SettingsDialog(props: {
           return {
             ...current,
             [field.key]: draftValue.trim().toLowerCase() === "on"
-          };
-        }
-
-        if (field.type === "path-list") {
-          const decoded = decodeTextValue(draftValue) ?? "";
-          return {
-            ...current,
-            [field.key]: decoded
-              .split(/\r?\n/)
-              .map((entry) => entry.trim())
-              .filter((entry, index, entries) => entry.length > 0 && entries.indexOf(entry) === index)
           };
         }
 

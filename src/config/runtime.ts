@@ -48,7 +48,6 @@ export interface SessionSettings extends PromptOverrideConfig {
   messageTimestampsEnabled: boolean;
   conversationCompactionEnabled: boolean;
   additionalDirectories: string[];
-  startupInstructionFiles: string[];
 }
 
 export type ConnectionConfigSource = "default" | "user" | "project" | "env" | "cli";
@@ -119,9 +118,11 @@ const SessionSettingsFileSchema = z
     aiPersonalityPrompt: z.string().optional(),
     appendSystemPrompt: z.string().optional(),
     additionalDirectories: z.array(z.string()).optional(),
+    // Accept and discard the removed key so older settings files keep loading cleanly.
     startupInstructionFiles: z.array(z.string()).optional()
   })
-  .strict();
+  .strict()
+  .transform(({ startupInstructionFiles: _removedStartupInstructionFiles, ...settings }) => settings);
 
 export async function loadRuntimeConfig(
   argv: string[],
@@ -203,9 +204,9 @@ export function buildConnectionConfigState(
   const env = compactObject(layers.env ?? {});
   const cli = compactObject(layers.cli ?? {});
   const orderedLayers: Array<SourceLayer<ConnectionConfig, ConnectionConfigSource>> = [
-    { source: "env", values: env },
-    { source: "user", values: user },
     { source: "project", values: project },
+    { source: "user", values: user },
+    { source: "env", values: env },
     { source: "cli", values: cli }
   ];
   const effective = normalizeConnectionConfig(mergeLayers(orderedLayers));
@@ -499,11 +500,7 @@ function normalizeSessionSettings(
     personaPreset: resolvePersonaPreset(normalizeOptionalText(input.personaPreset)),
     aiPersonalityPrompt: normalizeOptionalText(input.aiPersonalityPrompt),
     appendSystemPrompt: normalizeOptionalText(input.appendSystemPrompt),
-    additionalDirectories: normalizeAdditionalDirectories(input.additionalDirectories, workspaceRoot),
-    startupInstructionFiles: normalizeStartupInstructionFiles(
-      input.startupInstructionFiles,
-      workspaceRoot
-    )
+    additionalDirectories: normalizeAdditionalDirectories(input.additionalDirectories, workspaceRoot)
   };
 }
 
@@ -542,10 +539,6 @@ function serializeSessionSettings(
     additionalDirectories:
       "additionalDirectories" in settings
         ? normalizeAdditionalDirectories(settings.additionalDirectories, workspaceRoot)
-        : undefined,
-    startupInstructionFiles:
-      "startupInstructionFiles" in settings
-        ? normalizeStartupInstructionFiles(settings.startupInstructionFiles, workspaceRoot)
         : undefined
   });
 }
@@ -683,27 +676,6 @@ export function normalizeAdditionalDirectories(
   return [...deduped];
 }
 
-export function normalizeStartupInstructionFiles(
-  value: string[] | undefined,
-  workspaceRoot: string
-): string[] {
-  if (!value || value.length === 0) {
-    return [];
-  }
-
-  const deduped = new Set<string>();
-  for (const filePath of value) {
-    const normalized = normalizeOptionalText(filePath);
-    if (!normalized) {
-      continue;
-    }
-
-    deduped.add(resolveDirectoryInput(normalized, workspaceRoot));
-  }
-
-  return [...deduped];
-}
-
 export function resolveDirectoryInput(directory: string, workspaceRoot: string): string {
   const normalized = directory.trim();
   if (normalized === "~") {
@@ -745,11 +717,7 @@ function resolveConnectionSaveTarget(options: {
     return options.preferred;
   }
 
-  // 如果项目里已经存在连接配置，默认继续写回 project，避免把团队级配置悄悄写进用户目录。
-  if (Object.keys(options.project).length > 0) {
-    return "project";
-  }
-
+  // 连接配置通常包含敏感信息，默认优先写入 user 层，避免把密钥写回仓库目录。
   if (Object.keys(options.user).length > 0) {
     return "user";
   }

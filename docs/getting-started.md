@@ -53,8 +53,7 @@ npm start
 1. Press `Ctrl+X` to open settings
 2. Check API key, base URL, and model
 3. Add external directories if you need files outside the workspace
-4. Fill `Startup Instruction Files` if you want rules or persona docs loaded automatically
-5. Enable `Message Timestamps` if the model should see per-message system time
+4. Enable `Current System Time` if the model should know the current local time during each reply
 
 ## Useful First Commands
 

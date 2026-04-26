@@ -94,6 +94,5 @@
 ## 字段说明
 
 - 文本字段支持使用 `\n` 表示换行
-- `Startup Instruction Files` 需要每行一个路径
 - 数字字段会被归一化成正整数
 - toggle 字段显示为 `on / off`

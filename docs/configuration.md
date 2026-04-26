@@ -89,37 +89,18 @@ The settings dialog lets you switch the target with `P`.
 - `messageTimestampsEnabled`
 - `conversationCompactionEnabled`
 
-### Paths and Startup Documents
+### Paths
 
 - `additionalDirectories`
-- `startupInstructionFiles`
-
-## `startupInstructionFiles`
-
-This field loads text documents automatically:
-
-- at session start
-- after settings changes
-- after `/clear`
-
-They are injected as a dedicated prompt section, not stored as normal memory.
-
-Good candidates:
-
-- project rules
-- persona sheets
-- long-lived workflow instructions
-- stable background reference notes
 
 ## `messageTimestampsEnabled`
 
 When enabled:
 
-- user messages carry their submission time
-- assistant messages carry their generation time
-- the current reply also receives the current local system time
+- the request includes a dedicated `# Current System Time` system block
+- the block contains the current local system date and time for that reply only
 
-These timestamps are injected at API request time, not shown directly in the visible transcript.
+This is injected at API request time, not shown directly in the visible transcript, and not mixed into prior dialogue text.
 
 ## `conversationCompactionEnabled`
 

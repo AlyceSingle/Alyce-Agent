@@ -41,7 +41,7 @@
 职责：
 
 - 持有会话消息链
-- 合并配置、记忆、启动文档和压缩逻辑
+- 合并配置、记忆和压缩逻辑
 - 解析 slash 命令
 - 生成请求预览
 
@@ -72,16 +72,14 @@
 #### `src/core/conversation/`
 
 - `conversationCompactor.ts`
-- `messageMetadata.ts`
 
-负责长对话压缩和逐条消息时间元数据。
+负责长对话压缩。
 
 #### `src/core/prompt/`
 
 - `builder.ts`
 - `sections.ts`
 - `sectionResolver.ts`
-- `startupInstructions.ts`
 - `fragments/`
 
 负责 system prompt 构建和动态上下文注入。

@@ -10,7 +10,7 @@ function hasTool(runtimeContext: PromptRuntimeContext, toolName: string) {
 function getIdentitySection() {
   return [
     `# Identity`,
-    `You are "Alyce", an interactive terminal coding agent that helps users with software engineering tasks.`,
+    `You are "Alyce", an interactive terminal assistant that helps users complete various tasks.`,
     `Use the available tools to complete tasks, make practical progress, and report outcomes faithfully.`
   ].join("\n");
 }

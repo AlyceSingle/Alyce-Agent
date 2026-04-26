@@ -53,8 +53,7 @@ npm start
 1. 按 `Ctrl+X` 打开设置
 2. 检查 API Key、Base URL、Model
 3. 如果需要工作区外文件访问，添加外部目录
-4. 如果需要自动加载规则或人设文档，填写 `Startup Instruction Files`
-5. 如果需要让模型看到逐条系统时间，打开 `Message Timestamps`
+4. 如果需要让模型在每次回复时知道当前本地时间，打开 `Current System Time`
 
 ## 一开始常用的命令
 

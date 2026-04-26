@@ -41,7 +41,7 @@ Responsibilities:
 Responsibilities:
 
 - hold the session message chain
-- merge config, memory, startup documents, and compaction
+- merge config, memory, and compaction
 - parse slash commands
 - build request previews
 
@@ -72,16 +72,14 @@ Owns memory collection, persistence, and summary refresh.
 #### `src/core/conversation/`
 
 - `conversationCompactor.ts`
-- `messageMetadata.ts`
 
-Owns long-conversation compaction and per-message timestamp metadata.
+Owns long-conversation compaction.
 
 #### `src/core/prompt/`
 
 - `builder.ts`
 - `sections.ts`
 - `sectionResolver.ts`
-- `startupInstructions.ts`
 - `fragments/`
 
 Owns system prompt construction and injection of dynamic context.

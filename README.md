@@ -25,8 +25,8 @@ Alyce-Agent is a local coding assistant framework with:
 
 - Terminal-native UI: React + Ink, including dialogs, message viewer, and settings
 - Tool loop: the model can call multiple tools in one turn before returning a final answer
-- Prompt engineering: static rules, dynamic environment, persona overlays, and startup instruction files are assembled into one system prompt
-- Context control: message timestamps, startup documents, memory injection, auto-summary, and compaction work together to keep prompts useful instead of bloated
+- Prompt engineering: static rules, dynamic environment, and persona overlays are assembled into one system prompt
+- Context control: message timestamps, memory injection, auto-summary, and compaction work together to keep prompts useful instead of bloated
 - Safety rails: file access scope, approval gates, and pre-write snapshots are built into the runtime
 
 ## Quick Start

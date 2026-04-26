@@ -1,5 +1,4 @@
 import OpenAI from "openai";
-import type { SessionMessageTimestampMetadata } from "../conversation/messageMetadata.js";
 import { executeToolCall, TOOL_SCHEMAS, type ToolExecutionContext } from "../../tools.js";
 import { isTurnInterruptedError, throwIfAborted, toTurnInterruptedError } from "../abort.js";
 import { sendChatCompletion } from "../api/sendChatCompletion.js";
@@ -20,11 +19,6 @@ export interface AgentTurnOptions {
   onToolCallStart?: (toolName: string, rawArguments: string) => void;
   onToolCallResult?: (toolName: string, result: string) => void;
   messageTimestampsEnabled?: boolean;
-  getMessageTimestampMetadata?: (
-    message: MessageParam,
-    index: number
-  ) => SessionMessageTimestampMetadata | undefined;
-  onAssistantMessageCreated?: (message: MessageParam) => void;
 }
 
 export async function runAgentTurn(
@@ -46,7 +40,6 @@ export async function runAgentTurn(
         temperature: 0.2,
         gcliGeminiCompat: options.gcliGeminiCompat,
         messageTimestampsEnabled: options.messageTimestampsEnabled,
-        getMessageTimestampMetadata: options.getMessageTimestampMetadata,
         requestPatches: options.requestPatches,
         abortSignal: options.abortSignal
       });
@@ -77,7 +70,6 @@ export async function runAgentTurn(
       tool_calls: next.tool_calls
     };
     messages.push(assistantMessage);
-    options.onAssistantMessageCreated?.(assistantMessage);
 
     if (toolCalls.length === 0) {
       return (next.content ?? "").trim() || "(No text output from model)";

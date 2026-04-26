@@ -6,7 +6,6 @@ import {
   buildSessionSettingsState,
   loadRuntimeConfig,
   normalizeAdditionalDirectories,
-  normalizeStartupInstructionFiles,
   resolveDirectoryInput,
   saveConnectionConfig,
   saveUserSessionSettings,
@@ -18,13 +17,11 @@ import {
   type SessionSettingsState
 } from "../config/runtime.js";
 import { ConversationCompactor, DEFAULT_CONVERSATION_COMPACTION_CONFIG } from "../core/conversation/conversationCompactor.js";
-import type { SessionMessageTimestampMetadata } from "../core/conversation/messageMetadata.js";
 import { MemoryService } from "../core/memory/memoryService.js";
 import { FileHistoryManager, type FileHistoryRestoreResult } from "../core/file-history/fileHistoryManager.js";
 import type { MemorySnapshot } from "../core/memory/types.js";
 import { buildEffectiveSystemPrompt } from "../core/prompt/builder.js";
 import { PromptSectionResolver } from "../core/prompt/sectionResolver.js";
-import { loadStartupInstructions, type StartupInstruction } from "../core/prompt/startupInstructions.js";
 import { formatCurrentDateLabel, formatSystemDateTime } from "../core/time/systemTime.js";
 import { getRegisteredToolNames } from "../tools/registry.js";
 import type {
@@ -65,20 +62,11 @@ export interface SessionRuntime {
   clearConversation: () => Promise<void>;
   clearPromptCache: () => void;
   buildContextPreview: (nextUserInput?: string) => string;
-  setMessageTimestampMetadata: (
-    message: SessionMessage,
-    metadata: SessionMessageTimestampMetadata
-  ) => void;
-  getMessageTimestampMetadata: (
-    message: SessionMessage
-  ) => SessionMessageTimestampMetadata | undefined;
   maybeCompactConversation: (options: {
     client: OpenAI;
     model: string;
     abortSignal?: AbortSignal;
   }) => Promise<boolean>;
-  getLoadedStartupInstructionFiles: () => string[];
-  consumeStartupInstructionWarnings: () => string[];
   beginTurn: (turnId: string) => void;
   hasTrackedFileChanges: (turnId: string) => boolean;
   restoreFilesForTurn: (turnId: string) => Promise<FileHistoryRestoreResult>;
@@ -171,9 +159,6 @@ export async function createSessionRuntime(
   let sessionAdditionalDirectories: string[] = [];
   let connectionSaveTarget = connectionState.saveTarget;
   let client: OpenAI | null = createClientFromConnection(connection);
-  let startupInstructions: StartupInstruction[] = [];
-  let startupInstructionWarnings: string[] = [];
-  const messageTimestampMetadata = new WeakMap<SessionMessage, SessionMessageTimestampMetadata>();
 
   const promptResolver = new PromptSectionResolver();
   const fileHistoryManager = new FileHistoryManager();
@@ -189,15 +174,6 @@ export async function createSessionRuntime(
 
   const getAllowedRootsSnapshot = () =>
     resolveAllowedRoots(config.paths.workspaceRoot, settings, sessionAdditionalDirectories);
-  const reloadStartupInstructions = async () => {
-    const result = await loadStartupInstructions({
-      filePaths: settings.startupInstructionFiles,
-      allowedRoots: getAllowedRootsSnapshot()
-    });
-    startupInstructions = result.instructions;
-    startupInstructionWarnings = result.warnings;
-  };
-  await reloadStartupInstructions();
 
   // system prompt 始终由当前模型、环境、工具能力和记忆视图重新生成。
   const buildSystemPrompt = async () =>
@@ -213,8 +189,7 @@ export async function createSessionRuntime(
         currentDate: getCurrentDateLabel(),
         platform: process.platform,
         availableTools: getRegisteredToolNames(),
-        memory: await memoryService.getPromptContext(),
-        startupInstructions
+        memory: await memoryService.getPromptContext()
       },
       settings,
       promptResolver
@@ -308,7 +283,6 @@ export async function createSessionRuntime(
         directories,
         config.paths.workspaceRoot
       );
-      await reloadStartupInstructions();
       await resetSystemMessage();
     },
     requireClient: () => {
@@ -346,7 +320,6 @@ export async function createSessionRuntime(
       memoryService.setAutoSummaryEnabled(settings.autoSummaryEnabled);
       promptResolver.clearSessionCache();
       await persistSettings();
-      await reloadStartupInstructions();
       await resetSystemMessage();
     },
     resetSystemMessage,
@@ -357,7 +330,6 @@ export async function createSessionRuntime(
       promptResolver.clearSessionCache();
       fileHistoryManager.clearAll();
       messages.splice(1);
-      await reloadStartupInstructions();
       await resetSystemMessage();
     },
     clearPromptCache: () => promptResolver.clearSessionCache(),
@@ -375,24 +347,8 @@ export async function createSessionRuntime(
         currentModel: connection.model,
         messages: previewUserMessage ? [...messages, previewUserMessage] : messages,
         messageTimestampsEnabled: settings.messageTimestampsEnabled,
-        currentRequestTimestamp: previewTimestamp,
-        getMessageTimestampMetadata: (message) => {
-          if (previewUserMessage && message === previewUserMessage) {
-            return {
-              submittedAt: previewTimestamp
-            };
-          }
-
-          return messageTimestampMetadata.get(message as SessionMessage);
-        }
+        currentRequestTimestamp: previewTimestamp
       });
-    },
-    setMessageTimestampMetadata: (message, metadata) => {
-      messageTimestampMetadata.set(message, { ...metadata });
-    },
-    getMessageTimestampMetadata: (message) => {
-      const metadata = messageTimestampMetadata.get(message);
-      return metadata ? { ...metadata } : undefined;
     },
     maybeCompactConversation: async ({ client: compactClient, model, abortSignal }) => {
       if (!settings.conversationCompactionEnabled) {
@@ -405,12 +361,6 @@ export async function createSessionRuntime(
         messages,
         abortSignal
       });
-    },
-    getLoadedStartupInstructionFiles: () => startupInstructions.map((instruction) => instruction.path),
-    consumeStartupInstructionWarnings: () => {
-      const warnings = [...startupInstructionWarnings];
-      startupInstructionWarnings = [];
-      return warnings;
     },
     beginTurn: (turnId) => {
       fileHistoryManager.beginTurn(turnId);
@@ -572,13 +522,6 @@ function normalizeSettingsPatch(
   if ("additionalDirectories" in patch) {
     normalized.additionalDirectories = normalizeAdditionalDirectories(
       patch.additionalDirectories,
-      workspaceRoot
-    );
-  }
-
-  if ("startupInstructionFiles" in patch) {
-    normalized.startupInstructionFiles = normalizeStartupInstructionFiles(
-      patch.startupInstructionFiles,
       workspaceRoot
     );
   }

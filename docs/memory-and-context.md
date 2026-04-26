@@ -11,28 +11,11 @@ Alyce speaking. This file explains how the current runtime remembers things, and
 The active context is not a single blob. It is assembled from several layers:
 
 1. the main system prompt
-2. startup instruction files
-3. live session messages
-4. session memory
-5. persistent memory
-6. auto summary
-7. conversation compaction summary
-
-## Startup Instruction Files
-
-Source:
-
-- `startupInstructionFiles`
-
-Behavior:
-
-- loaded automatically at session start
-- reloaded after settings changes
-- reloaded after `/clear`
-- injected as a dedicated prompt section
-- not written into normal memory storage
-
-This layer is best for stable, long-lived instructions that should always be present.
+2. live session messages
+3. session memory
+4. persistent memory
+5. auto summary
+6. conversation compaction summary
 
 ## Session Memory
 
@@ -89,11 +72,10 @@ The goal is not to remember everything verbatim. The goal is to keep the useful 
 
 If `messageTimestampsEnabled` is on:
 
-- user messages include their submission time
-- assistant messages include their generation time
-- the current response also gets the current local system time
+- the request gets a dedicated `# Current System Time` system block
+- the block contains the current local system date and time for the reply being generated
 
-This is injected at API request time so the visible terminal transcript stays clean.
+This is injected at API request time so the visible terminal transcript stays clean and prior messages are not polluted with timestamp text.
 
 ## How to Inspect the Real Request
 
@@ -106,13 +88,6 @@ If you need to verify whether something is truly reaching the model, use:
 That shows the next-turn payload after runtime shaping.
 
 ## Practical Guidance
-
-### Use startup instruction files for:
-
-- persona
-- project rules
-- stable workflow expectations
-- long-lived background notes
 
 ### Use `/remember` for:
 

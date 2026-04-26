@@ -34,6 +34,12 @@ import {
   GrepInputSchema
 } from "./GrepTool/GrepTool.js";
 import {
+  executeLSPTool,
+  LSPInputSchema,
+  LSP_TOOL_DESCRIPTION,
+  LSP_TOOL_NAME
+} from "./LSPTool/LSPTool.js";
+import {
   executePowerShellTool,
   POWERSHELL_TOOL_DESCRIPTION,
   POWERSHELL_TOOL_NAME,
@@ -96,6 +102,12 @@ export const REGISTERED_TOOLS: AgentTool[] = [
     description: GREP_TOOL_DESCRIPTION,
     inputSchema: GrepInputSchema,
     execute: (input, context) => executeGrepTool(input, context)
+  },
+  {
+    name: LSP_TOOL_NAME,
+    description: LSP_TOOL_DESCRIPTION,
+    inputSchema: LSPInputSchema,
+    execute: (input, context) => executeLSPTool(input, context)
   },
   {
     name: TODO_WRITE_TOOL_NAME,

@@ -89,37 +89,18 @@
 - `messageTimestampsEnabled`
 - `conversationCompactionEnabled`
 
-### 路径与启动文档
+### 路径
 
 - `additionalDirectories`
-- `startupInstructionFiles`
-
-## `startupInstructionFiles`
-
-这个字段会自动加载文本文件：
-
-- 会话启动时
-- 设置变更后
-- `/clear` 之后
-
-它们会作为独立 prompt section 注入，而不是作为普通 memory 存储。
-
-适合放进去的内容：
-
-- 项目规则
-- 人设文档
-- 长期工作流说明
-- 稳定的背景参考资料
 
 ## `messageTimestampsEnabled`
 
 打开后：
 
-- 用户消息会携带提交时间
-- 助手消息会携带生成时间
-- 当前这次回复还会额外拿到当前本地系统时间
+- 请求里会额外注入一个独立的 `# Current System Time` system block
+- 这个 block 只包含当前这次回复对应的本地系统日期和时间
 
-这些时间是在 API 请求阶段注入的，不会直接显示在可见 transcript 里。
+这些信息是在 API 请求阶段临时注入的，不会直接显示在可见 transcript 里，也不会混进历史对话正文。
 
 ## `conversationCompactionEnabled`
 

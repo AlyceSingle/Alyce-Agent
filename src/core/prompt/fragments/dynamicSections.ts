@@ -21,6 +21,10 @@ function getSessionSpecificGuidanceSection(runtimeContext: PromptRuntimeContext)
     items.push("Use Grep for targeted regex searches through file contents instead of shelling out to rg.");
   }
 
+  if (hasTool(runtimeContext, "LSP")) {
+    items.push("Use LSP for TypeScript/JavaScript symbol-level navigation before falling back to text search.");
+  }
+
   if (hasTool(runtimeContext, "Edit")) {
     items.push("Prefer Edit for minimal diffs; use Write only when a new file or full replacement is actually intended.");
   }
@@ -85,28 +89,6 @@ function getMemorySection(runtimeContext: PromptRuntimeContext) {
   return lines.join("\n");
 }
 
-function getStartupInstructionsSection(runtimeContext: PromptRuntimeContext) {
-  const instructions = runtimeContext.startupInstructions ?? [];
-  if (instructions.length === 0) {
-    return null;
-  }
-
-  const lines: string[] = [
-    "# Startup Instructions",
-    "These files were auto-loaded at session start. Treat them as durable instructions, but prefer current files and tool outputs when they conflict."
-  ];
-
-  for (const instruction of instructions) {
-    lines.push("", `## ${instruction.path}`);
-    if (instruction.truncated) {
-      lines.push("_This file was truncated to fit the prompt budget._", "");
-    }
-    lines.push(instruction.content);
-  }
-
-  return lines.join("\n");
-}
-
 function getRuntimeEnvironmentSection(runtimeContext: PromptRuntimeContext) {
   return promptFormatting.buildSection("Environment", [
     `Date: ${runtimeContext.currentDate}`,
@@ -141,9 +123,6 @@ export const DYNAMIC_PROMPT_SECTIONS: PromptSection[] = [
     getSessionSpecificGuidanceSection(runtimeContext)
   ),
   turnPromptSection("memory", (runtimeContext) => getMemorySection(runtimeContext)),
-  turnPromptSection("startup_instructions", (runtimeContext) =>
-    getStartupInstructionsSection(runtimeContext)
-  ),
   turnPromptSection("environment", (runtimeContext) => getRuntimeEnvironmentSection(runtimeContext)),
   sessionPromptSection("language", (_runtimeContext, options) => getLanguageSection(options)),
   sessionPromptSection("summarize_tool_results", () => getToolResultSummaryReminderSection())

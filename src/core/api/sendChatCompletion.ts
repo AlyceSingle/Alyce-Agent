@@ -1,5 +1,4 @@
 import OpenAI from "openai";
-import type { SessionMessageTimestampMetadata } from "../conversation/messageMetadata.js";
 import { formatSystemDateTime } from "../time/systemTime.js";
 import { applyRequestPatchOperations, type RequestPatchOperation } from "./requestPatch.js";
 
@@ -16,10 +15,6 @@ export interface SendChatCompletionOptions {
   gcliGeminiCompat?: boolean;
   messageTimestampsEnabled?: boolean;
   currentRequestTimestamp?: string;
-  getMessageTimestampMetadata?: (
-    message: MessageParam,
-    index: number
-  ) => SessionMessageTimestampMetadata | undefined;
   requestPatches?: RequestPatchOperation[];
   abortSignal?: AbortSignal;
 }
@@ -30,44 +25,32 @@ function normalizeMessagesForApi(
     gcliGeminiCompat: boolean;
     messageTimestampsEnabled: boolean;
     currentRequestTimestamp?: string;
-    getMessageTimestampMetadata?: (
-      message: MessageParam,
-      index: number
-    ) => SessionMessageTimestampMetadata | undefined;
   }
 ): MessageParam[] {
-  const normalizedMessages = messages.map((message, index) => {
-    const timestampMetadata = options.messageTimestampsEnabled
-      ? options.getMessageTimestampMetadata?.(message, index)
-      : undefined;
-    const currentTimestampLabel = getTimestampPrefix(message.role, timestampMetadata);
-    const messageWithTimestamp = currentTimestampLabel
-      ? prependContentPrefix(message, currentTimestampLabel)
-      : message;
-
+  const normalizedMessages = messages.map((message) => {
     if (
-      messageWithTimestamp.role === "tool" &&
-      typeof messageWithTimestamp.content === "string" &&
-      messageWithTimestamp.content.trim().length === 0
+      message.role === "tool" &&
+      typeof message.content === "string" &&
+      message.content.trim().length === 0
     ) {
       return {
-        ...messageWithTimestamp,
+        ...message,
         content: "(tool returned empty output)"
       };
     }
 
     if (
-      messageWithTimestamp.role === "assistant" &&
-      messageWithTimestamp.tool_calls &&
-      isNullishOrEmptyString(messageWithTimestamp.content)
+      message.role === "assistant" &&
+      message.tool_calls &&
+      isNullishOrEmptyString(message.content)
     ) {
       return {
-        ...messageWithTimestamp,
+        ...message,
         content: options.gcliGeminiCompat ? "(assistant requested a tool call)" : ""
       };
     }
 
-    return messageWithTimestamp;
+    return message;
   });
 
   if (!options.messageTimestampsEnabled) {
@@ -79,7 +62,7 @@ function normalizeMessagesForApi(
     role: "system",
     content: [
       "# Current System Time",
-      `The current local system date and time for the response you are generating right now is ${currentRequestTimestamp}.`
+      `Current local system date and time: ${currentRequestTimestamp}`
     ].join("\n")
   };
 
@@ -103,8 +86,7 @@ export function buildChatCompletionRequest(
     messages: normalizeMessagesForApi(options.messages, {
       gcliGeminiCompat: options.gcliGeminiCompat ?? false,
       messageTimestampsEnabled: options.messageTimestampsEnabled ?? false,
-      currentRequestTimestamp: options.currentRequestTimestamp,
-      getMessageTimestampMetadata: options.getMessageTimestampMetadata
+      currentRequestTimestamp: options.currentRequestTimestamp
     }),
     tools: options.tools,
     tool_choice: options.toolChoice ?? "auto",
@@ -122,43 +104,6 @@ export async function sendChatCompletion(
   return client.chat.completions.create(patchedRequest, {
     signal: options.abortSignal
   });
-}
-
-function prependContentPrefix(message: MessageParam, prefix: string): MessageParam {
-  if ("content" in message && (typeof message.content === "string" || message.content == null)) {
-    if (message.role === "tool" && typeof message.content === "string" && message.content.trim().length === 0) {
-      return {
-        ...message,
-        content: prefix
-      };
-    }
-
-    return {
-      ...message,
-      content: `${prefix}\n\n${message.content ?? ""}`.trimEnd()
-    };
-  }
-
-  return message;
-}
-
-function getTimestampPrefix(
-  role: MessageParam["role"],
-  metadata: SessionMessageTimestampMetadata | undefined
-) {
-  if (!metadata) {
-    return undefined;
-  }
-
-  if (role === "user" && metadata.submittedAt) {
-    return `User message timestamp: ${metadata.submittedAt}`;
-  }
-
-  if (role === "assistant" && metadata.generatedAt) {
-    return `Assistant message timestamp: ${metadata.generatedAt}`;
-  }
-
-  return undefined;
 }
 
 function isNullishOrEmptyString(value: unknown): boolean {

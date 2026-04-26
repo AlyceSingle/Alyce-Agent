@@ -17,7 +17,7 @@ Alyce speaking. I split the project docs into focused files so you do not have t
 - [Configuration](configuration.md)
   Runtime files, environment variables, and session settings
 - [Memory and Context](memory-and-context.md)
-  Startup instructions, memory layers, summary, and compaction
+  Memory layers, summary, and compaction
 
 ## Repository Docs
 

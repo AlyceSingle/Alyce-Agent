@@ -1,5 +1,4 @@
 import type { MemoryPromptContext } from "../memory/types.js";
-import type { StartupInstruction } from "./startupInstructions.js";
 
 // 提示词运行时上下文：由当前会话状态与环境信息组成。
 export interface PromptRuntimeContext {
@@ -10,7 +9,6 @@ export interface PromptRuntimeContext {
   platform: string;
   availableTools: string[];
   memory?: MemoryPromptContext;
-  startupInstructions?: StartupInstruction[];
 }
 
 // 提示词构建可选覆盖项：语言偏好、自定义行为覆盖、整段覆盖、追加指令。

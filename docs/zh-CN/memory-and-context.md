@@ -11,28 +11,11 @@
 当前活跃上下文不是一整块混在一起的内容，而是由多层组合出来的：
 
 1. 主 system prompt
-2. 启动指令文档
-3. 实时会话消息
-4. session memory
-5. persistent memory
-6. auto summary
-7. conversation compaction summary
-
-## 启动指令文档
-
-来源：
-
-- `startupInstructionFiles`
-
-行为：
-
-- 会话启动时自动加载
-- 设置变更后重新加载
-- `/clear` 之后重新加载
-- 作为独立 prompt section 注入
-- 不写入普通 memory 存储
-
-这层最适合承载稳定、长期、应始终存在的说明。
+2. 实时会话消息
+3. session memory
+4. persistent memory
+5. auto summary
+6. conversation compaction summary
 
 ## Session Memory
 
@@ -89,11 +72,10 @@
 
 如果打开 `messageTimestampsEnabled`：
 
-- 用户消息会带提交时间
-- 助手消息会带生成时间
-- 当前回复还会额外拿到当前本地系统时间
+- 请求里会多出一个独立的 `# Current System Time` system block
+- 这个 block 只包含当前这次回复对应的本地系统日期和时间
 
-这些信息是在 API 请求阶段注入的，所以终端里可见的 transcript 仍然保持整洁。
+这些信息是在 API 请求阶段注入的，所以终端里可见的 transcript 仍然保持整洁，历史消息正文也不会被时间说明污染。
 
 ## 如何检查真实请求
 
@@ -106,13 +88,6 @@
 它会展示经过运行时整形之后的下一轮 payload。
 
 ## 实际使用建议
-
-### 启动指令文档适合放：
-
-- 人设
-- 项目规则
-- 稳定的工作流要求
-- 长期背景说明
 
 ### `/remember` 适合放：
 
