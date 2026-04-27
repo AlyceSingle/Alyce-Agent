@@ -9,6 +9,7 @@ import { TodoPanel } from "../components/TodoPanel.js";
 import { ApprovalDialog } from "../components/ApprovalDialog.js";
 import { AskUserQuestionDialog } from "../components/AskUserQuestionDialog.js";
 import { SettingsDialog } from "../components/SettingsDialog.js";
+import { SessionPickerDialog } from "../components/SessionPickerDialog.js";
 import type { SessionController } from "../adapters/sessionController.js";
 import { useIsOverlayActive } from "../context/overlayContext.js";
 import { useKeybindings } from "../keybindings/useKeybindings.js";
@@ -337,6 +338,14 @@ export function AgentScreen(props: { controller: SessionController }) {
           await props.controller.saveConfig(connectionPatch, settingsPatch, connectionTarget);
         }}
         onCtrlCCaptureChange={setCtrlCCapture}
+      />
+    ) : activeDialog?.type === "session-picker" ? (
+      <SessionPickerDialog
+        sessions={activeDialog.sessions}
+        onSelect={(sessionId) => {
+          void props.controller.resumeSession(sessionId);
+        }}
+        onCancel={() => props.controller.closeDialog()}
       />
     ) : null;
 

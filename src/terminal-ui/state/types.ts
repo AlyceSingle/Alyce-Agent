@@ -11,6 +11,7 @@ import type {
   ToolApprovalRequest,
   ToolPermissionKind
 } from "../../tools/types.js";
+import type { SessionHistoryListItem } from "../../core/session-history/types.js";
 
 export type TerminalUiMessageKind =
   | "system"
@@ -61,9 +62,10 @@ export type ActiveDialog =
   | { type: "permission"; layer: "overlay"; request: ToolApprovalRequest }
   | { type: "question"; layer: "overlay"; request: AskUserQuestionRequest }
   | { type: "settings"; layer: "overlay"; section: SettingsSection; reason?: string }
+  | { type: "session-picker"; layer: "overlay"; sessions: SessionHistoryListItem[] }
   | { type: "reader"; layer: "modal"; messageId: string };
 
-export type TerminalUiOverlayId = "permission" | "question" | "settings";
+export type TerminalUiOverlayId = "permission" | "question" | "settings" | "session-picker";
 
 export interface TerminalUiState {
   workspaceRoot: string;

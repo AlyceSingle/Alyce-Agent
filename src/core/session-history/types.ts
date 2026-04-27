@@ -1,0 +1,104 @@
+import OpenAI from "openai";
+
+export const SESSION_HISTORY_SCHEMA_VERSION = 1;
+
+export type SessionId = string;
+export type SessionHistoryApiMessage = OpenAI.Chat.Completions.ChatCompletionMessageParam;
+
+export type SessionHistoryUiMessageKind =
+  | "system"
+  | "user"
+  | "assistant"
+  | "thinking"
+  | "tool"
+  | "error";
+
+export type SessionHistoryUiMessageBlockTone =
+  | "default"
+  | "muted"
+  | "info"
+  | "success"
+  | "warning"
+  | "danger";
+
+export type SessionHistoryUiMessageBlockStyle = "plain" | "code";
+
+export interface SessionHistoryUiMessageBlock {
+  label?: string;
+  content: string;
+  tone?: SessionHistoryUiMessageBlockTone;
+  style?: SessionHistoryUiMessageBlockStyle;
+}
+
+export interface SessionHistoryUiMessage {
+  id: string;
+  kind: SessionHistoryUiMessageKind;
+  title: string;
+  blocks: SessionHistoryUiMessageBlock[];
+  content: string;
+  preview: string;
+  metadata: string[];
+  createdAt: string;
+  isTruncated: boolean;
+}
+
+export type SessionHistoryEntry =
+  | {
+      type: "session-meta";
+      schemaVersion: number;
+      sessionId: SessionId;
+      workspaceRoot: string;
+      createdAt: string;
+    }
+  | {
+      type: "api-message";
+      sessionId: SessionId;
+      sequence: number;
+      timestamp: string;
+      message: SessionHistoryApiMessage;
+    }
+  | {
+      type: "ui-message";
+      sessionId: SessionId;
+      sequence: number;
+      timestamp: string;
+      message: SessionHistoryUiMessage;
+    }
+  | {
+      type: "session-title";
+      sessionId: SessionId;
+      sequence: number;
+      timestamp: string;
+      title: string;
+    };
+
+export interface LoadedSessionHistory {
+  sessionId: SessionId;
+  filePath: string;
+  workspaceRoot?: string;
+  createdAt: string;
+  updatedAt: string;
+  title: string;
+  messageCount: number;
+  lastSequence: number;
+  apiMessages: SessionHistoryApiMessage[];
+  uiMessages: SessionHistoryUiMessage[];
+}
+
+export interface SessionHistoryListItem {
+  sessionId: SessionId;
+  filePath: string;
+  workspaceRoot?: string;
+  createdAt: string;
+  updatedAt: string;
+  title: string;
+  messageCount: number;
+}
+
+export interface SessionResumePayload {
+  sessionId: SessionId;
+  title: string;
+  apiMessages: SessionHistoryApiMessage[];
+  uiMessages: SessionHistoryUiMessage[];
+  messageCount: number;
+}

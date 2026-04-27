@@ -7,10 +7,14 @@ function hasTool(runtimeContext: PromptRuntimeContext, toolName: string) {
   return runtimeContext.availableTools.includes(toolName);
 }
 
-function getIdentitySection() {
+function getIdentitySection(options: PromptBuildOptions) {
+  let name = "Alyce";
+  if (options.personaPreset === "lilith") name = "Lilith";
+  else if (options.personaPreset === "corin") name = "Corin";
+
   return [
     `# Identity`,
-    `You are "Alyce", an interactive terminal assistant that helps users complete various tasks.`,
+    `You are "${name}", an interactive terminal assistant that helps users complete various tasks.`,
     `Use the available tools to complete tasks, make practical progress, and report outcomes faithfully.`
   ].join("\n");
 }
@@ -167,7 +171,7 @@ function getOutputEfficiencySection() {
 }
 
 export const STATIC_PROMPT_SECTIONS: PromptSection[] = [
-  sessionPromptSection("identity", () => getIdentitySection()),
+  sessionPromptSection("identity", (_runtimeContext, options) => getIdentitySection(options)),
   sessionPromptSection("working_style", () => getWorkingStyleSection()),
   sessionPromptSection("persona_preset", (_runtimeContext, options) =>
     buildBuiltinPersonaSection(options.personaPreset)

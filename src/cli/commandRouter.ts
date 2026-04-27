@@ -5,6 +5,9 @@ export type ParsedCommand =
   | { type: "clear" }
   | { type: "exit" }
   | { type: "open-settings"; section: "connection" | "session" }
+  | { type: "open-session-picker" }
+  | { type: "resume-session"; query: string }
+  | { type: "sessions-list" }
   | { type: "command-error"; input: string; message: string }
   | { type: "remember"; note: string; persist: boolean }
   | { type: "memory-view" }
@@ -30,6 +33,27 @@ export function parseReplCommand(input: string): ParsedCommand {
 
   if (input === "/clear") {
     return { type: "clear" };
+  }
+
+  if (input === "/resume") {
+    return { type: "open-session-picker" };
+  }
+
+  if (input.startsWith("/resume ")) {
+    const query = input.slice(8).trim();
+    if (!query) {
+      return {
+        type: "command-error",
+        input,
+        message: "缺少要恢复的会话 ID 或搜索词。"
+      };
+    }
+
+    return { type: "resume-session", query };
+  }
+
+  if (input === "/sessions") {
+    return { type: "sessions-list" };
   }
 
   if (input === "/exit") {

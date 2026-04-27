@@ -18,6 +18,8 @@
   运行时配置文件、环境变量、会话设置
 - [记忆与上下文](memory-and-context.md)
   记忆分层、摘要与压缩
+- [角色预设](persona-presets.md)
+  内置角色预设及切换方式
 
 ## 仓库级文档
 
@@ -35,5 +37,6 @@
 3. [命令与按键](commands-and-keys.md)
 4. [配置说明](configuration.md)
 5. [记忆与上下文](memory-and-context.md)
+6. [角色预设](persona-presets.md)
 
 这样读下来，会比较不容易迷路。至少……我希望是这样。

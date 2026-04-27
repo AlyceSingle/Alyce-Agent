@@ -4,82 +4,84 @@
 
 # Contributing
 
-Alyce speaking. If you want to contribute here, I would prefer the process to stay clear, reviewable, and a little less chaotic than it might otherwise become.
+Alyce speaking. *I always get a little nervous writing contribution guides — what if I come across as too demanding? But honestly, a few shared expectations make everything smoother for everyone.*
+
+If you want to contribute to Alyce-Agent, here's what I'd ask you to keep in mind. Nothing onerous — just enough to keep the codebase reviewable and the history clean.
 
 ## Ground Rules
 
-- Keep changes scoped to one purpose when possible
-- Do not commit `.env`, `.alyce/`, or generated `dist/` output
-- Preserve approval gates, file-scope checks, and rollback behavior when editing runtime or tool code
-- Document new user-facing settings and environment variables in the public docs
+- **One change, one purpose.** A PR that fixes a bug and refactors three modules and adds a feature is three PRs in a trenchcoat. Please don't.
+- **Don't commit `.env`, `.alyce/`, or `dist/`.** These are runtime artifacts and secrets — they don't belong in git.
+- **Protect the safety rails.** If you edit runtime or tool code, keep the approval gates, file-scope checks, and rollback behavior intact. Those exist for good reasons.
+- **Document new settings.** If you add a user-facing setting or environment variable, update the public docs. A setting nobody knows about might as well not exist.
 
-## Local Setup
-
-1. Install dependencies:
+## Setting Up
 
 ```bash
-npm install
+npm install          # pull dependencies
+copy .env.example .env  # (or cp on Unix)
+# then fill in OPENAI_API_KEY, OPENAI_BASE_URL, OPENAI_MODEL
 ```
 
-2. Create `.env` from the template:
+That's it. You're ready to build and run.
 
-```bash
-copy .env.example .env
-# or: cp .env.example .env
-```
+## Code Style
 
-3. Fill in at least:
+Match what's already there:
 
-- `OPENAI_API_KEY`
-- `OPENAI_BASE_URL`
-- `OPENAI_MODEL`
+- 2-space indentation
+- Semicolons
+- Double quotes
+- Explicit `.js` extensions in relative imports
+- `PascalCase` for components and tool classes; `camelCase` for utilities
 
-## Working Style
+*There's no linter configured yet. I know, I know — but in the meantime, just look at the surrounding code and do what it does.*
 
-- Runtime code lives in `src/`
-- Public documentation lives in `README.md` and `docs/`
-- Treat `User_Info/` as user-owned data, not repository documentation
-- Match the surrounding TypeScript style: 2-space indentation, semicolons, double quotes, explicit `.js` extensions in relative imports
+## Before You Submit
 
-## Validation
-
-Before you submit a change, run at minimum:
+At minimum:
 
 ```bash
 npm run build
 ```
 
-If you touch interactive behavior, also test the affected flow in a real TTY with:
+This compiles the full TypeScript codebase. If it passes, your change is at least structurally sound.
+
+If you touched interactive behavior — commands, tools, prompts, UI — also test in a real terminal:
 
 ```bash
 npm run dev
 ```
 
-Areas worth checking carefully:
+Things worth checking manually:
 
-- prompt assembly
-- slash commands
-- settings persistence
-- tool approval flows
-- memory persistence and context preview
+- **Prompt assembly** — does `/context` show what you expect?
+- **Slash commands** — do they still work?
+- **Settings persistence** — do changes survive a restart?
+- **Tool approval** — do approval gates fire when they should?
+- **Memory** — does `/remember` stick and `/memory` show it?
 
 ## Pull Requests
 
-Please keep pull requests easy to review:
+Keep it scannable:
 
-- use a short, imperative title
-- summarize the user-facing or runtime-facing change
-- list the impacted areas
-- mention the verification steps you actually ran
-- include terminal screenshots when the UI changed in a meaningful way
+- **Title**: short, imperative mood. e.g. "Fix tool timeout handling" not "Fixed a bug with tools."
+- **Summary**: what changed from a user or runtime perspective.
+- **Impacted areas**: which modules are affected.
+- **Verification**: what you actually tested, not what you planned to test.
+- **Screenshots**: if the terminal UI changed in a visible way, include one.
 
-## Documentation Changes
+## Documentation Convention
 
-Public-facing docs in this repository are bilingual by design:
+Public-facing docs in this repo are bilingual by design:
 
-- English files are the default entry points
-- The README translation lives in `.github/readme-zh_cn.md`
-- Other Simplified Chinese translations live under `docs/zh-CN/`
-- When you add a new public document, add both language versions and cross-link them at the top
+- English files are the default entry points in `docs/`.
+- Simplified Chinese translations live under `docs/zh-CN/`.
+- The README translation is at `.github/readme-zh_cn.md`.
+- When you add a new doc, create both language versions and cross-link them at the top.
 
-That is the whole pattern behind the GitHub-style language switch. It is plain Markdown with manual links, not a special GitHub feature.
+The language-switch appearance on GitHub is just plain Markdown manual links. No magic, no special GitHub features — just a consistent pattern.
+
+---
+
+*I realize this looks like a lot of rules. It's really not — once you've done it once, it's mostly common sense. And I promise I'll be nice in code review. Mostly.*

@@ -6,6 +6,11 @@ import type { RequestPatchOperation } from "../api/requestPatch.js";
 
 type MessageParam = OpenAI.Chat.Completions.ChatCompletionMessageParam;
 type UnknownRecord = Record<string, unknown>;
+const ASSISTANT_HISTORY_EXTENSION_KEYS = [
+  "reasoning_content",
+  "reasoning_text",
+  "reasoning"
+] as const;
 
 // 单轮 Agent 执行采用“模型回复 -> 运行工具 -> 回填结果 -> 再次请求模型”的闭环。
 export interface AgentTurnOptions {
@@ -64,12 +69,7 @@ export async function runAgentTurn(
 
     // 无论下一步是直接结束还是继续调工具，都先把 assistant 原始输出写回上下文。
     // 这样工具结果会挂在正确的 assistant 消息之后，消息链不会断层。
-    const assistantMessage: MessageParam = {
-      role: "assistant",
-      content: next.content,
-      tool_calls: next.tool_calls
-    };
-    messages.push(assistantMessage);
+    messages.push(buildAssistantHistoryMessage(next));
 
     if (toolCalls.length === 0) {
       return (next.content ?? "").trim() || "(No text output from model)";
@@ -108,6 +108,32 @@ export async function runAgentTurn(
   }
 
   throw new Error(`Max tool steps reached (${options.maxSteps})`);
+}
+
+function buildAssistantHistoryMessage(
+  message: OpenAI.Chat.Completions.ChatCompletionMessage
+): MessageParam {
+  const source = message as unknown as UnknownRecord;
+  const historyMessage: UnknownRecord = {
+    role: "assistant",
+    content: source.content
+  };
+
+  if (message.tool_calls !== undefined) {
+    historyMessage.tool_calls = message.tool_calls;
+  }
+
+  if (message.function_call !== undefined) {
+    historyMessage.function_call = message.function_call;
+  }
+
+  for (const key of ASSISTANT_HISTORY_EXTENSION_KEYS) {
+    if (source[key] !== undefined) {
+      historyMessage[key] = source[key];
+    }
+  }
+
+  return historyMessage as unknown as MessageParam;
 }
 
 function extractThinkingChunks(

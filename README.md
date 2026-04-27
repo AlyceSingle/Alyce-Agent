@@ -17,7 +17,7 @@ Alyce-Agent is a local coding assistant framework with:
 - an interactive terminal UI
 - multi-step tool-using agent turns
 - prompt composition with persona and runtime sections
-- session memory, persistent memory, auto-summary, and conversation compaction
+- resumable project session history, session memory, persistent memory, auto-summary, and conversation compaction
 - approval-aware command, file, and web tooling
 - rollback support for interrupted file edits
 
@@ -26,6 +26,7 @@ Alyce-Agent is a local coding assistant framework with:
 - Terminal-native UI: React + Ink, including dialogs, message viewer, and settings
 - Tool loop: the model can call multiple tools in one turn before returning a final answer
 - Prompt engineering: static rules, dynamic environment, and persona overlays are assembled into one system prompt
+- Session resume: project-local JSONL transcripts let `/resume` reopen earlier conversations
 - Context control: message timestamps, memory injection, auto-summary, and compaction work together to keep prompts useful instead of bloated
 - Safety rails: file access scope, approval gates, and pre-write snapshots are built into the runtime
 
@@ -71,6 +72,7 @@ npm start
 - [Commands and Keys](docs/commands-and-keys.md)
 - [Configuration](docs/configuration.md)
 - [Memory and Context](docs/memory-and-context.md)
+- [Persona Presets](docs/persona-presets.md)
 - [Contributing](CONTRIBUTING.md)
 - [Security](SECURITY.md)
 

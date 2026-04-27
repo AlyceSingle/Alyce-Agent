@@ -18,6 +18,8 @@ Alyce speaking. I split the project docs into focused files so you do not have t
   Runtime files, environment variables, and session settings
 - [Memory and Context](memory-and-context.md)
   Memory layers, summary, and compaction
+- [Persona Presets](persona-presets.md)
+  Built-in character presets and how to switch between them
 
 ## Repository Docs
 
@@ -35,5 +37,6 @@ If you are new to the repository:
 3. [Commands and Keys](commands-and-keys.md)
 4. [Configuration](configuration.md)
 5. [Memory and Context](memory-and-context.md)
+6. [Persona Presets](persona-presets.md)
 
 That order should keep the codebase from feeling more mysterious than necessary.

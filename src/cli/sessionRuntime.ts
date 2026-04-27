@@ -22,6 +22,14 @@ import { FileHistoryManager, type FileHistoryRestoreResult } from "../core/file-
 import type { MemorySnapshot } from "../core/memory/types.js";
 import { buildEffectiveSystemPrompt } from "../core/prompt/builder.js";
 import { PromptSectionResolver } from "../core/prompt/sectionResolver.js";
+import { prepareSessionResume } from "../core/session-history/sessionResume.js";
+import { SessionHistoryStore } from "../core/session-history/sessionStorage.js";
+import type {
+  SessionHistoryListItem,
+  SessionHistoryUiMessage,
+  SessionId,
+  SessionResumePayload
+} from "../core/session-history/types.js";
 import { formatCurrentDateLabel, formatSystemDateTime } from "../core/time/systemTime.js";
 import { getRegisteredToolNames } from "../tools/registry.js";
 import type {
@@ -42,6 +50,8 @@ export interface SessionRuntime {
   messages: SessionMessage[];
   workspaceRoot: string;
   requestPatches: RuntimeConfig["requestPatches"];
+  getSessionId: () => SessionId;
+  getSessionHistoryDirectory: () => string;
   hasConnectionConfig: () => boolean;
   getConnectionConfig: () => ConnectionConfig;
   getConnectionConfigState: () => ConnectionConfigState;
@@ -61,6 +71,19 @@ export interface SessionRuntime {
   resetSystemMessage: () => Promise<void>;
   clearConversation: () => Promise<void>;
   clearPromptCache: () => void;
+  recordSessionTurn: (options: {
+    apiMessages: SessionMessage[];
+    uiMessages: SessionHistoryUiMessage[];
+  }) => Promise<void>;
+  flushSessionHistory: () => Promise<void>;
+  listSessionHistory: (options?: {
+    limit?: number;
+    excludeCurrent?: boolean;
+  }) => Promise<SessionHistoryListItem[]>;
+  findSessionHistory: (query: string, options?: {
+    excludeCurrent?: boolean;
+  }) => Promise<SessionHistoryListItem[]>;
+  resumeSessionHistory: (sessionId: SessionId) => Promise<SessionResumePayload>;
   buildContextPreview: (nextUserInput?: string) => string;
   maybeCompactConversation: (options: {
     client: OpenAI;
@@ -99,6 +122,8 @@ export function getHelpText(currentModel: string) {
     "  /settings          Open runtime settings",
     "  /setup             Open connection setup",
     "  /clear             Clear chat history",
+    "  /resume [id|text]  Resume a previous project session",
+    "  /sessions          List saved project sessions",
     "  /remember <text>   Save note to session and persistent memory",
     "  /remember --session <text>  Save note to session memory only",
     "  /memory            Show memory snapshot",
@@ -168,6 +193,10 @@ export async function createSessionRuntime(
   const conversationCompactor = new ConversationCompactor(
     DEFAULT_CONVERSATION_COMPACTION_CONFIG
   );
+  const sessionHistory = new SessionHistoryStore({
+    sessionsDirectory: path.join(config.paths.alyceDirectory, "sessions"),
+    workspaceRoot: config.paths.workspaceRoot
+  });
   const memoryService = new MemoryService({
     workspaceRoot: config.paths.workspaceRoot,
     ...config.memory
@@ -211,6 +240,14 @@ export async function createSessionRuntime(
       role: "system",
       content: await buildSystemPrompt()
     };
+  };
+
+  const resetVolatileConversationState = () => {
+    memoryService.clearSession();
+    conversationCompactor.clear();
+    promptResolver.clearSessionCache();
+    fileHistoryManager.clearAll();
+    sessionAdditionalDirectories = [];
   };
 
   const rebuildConnectionState = (options: {
@@ -274,6 +311,8 @@ export async function createSessionRuntime(
     messages,
     workspaceRoot: config.paths.workspaceRoot,
     requestPatches: config.requestPatches,
+    getSessionId: () => sessionHistory.getCurrentSessionId(),
+    getSessionHistoryDirectory: () => path.join(config.paths.alyceDirectory, "sessions"),
     hasConnectionConfig: () => connection.apiKey.trim().length > 0,
     getConnectionConfig: () => ({ ...connection }),
     getConnectionConfigState: () => cloneConnectionConfigState(connectionState),
@@ -328,14 +367,43 @@ export async function createSessionRuntime(
     resetSystemMessage,
     clearConversation: async () => {
       // 清空会话时保留连接与设置，仅重置对话、记忆缓存和文件回滚历史。
-      memoryService.clearSession();
-      conversationCompactor.clear();
-      promptResolver.clearSessionCache();
-      fileHistoryManager.clearAll();
+      await sessionHistory.flush();
+      sessionHistory.startNewSession();
+      resetVolatileConversationState();
       messages.splice(1);
       await resetSystemMessage();
     },
     clearPromptCache: () => promptResolver.clearSessionCache(),
+    recordSessionTurn: async ({ apiMessages, uiMessages }) => {
+      await sessionHistory.recordTurn({ apiMessages, uiMessages });
+    },
+    flushSessionHistory: () => sessionHistory.flush(),
+    listSessionHistory: (options = {}) =>
+      sessionHistory.listSessions({
+        limit: options.limit,
+        excludeSessionId: options.excludeCurrent ? sessionHistory.getCurrentSessionId() : undefined
+      }),
+    findSessionHistory: (query, options = {}) =>
+      sessionHistory.findSessions(query, {
+        excludeSessionId: options.excludeCurrent ? sessionHistory.getCurrentSessionId() : undefined
+      }),
+    resumeSessionHistory: async (sessionId) => {
+      await sessionHistory.flush();
+      const loaded = await sessionHistory.loadSession(sessionId);
+      const resume = prepareSessionResume(loaded);
+      sessionHistory.adoptExistingSession(resume.sessionId, loaded.lastSequence);
+      resetVolatileConversationState();
+      messages.splice(
+        0,
+        messages.length,
+        {
+          role: "system",
+          content: await buildSystemPrompt()
+        },
+        ...resume.apiMessages.filter((message) => message.role !== "system")
+      );
+      return resume;
+    },
     buildContextPreview: (nextUserInput) => {
       const previewTimestamp = formatSystemDateTime(new Date());
       const trimmedInput = nextUserInput?.trim();
@@ -466,7 +534,7 @@ function normalizeConnectionPatch(
   }
 
   if ("baseURL" in patch) {
-    normalized.baseURL = patch.baseURL?.trim() || undefined;
+    normalized.baseURL = patch.baseURL?.trim() ?? "";
   }
 
   if ("model" in patch) {

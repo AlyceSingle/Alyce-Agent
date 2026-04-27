@@ -203,10 +203,11 @@ export function buildConnectionConfigState(
   const project = compactObject(layers.project ?? {});
   const env = compactObject(layers.env ?? {});
   const cli = compactObject(layers.cli ?? {});
+  // OPENAI_* values are startup defaults; saved connection config must override them.
   const orderedLayers: Array<SourceLayer<ConnectionConfig, ConnectionConfigSource>> = [
+    { source: "env", values: env },
     { source: "project", values: project },
     { source: "user", values: user },
-    { source: "env", values: env },
     { source: "cli", values: cli }
   ];
   const effective = normalizeConnectionConfig(mergeLayers(orderedLayers));
@@ -485,7 +486,12 @@ function normalizeConnectionConfig(input: Partial<ConnectionConfig>): Connection
 function serializeConnectionConfig(connection: Partial<ConnectionConfig>): Partial<ConnectionConfig> {
   return compactObject({
     apiKey: "apiKey" in connection ? connection.apiKey?.trim() ?? "" : undefined,
-    baseURL: "baseURL" in connection ? normalizeOptionalText(connection.baseURL) : undefined,
+    baseURL:
+      "baseURL" in connection
+        ? connection.baseURL === undefined
+          ? ""
+          : connection.baseURL.trim()
+        : undefined,
     model: "model" in connection ? normalizeOptionalText(connection.model) : undefined
   });
 }

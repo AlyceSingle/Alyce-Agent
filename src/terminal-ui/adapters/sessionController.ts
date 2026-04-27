@@ -30,6 +30,7 @@ import {
   openMessageReader,
   openPermissionDialog,
   openQuestionDialog,
+  openSessionPickerDialog,
   openSettingsDialog,
   replaceMessages,
   setConnectionConfigState,
@@ -81,6 +82,7 @@ export interface SessionController {
   openMessageReader: (messageId: string) => void;
   closeMessageReader: () => void;
   closeDialog: () => void;
+  resumeSession: (sessionId: string) => Promise<void>;
   saveConfig: (
     connectionPatch: Partial<ConnectionConfig>,
     settingsPatch: Partial<SessionSettings>,
@@ -104,6 +106,10 @@ export function createSessionController(
 
   const appendUiMessage = (message: TerminalUiMessage) => {
     store.updateState((state) => appendMessage(state, message));
+  };
+
+  const requestExit = () => {
+    void runtime.flushSessionHistory().finally(() => exitHandler?.());
   };
 
   const setDraftInputValue = (value: string) => {
@@ -253,6 +259,93 @@ export function createSessionController(
     });
   };
 
+  const formatSessionList = (sessions: Awaited<ReturnType<SessionRuntime["listSessionHistory"]>>) => {
+    if (sessions.length === 0) {
+      return "No saved project sessions.";
+    }
+
+    return sessions
+      .map((session, index) => {
+        const marker = session.sessionId === runtime.getSessionId() ? "current" : session.sessionId.slice(0, 8);
+        return [
+          `${index + 1}. ${session.title || "(session)"}`,
+          `   ${marker} | ${formatSessionTime(session.updatedAt)} | ${session.messageCount} messages`
+        ].join("\n");
+      })
+      .join("\n");
+  };
+
+  const resumeSessionById = async (sessionId: string) => {
+    const resumed = await runtime.resumeSessionHistory(sessionId);
+    lastInterruptedTurn = null;
+    activeTurn = null;
+    sessionAllowedKinds.clear();
+    sessionApprovalMode = runtime.getSettings().approvalMode;
+
+    const restoredMessages = resumed.uiMessages as TerminalUiMessage[];
+    const systemMessage = createSystemMessage(
+      [
+        `Resumed session ${resumed.sessionId.slice(0, 8)}.`,
+        `Title: ${resumed.title || "(session)"}`,
+        `Messages restored: ${resumed.messageCount}`
+      ].join("\n"),
+      "Session"
+    );
+
+    store.updateState((state) =>
+      setStatusText(
+        setSessionAllowedKinds(
+          setSessionApprovalMode(
+            setDraftInput(
+              setTodos(replaceMessages(closeDialog(state), [...restoredMessages, systemMessage]), []),
+              ""
+            ),
+            sessionApprovalMode
+          ),
+          []
+        ),
+        "Session resumed"
+      )
+    );
+  };
+
+  const resumeSessionByQuery = async (query: string) => {
+    const matches = await runtime.findSessionHistory(query, { excludeCurrent: true });
+    if (matches.length === 0) {
+      appendUiMessage(createErrorMessage(`No saved session matched: ${query}`));
+      return;
+    }
+
+    if (matches.length > 1) {
+      appendUiMessage(
+        createErrorMessage(
+          [
+            `Found ${matches.length} sessions matching: ${query}`,
+            "Use /resume and pick one, or provide a longer session id.",
+            "",
+            formatSessionList(matches.slice(0, 8))
+          ].join("\n")
+        )
+      );
+      return;
+    }
+
+    await resumeSessionById(matches[0]!.sessionId);
+  };
+
+  const openSessionPicker = async () => {
+    const sessions = await runtime.listSessionHistory({
+      limit: 50,
+      excludeCurrent: true
+    });
+    if (sessions.length === 0) {
+      appendUiMessage(createSystemMessage("No saved project sessions found.", "Sessions"));
+      return;
+    }
+
+    store.updateState((state) => openSessionPickerDialog(state, sessions));
+  };
+
   const askUserQuestions = async (
     request: AskUserQuestionRequest,
     options: { signal?: AbortSignal } = {}
@@ -384,7 +477,7 @@ export function createSessionController(
     }
 
     if (parsedCommand.type === "exit") {
-      exitHandler?.();
+      requestExit();
       return true;
     }
 
@@ -395,6 +488,22 @@ export function createSessionController(
 
     if (parsedCommand.type === "help") {
       appendUiMessage(createSystemMessage(getHelpText(runtime.getCurrentModel()), "Help"));
+      return true;
+    }
+
+    if (parsedCommand.type === "open-session-picker") {
+      await openSessionPicker();
+      return true;
+    }
+
+    if (parsedCommand.type === "resume-session") {
+      await resumeSessionByQuery(parsedCommand.query);
+      return true;
+    }
+
+    if (parsedCommand.type === "sessions-list") {
+      const sessions = await runtime.listSessionHistory({ limit: 20 });
+      appendUiMessage(createSystemMessage(formatSessionList(sessions), "Sessions"));
       return true;
     }
 
@@ -663,6 +772,8 @@ export function createSessionController(
 
         checkpoint.hasAssistantOutput = true;
         appendUiMessage(createAssistantMessage(reply));
+        const sessionApiMessages = runtime.messages.slice(checkpoint.runtimeMessageCount);
+        const sessionUiMessages = store.getState().messages.slice(checkpoint.uiMessageCount);
         throwIfAborted(controller.signal);
 
         const summaryUpdated = await runtime.memoryService.maybeRefreshAutoSummary({
@@ -695,6 +806,11 @@ export function createSessionController(
             createSystemMessage("Conversation was compacted to keep the prompt context bounded.", "Context")
           );
         }
+
+        await runtime.recordSessionTurn({
+          apiMessages: sessionApiMessages,
+          uiMessages: sessionUiMessages
+        });
 
         runtime.discardTurn(turnId);
         activeTurn = null;
@@ -794,6 +910,9 @@ export function createSessionController(
 
       setDialogClosed();
     },
+    resumeSession: async (sessionId) => {
+      await resumeSessionById(sessionId);
+    },
     saveConfig: async (connectionPatch, settingsPatch, connectionTarget) => {
       await runtime.updateConnectionConfig(connectionPatch, connectionTarget);
       await runtime.updateSettings(settingsPatch);
@@ -835,12 +954,26 @@ export function createSessionController(
       );
     },
     requestExit: () => {
-      exitHandler?.();
+      requestExit();
     },
     setExitHandler: (handler) => {
       exitHandler = handler;
     }
   };
+}
+
+function formatSessionTime(value: string): string {
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) {
+    return value;
+  }
+
+  return date.toLocaleString("zh-CN", {
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit"
+  });
 }
 
 function shouldUseGcliGeminiCompat(baseURL: string | undefined, model: string): boolean {

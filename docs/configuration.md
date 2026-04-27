@@ -4,110 +4,114 @@
 
 # Configuration
 
-Alyce speaking. The configuration system is layered on purpose. I would rather describe it plainly than leave you guessing which file wins.
+Alyce speaking. *Configuration systems are the kind of thing that seem simple until you realize there are four places a setting could come from and you don't know which one wins. So let me be boring but clear.*
 
-## Configuration Sources
+Alyce-Agent's configuration is layered. Multiple sources can set the same value, and there's a specific order that decides who wins. Once you know the order, it's painless.
 
-### Connection Config
+## Where Settings Come From
 
-Loaded from:
+### Connection Config (API key, base URL, model)
 
-- environment variables
-- `~/.alyce/config.json`
-- `./.alyce/config.json`
-- CLI arguments
+Loaded in this priority order — **earlier wins over later**:
 
-### Session Settings
+1. **CLI arguments** (passed when launching the app)
+2. **Environment variables** (from your `.env` file)
+3. **Project config** — `./.alyce/config.json`
+4. **User config** — `~/.alyce/config.json`
 
-Loaded from:
+*In practice, environment variables usually win because `.env` gets loaded first and most people don't pass CLI arguments. But if you set something in the settings dialog and save it to project scope, that'll take effect next time.*
 
-- `./.alyce/settings.json`
-- `~/.alyce/settings.json`
-- environment variables
-- CLI arguments
+### Session Settings (persona, memory, approval, etc.)
 
-## File Locations
+Loaded in this priority order — **again, earlier wins**:
 
-- project connection config: `./.alyce/config.json`
-- user connection config: `~/.alyce/config.json`
-- project session settings: `./.alyce/settings.json`
-- user session settings: `~/.alyce/settings.json`
+1. **CLI arguments**
+2. **Environment variables**
+3. **Project settings** — `./.alyce/settings.json`
+4. **User settings** — `~/.alyce/settings.json`
+
+## File Map
+
+| What | Where |
+|---|---|
+| Project connection config | `./.alyce/config.json` |
+| User connection config | `~/.alyce/config.json` |
+| Project session settings | `./.alyce/settings.json` |
+| User session settings | `~/.alyce/settings.json` |
+
+*The `./` versions are per-project — they travel with the repo (if you commit `.alyce/`, which you shouldn't). The `~/` versions are global to your machine. Use project scope for project-specific stuff, user scope for personal defaults.*
 
 ## Environment Variables
 
-### Required
-
+### Required (the app won't start without these)
 - `OPENAI_API_KEY`
 - `OPENAI_BASE_URL`
 - `OPENAI_MODEL`
 
-### Optional
+### Optional (memory tuning, mostly)
+- `AGENT_ADDITIONAL_DIRECTORIES` — comma-separated extra paths
+- `AGENT_MEMORY_DIR` — override memory storage directory
+- `AGENT_MEMORY_FILE` — override memory file name
+- `AGENT_MEMORY_MAX_SESSION` — max session memory entries
+- `AGENT_MEMORY_MAX_PERSISTENT` — max persistent memory entries
+- `AGENT_MEMORY_MAX_PROMPT` — max memory chars injected into prompt
+- `AGENT_MEMORY_AUTO_SUMMARY` — enable/disable auto summary
+- `AGENT_MEMORY_SUMMARY_MIN_MESSAGES` — messages before summary starts
+- `AGENT_MEMORY_SUMMARY_INTERVAL_MESSAGES` — how often summary updates
+- `AGENT_MEMORY_SUMMARY_WINDOW_MESSAGES` — how many messages per summary
+- `AGENT_MEMORY_SUMMARY_MAX_CHARS_PER_MESSAGE` — truncation per message
 
-- `AGENT_ADDITIONAL_DIRECTORIES`
-- `AGENT_MEMORY_DIR`
-- `AGENT_MEMORY_FILE`
-- `AGENT_MEMORY_MAX_SESSION`
-- `AGENT_MEMORY_MAX_PERSISTENT`
-- `AGENT_MEMORY_MAX_PROMPT`
-- `AGENT_MEMORY_AUTO_SUMMARY`
-- `AGENT_MEMORY_SUMMARY_MIN_MESSAGES`
-- `AGENT_MEMORY_SUMMARY_INTERVAL_MESSAGES`
-- `AGENT_MEMORY_SUMMARY_WINDOW_MESSAGES`
-- `AGENT_MEMORY_SUMMARY_MAX_CHARS_PER_MESSAGE`
+*Most users never touch the optional ones. They're there for when you have a strong opinion about memory behavior or you're running in an unusual environment.*
 
 ## Connection Fields
 
-- `apiKey`
-- `baseURL`
-- `model`
+These appear in the **Connection** tab of settings:
 
-Connection config can be saved to:
+- `apiKey` — your OpenAI-compatible API key
+- `baseURL` — the endpoint URL
+- `model` — model identifier string
 
-- user scope
-- project scope
+You can save these to **user scope** (global on your machine) or **project scope** (lives with this project). Press `P` in the Connection tab to switch.
 
-The settings dialog lets you switch the target with `P`.
+*I'd recommend user scope for API keys — it keeps them out of the project directory entirely.*
 
 ## Session Settings
 
-### Execution and Approval
+These appear in the **Session** tab of settings.
 
-- `approvalMode`
-- `maxSteps`
-- `commandTimeoutMs`
+### Execution & Approval
 
-### Prompt and Persona
+- `approvalMode` — how strict tool approval is. Options range from always-ask to smart-defaults.
+- `maxSteps` — maximum tool-calling steps per turn before the agent must produce a final answer.
+- `commandTimeoutMs` — timeout for shell commands in milliseconds.
 
-- `languagePreference`
-- `personaPreset`
-- `aiPersonalityPrompt`
-- `appendSystemPrompt`
+### Prompt & Persona
 
-### Memory and Context
+- `languagePreference` — which language the assistant should respond in.
+- `personaPreset` — which built-in persona to use. Options: `None`, `alyce`, `lilith`, `corin`. *See the [Persona Presets](persona-presets.md) page for details.*
+- `aiPersonalityPrompt` — custom personality instructions layered on top of (or instead of) the persona preset.
+- `appendSystemPrompt` — extra text appended directly to the system prompt. Use sparingly.
 
-- `autoSummaryEnabled`
-- `messageTimestampsEnabled`
-- `conversationCompactionEnabled`
+### Memory & Context
+
+- `autoSummaryEnabled` — whether auto-summarization of recent work is active.
+- `messageTimestampsEnabled` — whether the model sees the current system time in each turn.
+- `conversationCompactionEnabled` — whether long conversations get compressed to stay within context limits.
 
 ### Paths
 
-- `additionalDirectories`
+- `additionalDirectories` — extra directories the agent is allowed to access beyond the workspace root.
 
-## `messageTimestampsEnabled`
+## Two Settings Worth Understanding
 
-When enabled:
+### `messageTimestampsEnabled`
 
-- the request includes a dedicated `# Current System Time` system block
-- the block contains the current local system date and time for that reply only
+When turned on, each API request includes a small `# Current System Time` block with the local date and time. This is injected at request time — it doesn't appear in your visible transcript and doesn't get mixed into the chat history. *I find it useful because the model can then say things like "as of this morning" instead of always being vague about time.*
 
-This is injected at API request time, not shown directly in the visible transcript, and not mixed into prior dialogue text.
+### `conversationCompactionEnabled`
 
-## `conversationCompactionEnabled`
+When turned on, long conversations get compacted after they cross a threshold. Recent raw turns stay untouched; older turns get rewritten into a structured summary. The goal isn't to delete anything — it's to keep the useful information present without dragging the full transcript forward forever. *Without this, sessions that run for hours would eventually overflow the model's context window and start losing the beginning of the conversation.*
 
-When enabled:
+---
 
-- long conversations are compacted after a threshold
-- recent raw turns stay visible
-- older turns are rewritten into a structured summary message
-
-This is mainly there to keep context growth bounded.
+*That's the configuration layer. If a setting isn't behaving the way you expect, `/context` will show you what the model is actually receiving — it's usually the fastest way to spot a config problem.*

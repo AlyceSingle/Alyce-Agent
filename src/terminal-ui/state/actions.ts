@@ -16,6 +16,7 @@ import type {
   TerminalUiOverlayId,
   TerminalUiState
 } from "./types.js";
+import type { SessionHistoryListItem } from "../../core/session-history/types.js";
 
 export function createInitialTerminalUiState(options: {
   connectionState: ConnectionConfigState;
@@ -180,6 +181,17 @@ export function openSettingsDialog(
     layer: "overlay",
     section,
     reason
+  });
+}
+
+export function openSessionPickerDialog(
+  state: TerminalUiState,
+  sessions: SessionHistoryListItem[]
+): TerminalUiState {
+  return pushDialog(state, {
+    type: "session-picker",
+    layer: "overlay",
+    sessions
   });
 }
 
