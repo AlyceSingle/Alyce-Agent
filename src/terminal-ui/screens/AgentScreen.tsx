@@ -10,6 +10,7 @@ import { ApprovalDialog } from "../components/ApprovalDialog.js";
 import { AskUserQuestionDialog } from "../components/AskUserQuestionDialog.js";
 import { SettingsDialog } from "../components/SettingsDialog.js";
 import { SessionPickerDialog } from "../components/SessionPickerDialog.js";
+import { RewindPickerDialog } from "../components/RewindPickerDialog.js";
 import type { SessionController } from "../adapters/sessionController.js";
 import { useIsOverlayActive } from "../context/overlayContext.js";
 import { useKeybindings } from "../keybindings/useKeybindings.js";
@@ -168,7 +169,7 @@ export function AgentScreen(props: { controller: SessionController }) {
       }
 
       if (draftInput.trim().length === 0) {
-        void props.controller.restoreLastInterruptedTurn();
+        props.controller.openRewindSelector();
       }
     },
     "conversation:openDetail": () => {
@@ -344,6 +345,14 @@ export function AgentScreen(props: { controller: SessionController }) {
         sessions={activeDialog.sessions}
         onSelect={(sessionId) => {
           void props.controller.resumeSession(sessionId);
+        }}
+        onCancel={() => props.controller.closeDialog()}
+      />
+    ) : activeDialog?.type === "rewind-picker" ? (
+      <RewindPickerDialog
+        points={activeDialog.points}
+        onRestore={(pointId, mode) => {
+          void props.controller.restoreRewindPoint(pointId, mode);
         }}
         onCancel={() => props.controller.closeDialog()}
       />

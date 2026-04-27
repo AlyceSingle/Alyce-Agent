@@ -7,6 +7,7 @@ import {
   type SessionHistoryApiMessage,
   type SessionHistoryEntry,
   type SessionHistoryListItem,
+  type SessionHistoryRewindMode,
   type SessionHistoryUiMessage,
   type SessionId
 } from "./types.js";
@@ -114,6 +115,45 @@ export class SessionHistoryStore {
         title
       });
     }
+
+    await this.appendEntries(sessionId, entries);
+    if (wroteMetaEntry) {
+      this.materializedSessions.add(sessionId);
+    }
+  }
+
+  async recordRewind(options: {
+    apiMessageCount: number;
+    uiMessageCount: number;
+    restoredInput?: string;
+    restoreMode?: SessionHistoryRewindMode;
+  }): Promise<void> {
+    const sessionId = this.currentSessionId;
+    const timestamp = new Date().toISOString();
+    const entries: SessionHistoryEntry[] = [];
+    let wroteMetaEntry = false;
+
+    if (!this.materializedSessions.has(sessionId)) {
+      entries.push({
+        type: "session-meta",
+        schemaVersion: SESSION_HISTORY_SCHEMA_VERSION,
+        sessionId,
+        workspaceRoot: this.options.workspaceRoot,
+        createdAt: timestamp
+      });
+      wroteMetaEntry = true;
+    }
+
+    entries.push({
+      type: "session-rewind",
+      sessionId,
+      sequence: this.nextSequence(),
+      timestamp,
+      apiMessageCount: Math.max(0, Math.trunc(options.apiMessageCount)),
+      uiMessageCount: Math.max(0, Math.trunc(options.uiMessageCount)),
+      restoredInput: options.restoredInput,
+      restoreMode: options.restoreMode
+    });
 
     await this.appendEntries(sessionId, entries);
     if (wroteMetaEntry) {
@@ -261,6 +301,19 @@ export class SessionHistoryStore {
 
       if (entry.type === "session-title") {
         title = asString(entry.title) ?? title;
+        continue;
+      }
+
+      if (entry.type === "session-rewind") {
+        const apiMessageCount = asNumber(entry.apiMessageCount);
+        const uiMessageCount = asNumber(entry.uiMessageCount);
+        if (apiMessageCount !== undefined) {
+          apiMessages.splice(Math.max(0, Math.trunc(apiMessageCount)));
+        }
+        if (uiMessageCount !== undefined) {
+          uiMessages.splice(Math.max(0, Math.trunc(uiMessageCount)));
+        }
+        title = extractTitleFromApiMessages(apiMessages);
       }
     }
 

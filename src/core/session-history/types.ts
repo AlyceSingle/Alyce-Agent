@@ -4,6 +4,7 @@ export const SESSION_HISTORY_SCHEMA_VERSION = 1;
 
 export type SessionId = string;
 export type SessionHistoryApiMessage = OpenAI.Chat.Completions.ChatCompletionMessageParam;
+export type SessionHistoryRewindMode = "conversation" | "code-and-conversation";
 
 export type SessionHistoryUiMessageKind =
   | "system"
@@ -70,6 +71,16 @@ export type SessionHistoryEntry =
       sequence: number;
       timestamp: string;
       title: string;
+    }
+  | {
+      type: "session-rewind";
+      sessionId: SessionId;
+      sequence: number;
+      timestamp: string;
+      apiMessageCount: number;
+      uiMessageCount: number;
+      restoredInput?: string;
+      restoreMode?: SessionHistoryRewindMode;
     };
 
 export interface LoadedSessionHistory {

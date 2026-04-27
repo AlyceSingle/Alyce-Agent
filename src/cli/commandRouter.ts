@@ -3,6 +3,7 @@ export type ParsedCommand =
   | { type: "none" }
   | { type: "help" }
   | { type: "clear" }
+  | { type: "rewind" }
   | { type: "exit" }
   | { type: "open-settings"; section: "connection" | "session" }
   | { type: "open-session-picker" }
@@ -33,6 +34,10 @@ export function parseReplCommand(input: string): ParsedCommand {
 
   if (input === "/clear") {
     return { type: "clear" };
+  }
+
+  if (input === "/rewind") {
+    return { type: "rewind" };
   }
 
   if (input === "/resume") {

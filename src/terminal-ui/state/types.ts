@@ -52,6 +52,18 @@ export interface TerminalUiMessage {
 
 export type SettingsSection = "connection" | "session";
 
+export type RewindRestoreMode = "conversation" | "code-and-conversation";
+
+export interface TerminalUiRewindPoint {
+  id: string;
+  input: string;
+  createdAt: string;
+  hasCodeChanges: boolean;
+  canRestoreCode: boolean;
+  hasUnsafeToolActivity: boolean;
+  turnsRemoved: number;
+}
+
 export type PermissionDecision =
   | "allow-once"
   | "reject-once"
@@ -63,9 +75,15 @@ export type ActiveDialog =
   | { type: "question"; layer: "overlay"; request: AskUserQuestionRequest }
   | { type: "settings"; layer: "overlay"; section: SettingsSection; reason?: string }
   | { type: "session-picker"; layer: "overlay"; sessions: SessionHistoryListItem[] }
+  | { type: "rewind-picker"; layer: "overlay"; points: TerminalUiRewindPoint[] }
   | { type: "reader"; layer: "modal"; messageId: string };
 
-export type TerminalUiOverlayId = "permission" | "question" | "settings" | "session-picker";
+export type TerminalUiOverlayId =
+  | "permission"
+  | "question"
+  | "settings"
+  | "session-picker"
+  | "rewind-picker";
 
 export interface TerminalUiState {
   workspaceRoot: string;

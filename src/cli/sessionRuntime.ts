@@ -26,6 +26,7 @@ import { prepareSessionResume } from "../core/session-history/sessionResume.js";
 import { SessionHistoryStore } from "../core/session-history/sessionStorage.js";
 import type {
   SessionHistoryListItem,
+  SessionHistoryRewindMode,
   SessionHistoryUiMessage,
   SessionId,
   SessionResumePayload
@@ -75,6 +76,12 @@ export interface SessionRuntime {
     apiMessages: SessionMessage[];
     uiMessages: SessionHistoryUiMessage[];
   }) => Promise<void>;
+  recordSessionRewind: (options: {
+    apiMessageCount: number;
+    uiMessageCount: number;
+    restoredInput?: string;
+    restoreMode?: SessionHistoryRewindMode;
+  }) => Promise<void>;
   flushSessionHistory: () => Promise<void>;
   listSessionHistory: (options?: {
     limit?: number;
@@ -122,6 +129,7 @@ export function getHelpText(currentModel: string) {
     "  /settings          Open runtime settings",
     "  /setup             Open connection setup",
     "  /clear             Clear chat history",
+    "  /rewind            Restore to a previous prompt",
     "  /resume [id|text]  Resume a previous project session",
     "  /sessions          List saved project sessions",
     "  /remember <text>   Save note to session and persistent memory",
@@ -135,6 +143,7 @@ export function getHelpText(currentModel: string) {
     "",
     "Shortcuts:",
     "  Ctrl+X  Open settings",
+    "  Esc     Interrupt while running; when idle, open rewind from empty input",
     "  Ctrl+C  Clear current input or quit when empty",
     "  Ctrl+Q  Quit"
   ].join("\n");
@@ -376,6 +385,9 @@ export async function createSessionRuntime(
     clearPromptCache: () => promptResolver.clearSessionCache(),
     recordSessionTurn: async ({ apiMessages, uiMessages }) => {
       await sessionHistory.recordTurn({ apiMessages, uiMessages });
+    },
+    recordSessionRewind: async (options) => {
+      await sessionHistory.recordRewind(options);
     },
     flushSessionHistory: () => sessionHistory.flush(),
     listSessionHistory: (options = {}) =>

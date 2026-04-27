@@ -30,6 +30,7 @@ import {
   openMessageReader,
   openPermissionDialog,
   openQuestionDialog,
+  openRewindPickerDialog,
   openSessionPickerDialog,
   openSettingsDialog,
   replaceMessages,
@@ -44,7 +45,13 @@ import {
   setTranscriptSticky
 } from "../state/actions.js";
 import type { TerminalUiStore } from "../state/store.js";
-import type { PermissionDecision, SettingsSection, TerminalUiMessage } from "../state/types.js";
+import type {
+  PermissionDecision,
+  RewindRestoreMode,
+  SettingsSection,
+  TerminalUiMessage,
+  TerminalUiRewindPoint
+} from "../state/types.js";
 import {
   createAssistantMessage,
   createErrorMessage,
@@ -57,11 +64,13 @@ import {
 
 // SessionController 负责把 REPL/UI 事件翻译成会话运行时调用，并维护中断恢复状态。
 const RESTORABLE_TOOL_NAMES = new Set(["Edit", "Write"]);
+const MAX_REWIND_POINTS = 100;
 
 // 每轮请求在执行前都会记录一个 checkpoint，便于中断时回滚消息和文件改动。
 interface TurnCheckpoint {
   turnId: string;
   input: string;
+  createdAt: string;
   runtimeMessageCount: number;
   uiMessageCount: number;
   controller: AbortController;
@@ -70,12 +79,25 @@ interface TurnCheckpoint {
   userCancelled: boolean;
 }
 
+interface RewindPoint {
+  id: string;
+  turnId: string;
+  input: string;
+  createdAt: string;
+  runtimeMessageCount: number;
+  uiMessageCount: number;
+  hasFileChanges: boolean;
+  hasNonRestorableToolActivity: boolean;
+  isRestoredFromHistory: boolean;
+}
+
 export interface SessionController {
   initialize: () => void;
   submit: (input: string) => Promise<void>;
   setDraftInput: (value: string) => void;
   interrupt: () => void;
-  restoreLastInterruptedTurn: () => Promise<void>;
+  openRewindSelector: () => void;
+  restoreRewindPoint: (pointId: string, mode: RewindRestoreMode) => Promise<void>;
   respondToApproval: (decision: PermissionDecision) => void;
   respondToQuestion: (response: AskUserQuestionResponse | null) => void;
   openSettings: (section?: SettingsSection, reason?: string) => void;
@@ -102,7 +124,7 @@ export function createSessionController(
   let sessionApprovalMode = runtime.getSettings().approvalMode;
   const sessionAllowedKinds = new Set<ToolPermissionKind>();
   let activeTurn: TurnCheckpoint | null = null;
-  let lastInterruptedTurn: TurnCheckpoint | null = null;
+  let rewindPoints: RewindPoint[] = [];
 
   const appendUiMessage = (message: TerminalUiMessage) => {
     store.updateState((state) => appendMessage(state, message));
@@ -135,15 +157,6 @@ export function createSessionController(
     store.updateState((state) => closeDialog(state));
   };
 
-  const discardInterruptedTurn = () => {
-    if (!lastInterruptedTurn) {
-      return;
-    }
-
-    runtime.discardTurn(lastInterruptedTurn.turnId);
-    lastInterruptedTurn = null;
-  };
-
   const canFullyRestoreTurn = (turn: TurnCheckpoint) => !turn.hasNonRestorableToolActivity;
 
   const restoreTurn = async (turn: TurnCheckpoint) => {
@@ -167,9 +180,219 @@ export function createSessionController(
     if (activeTurn?.turnId === turn.turnId) {
       activeTurn = null;
     }
-    if (lastInterruptedTurn?.turnId === turn.turnId) {
-      lastInterruptedTurn = null;
+  };
+
+  const getAffectedRewindPoints = (target: RewindPoint) =>
+    rewindPoints.filter((point) => point.uiMessageCount >= target.uiMessageCount);
+
+  const hasRestorableFileSnapshot = (point: RewindPoint) =>
+    point.hasFileChanges &&
+    !point.isRestoredFromHistory &&
+    runtime.hasTrackedFileChanges(point.turnId);
+
+  const toTerminalRewindPoint = (point: RewindPoint): TerminalUiRewindPoint => {
+    const affected = getAffectedRewindPoints(point);
+    const hasCodeChanges = affected.some((candidate) => candidate.hasFileChanges);
+    const hasUnsafeToolActivity = affected.some(
+      (candidate) =>
+        candidate.hasNonRestorableToolActivity ||
+        (candidate.hasFileChanges && !hasRestorableFileSnapshot(candidate))
+    );
+    const canRestoreCode =
+      hasCodeChanges &&
+      !hasUnsafeToolActivity &&
+      affected.every((candidate) => !candidate.hasFileChanges || hasRestorableFileSnapshot(candidate));
+
+    return {
+      id: point.id,
+      input: point.input,
+      createdAt: point.createdAt,
+      hasCodeChanges,
+      canRestoreCode,
+      hasUnsafeToolActivity,
+      turnsRemoved: affected.length
+    };
+  };
+
+  const buildRewindDialogPoints = () => [...rewindPoints].reverse().map(toTerminalRewindPoint);
+
+  const trimRewindPoints = () => {
+    while (rewindPoints.length > MAX_REWIND_POINTS) {
+      const removed = rewindPoints.shift();
+      if (removed && !removed.isRestoredFromHistory) {
+        runtime.discardTurn(removed.turnId);
+      }
     }
+  };
+
+  const rememberRewindPoint = (checkpoint: TurnCheckpoint) => {
+    const hasFileChanges = runtime.hasTrackedFileChanges(checkpoint.turnId);
+    const point: RewindPoint = {
+      id: checkpoint.turnId,
+      turnId: checkpoint.turnId,
+      input: checkpoint.input,
+      createdAt: checkpoint.createdAt,
+      runtimeMessageCount: checkpoint.runtimeMessageCount,
+      uiMessageCount: checkpoint.uiMessageCount,
+      hasFileChanges,
+      hasNonRestorableToolActivity: checkpoint.hasNonRestorableToolActivity,
+      isRestoredFromHistory: false
+    };
+
+    rewindPoints = [
+      ...rewindPoints.filter((candidate) => candidate.id !== point.id),
+      point
+    ].sort((a, b) => a.uiMessageCount - b.uiMessageCount);
+
+    if (!hasFileChanges || checkpoint.hasNonRestorableToolActivity) {
+      runtime.discardTurn(checkpoint.turnId);
+    }
+
+    trimRewindPoints();
+  };
+
+  const openRewindSelector = () => {
+    const points = buildRewindDialogPoints();
+    if (points.length === 0) {
+      appendUiMessage(createSystemMessage("Nothing to rewind to yet.", "Rewind"));
+      return;
+    }
+
+    store.updateState((state) => openRewindPickerDialog(state, points));
+  };
+
+  const pruneRewindPointsFrom = (target: RewindPoint) => {
+    const removed = getAffectedRewindPoints(target);
+    for (const point of removed) {
+      if (!point.isRestoredFromHistory) {
+        runtime.discardTurn(point.turnId);
+      }
+    }
+    rewindPoints = rewindPoints.filter((point) => point.uiMessageCount < target.uiMessageCount);
+  };
+
+  const restoreRewindPointById = async (pointId: string, mode: RewindRestoreMode) => {
+    const target = rewindPoints.find((point) => point.id === pointId);
+    if (!target) {
+      appendUiMessage(createErrorMessage("That rewind point is no longer available."));
+      setDialogClosed();
+      return;
+    }
+
+    const view = toTerminalRewindPoint(target);
+    if (mode === "code-and-conversation" && !view.canRestoreCode) {
+      appendUiMessage(createErrorMessage("Code rewind is not available for that point."));
+      setDialogClosed();
+      return;
+    }
+
+    const affected = getAffectedRewindPoints(target);
+    const restoredFiles: string[] = [];
+    const removedFiles: string[] = [];
+
+    try {
+      if (mode === "code-and-conversation") {
+        const newestFirst = [...affected].sort((a, b) => b.uiMessageCount - a.uiMessageCount);
+        for (const point of newestFirst) {
+          if (!point.hasFileChanges || point.isRestoredFromHistory) {
+            continue;
+          }
+
+          const result = await runtime.restoreFilesForTurn(point.turnId);
+          restoredFiles.push(...result.restored);
+          removedFiles.push(...result.removed);
+        }
+      }
+
+      runtime.messages.splice(target.runtimeMessageCount);
+      const baseMessages = store.getState().messages.slice(0, target.uiMessageCount);
+      const summary = [
+        `Rewound to before: ${target.input}`,
+        `Mode: ${mode === "code-and-conversation" ? "code and conversation" : "conversation"}`,
+        `Removed turns: ${affected.length}`
+      ];
+
+      if (mode === "code-and-conversation") {
+        summary.push(`Files restored: ${restoredFiles.length}`);
+        summary.push(`Files removed: ${removedFiles.length}`);
+      } else if (view.hasCodeChanges) {
+        summary.push("File changes were left on disk.");
+      }
+
+      const systemMessage = createSystemMessage(summary.join("\n"), "Rewind");
+      store.updateState((state) =>
+        setDraftInput(
+          setTranscriptSticky(
+            replaceMessages(setStatusText(closeDialog(state), "Rewound"), [
+              ...baseMessages,
+              systemMessage
+            ]),
+            true
+          ),
+          target.input
+        )
+      );
+
+      await runtime.recordSessionRewind({
+        apiMessageCount: Math.max(0, target.runtimeMessageCount - 1),
+        uiMessageCount: target.uiMessageCount,
+        restoredInput: target.input,
+        restoreMode: mode
+      });
+
+      pruneRewindPointsFrom(target);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      appendUiMessage(createErrorMessage(`Failed to rewind: ${message}`));
+      store.updateState((state) => setStatusText(state, "Error"));
+    }
+  };
+
+  const rebuildRewindPointsFromCurrentConversation = (uiMessages: TerminalUiMessage[]) => {
+    const apiUserMessages: Array<{ input: string; runtimeMessageCount: number }> = [];
+    for (let index = 1; index < runtime.messages.length; index += 1) {
+      const message = runtime.messages[index];
+      if (message?.role !== "user") {
+        continue;
+      }
+
+      const input = extractMessageText((message as { content?: unknown }).content);
+      if (input) {
+        apiUserMessages.push({
+          input,
+          runtimeMessageCount: index
+        });
+      }
+    }
+
+    const uiUserMessages = uiMessages
+      .map((message, index) => ({ message, index }))
+      .filter((entry) => entry.message.kind === "user");
+    const count = Math.min(apiUserMessages.length, uiUserMessages.length);
+    const rebuilt: RewindPoint[] = [];
+
+    for (let index = 0; index < count; index += 1) {
+      const apiUserMessage = apiUserMessages[index];
+      const uiUserMessage = uiUserMessages[index];
+      if (!apiUserMessage || !uiUserMessage) {
+        continue;
+      }
+
+      rebuilt.push({
+        id: `history-${uiUserMessage.message.id}`,
+        turnId: `history-${uiUserMessage.message.id}`,
+        input: apiUserMessage.input || uiUserMessage.message.content,
+        createdAt: uiUserMessage.message.createdAt,
+        runtimeMessageCount: apiUserMessage.runtimeMessageCount,
+        uiMessageCount: uiUserMessage.index,
+        hasFileChanges: false,
+        hasNonRestorableToolActivity: false,
+        isRestoredFromHistory: true
+      });
+    }
+
+    rewindPoints = rebuilt;
+    trimRewindPoints();
   };
 
   const requestApproval = async (
@@ -277,12 +500,12 @@ export function createSessionController(
 
   const resumeSessionById = async (sessionId: string) => {
     const resumed = await runtime.resumeSessionHistory(sessionId);
-    lastInterruptedTurn = null;
     activeTurn = null;
     sessionAllowedKinds.clear();
     sessionApprovalMode = runtime.getSettings().approvalMode;
 
     const restoredMessages = resumed.uiMessages as TerminalUiMessage[];
+    rebuildRewindPointsFromCurrentConversation(restoredMessages);
     const systemMessage = createSystemMessage(
       [
         `Resumed session ${resumed.sessionId.slice(0, 8)}.`,
@@ -507,8 +730,18 @@ export function createSessionController(
       return true;
     }
 
+    if (parsedCommand.type === "rewind") {
+      openRewindSelector();
+      return true;
+    }
+
     if (parsedCommand.type === "clear") {
-      discardInterruptedTurn();
+      for (const point of rewindPoints) {
+        if (!point.isRestoredFromHistory) {
+          runtime.discardTurn(point.turnId);
+        }
+      }
+      rewindPoints = [];
       await runtime.clearConversation();
       store.updateState((state) =>
         setDraftInput(
@@ -681,7 +914,6 @@ export function createSessionController(
         return;
       }
 
-      discardInterruptedTurn();
       setDraftInputValue("");
 
       const parsedCommand = parseReplCommand(normalized);
@@ -706,6 +938,7 @@ export function createSessionController(
       const checkpoint: TurnCheckpoint = {
         turnId,
         input: normalized,
+        createdAt: new Date().toISOString(),
         runtimeMessageCount: runtime.messages.length,
         uiMessageCount: store.getState().messages.length,
         controller,
@@ -812,17 +1045,43 @@ export function createSessionController(
           uiMessages: sessionUiMessages
         });
 
-        runtime.discardTurn(turnId);
+        rememberRewindPoint(checkpoint);
         activeTurn = null;
         store.updateState((state) => setStatusText(state, "Idle"));
       } catch (error) {
         if (isTurnInterruptedError(error, controller.signal)) {
           activeTurn = null;
 
-          // 只有在未产生不可回滚副作用时，才允许把中断前状态完整恢复出来。
-          if (checkpoint.userCancelled && canFullyRestoreTurn(checkpoint) && !checkpoint.hasAssistantOutput) {
+          if (checkpoint.userCancelled && !checkpoint.hasAssistantOutput) {
             try {
-              await restoreTurn(checkpoint);
+              if (canFullyRestoreTurn(checkpoint)) {
+                await restoreTurn(checkpoint);
+              } else {
+                runtime.messages.splice(checkpoint.runtimeMessageCount);
+                runtime.discardTurn(turnId);
+                store.updateState((state) =>
+                  setDraftInput(
+                    setTranscriptSticky(
+                      replaceMessages(
+                        setStatusText(state, "Interrupted"),
+                        [
+                          ...state.messages.slice(0, checkpoint.uiMessageCount),
+                          createSystemMessage(
+                            [
+                              "Request interrupted by user.",
+                              "Conversation was rewound because the turn did not finish.",
+                              "Some non-rewindable tool side effects may remain on disk."
+                            ].join("\n"),
+                            "Session"
+                          )
+                        ]
+                      ),
+                      true
+                    ),
+                    checkpoint.input
+                  )
+                );
+              }
             } catch (restoreError) {
               const restoreMessage = restoreError instanceof Error ? restoreError.message : String(restoreError);
               appendUiMessage(
@@ -831,18 +1090,29 @@ export function createSessionController(
               runtime.discardTurn(turnId);
               store.updateState((state) => setStatusText(state, "Error"));
             }
-          } else if (checkpoint.userCancelled && canFullyRestoreTurn(checkpoint)) {
-            lastInterruptedTurn = checkpoint;
+          } else if (checkpoint.userCancelled) {
+            const interruptedApiMessages = runtime.messages.slice(checkpoint.runtimeMessageCount);
+            const interruptedUiMessages = store.getState().messages.slice(checkpoint.uiMessageCount);
+            try {
+              await runtime.recordSessionTurn({
+                apiMessages: interruptedApiMessages,
+                uiMessages: interruptedUiMessages
+              });
+            } catch (historyError) {
+              const historyMessage = historyError instanceof Error ? historyError.message : String(historyError);
+              appendUiMessage(createErrorMessage(`Interrupted turn was not saved: ${historyMessage}`));
+            }
+
+            rememberRewindPoint(checkpoint);
             appendUiMessage(
               createSystemMessage(
-                "Request interrupted by user. Press ESC again to restore the previous turn.",
+                "Request interrupted by user. Press ESC from empty input to choose where to rewind.",
                 "Session"
               )
             );
             store.updateState((state) => setStatusText(state, "Interrupted"));
           } else {
             runtime.discardTurn(turnId);
-            lastInterruptedTurn = null;
             appendUiMessage(
               createSystemMessage(
                 "Request interrupted by user. This turn cannot be fully restored because non-rewindable tools already ran.",
@@ -874,18 +1144,11 @@ export function createSessionController(
       activeTurn.controller.abort("user-cancel");
       store.updateState((state) => setStatusText(state, "Interrupting..."));
     },
-    restoreLastInterruptedTurn: async () => {
-      if (!lastInterruptedTurn) {
-        return;
-      }
-
-      try {
-        await restoreTurn(lastInterruptedTurn);
-      } catch (error) {
-        const message = error instanceof Error ? error.message : String(error);
-        appendUiMessage(createErrorMessage(`Failed to restore the interrupted turn: ${message}`));
-        store.updateState((state) => setStatusText(state, "Error"));
-      }
+    openRewindSelector: () => {
+      openRewindSelector();
+    },
+    restoreRewindPoint: async (pointId, mode) => {
+      await restoreRewindPointById(pointId, mode);
     },
     respondToApproval: (decision) => {
       pendingApprovalResolver?.(decision);
@@ -974,6 +1237,34 @@ function formatSessionTime(value: string): string {
     hour: "2-digit",
     minute: "2-digit"
   });
+}
+
+function extractMessageText(value: unknown): string {
+  if (typeof value === "string") {
+    return value.replace(/\s+/g, " ").trim();
+  }
+
+  if (!Array.isArray(value)) {
+    return "";
+  }
+
+  return value
+    .map((item) => {
+      if (!item || typeof item !== "object") {
+        return "";
+      }
+
+      const record = item as { text?: unknown; content?: unknown };
+      return typeof record.text === "string"
+        ? record.text
+        : typeof record.content === "string"
+          ? record.content
+          : "";
+    })
+    .filter(Boolean)
+    .join(" ")
+    .replace(/\s+/g, " ")
+    .trim();
 }
 
 function shouldUseGcliGeminiCompat(baseURL: string | undefined, model: string): boolean {

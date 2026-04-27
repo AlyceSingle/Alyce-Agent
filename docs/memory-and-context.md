@@ -32,6 +32,7 @@ This is the "where was I" layer.
 - `/resume` — open the saved-sessions picker
 - `/resume <id or search>` — jump straight to a specific session
 - `/sessions` — list what's been saved
+- `/rewind` — append a rewind marker so future resumes load the conversation after the rewind
 
 **How it works:**
 Every successful turn gets written as a JSONL line. When you resume, the entire message chain — what the model saw and what it said — gets restored. The visible terminal transcript comes back too. And new turns keep writing to the same file.

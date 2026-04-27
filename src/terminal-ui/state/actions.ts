@@ -11,6 +11,7 @@ import type {
 } from "../../tools/types.js";
 import type {
   ActiveDialog,
+  TerminalUiRewindPoint,
   SettingsSection,
   TerminalUiMessage,
   TerminalUiOverlayId,
@@ -192,6 +193,17 @@ export function openSessionPickerDialog(
     type: "session-picker",
     layer: "overlay",
     sessions
+  });
+}
+
+export function openRewindPickerDialog(
+  state: TerminalUiState,
+  points: TerminalUiRewindPoint[]
+): TerminalUiState {
+  return pushDialog(state, {
+    type: "rewind-picker",
+    layer: "overlay",
+    points
   });
 }
 

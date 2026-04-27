@@ -27,6 +27,7 @@ Alyce-Agent is a local coding assistant framework with:
 - Tool loop: the model can call multiple tools in one turn before returning a final answer
 - Prompt engineering: static rules, dynamic environment, and persona overlays are assembled into one system prompt
 - Session resume: project-local JSONL transcripts let `/resume` reopen earlier conversations
+- Rewind: `Esc` or `/rewind` can restore an earlier prompt, with tracked file rollback when available
 - Context control: message timestamps, memory injection, auto-summary, and compaction work together to keep prompts useful instead of bloated
 - Safety rails: file access scope, approval gates, and pre-write snapshots are built into the runtime
 

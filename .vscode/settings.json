@@ -1,0 +1,8 @@
+{
+    "chat.tools.terminal.autoApprove": {
+        "/^npm run build ; node --disable-warning=DEP0040 dist/index\\.js$/": {
+            "approve": true,
+            "matchCommandLine": true
+        }
+    }
+}

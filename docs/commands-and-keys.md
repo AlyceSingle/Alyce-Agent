@@ -20,6 +20,7 @@ Type these into the main input. They start with `/` and execute immediately.
 | `/settings` | Jumps straight to the settings dialog. |
 | `/setup` | First-run configuration wizard. |
 | `/clear` | Wipes the current conversation and starts fresh. |
+| `/rewind` | Opens the rewind selector so you can restore to an earlier prompt. |
 | `/exit` | Closes Alyce-Agent. |
 
 ### Memory
@@ -70,7 +71,7 @@ These work anywhere in the app — no matter what dialog is open.
 | `Ctrl+Q` | Quit. *No confirmation dialog, so make sure you mean it.* |
 | `Ctrl+X` | Open settings. *Probably the most-used key after typing.* |
 | `Ctrl+O` | Open a detailed view of the current selected message. Useful for reading long tool outputs. |
-| `Esc` | Close any open dialog, leave detail view, or trigger recovery flows after an interrupted turn. |
+| `Esc` | Interrupt Alyce while a request is running. From empty input, opens rewind; inside rewind, pressing it repeatedly walks to older prompts. |
 
 ## Interrupts
 
@@ -78,7 +79,7 @@ These work anywhere in the app — no matter what dialog is open.
 |---|---|
 | `Ctrl+C` | Clears your current input. If a model request is running, it interrupts that request instead. |
 
-If a turn gets interrupted but the state is still recoverable, the controller will offer recovery — just press `Esc` when prompted.
+After an interrupted turn, press `Esc` from empty input to choose where to rewind. Pick a prompt with `Enter`; if tracked file edits are available, Alyce can restore code and conversation together.
 
 ## Navigating Conversations
 
