@@ -1,4 +1,10 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import {
+  buildMarkdownRenderPlan,
+  MarkdownRenderer,
+  sliceMarkdownRenderPlan,
+  shouldRenderMarkdownMessage
+} from "./MarkdownRenderer.js";
 import { Box, ScrollBox, Text, type ScrollBoxHandle } from "../runtime/ink.js";
 import { useTerminalInput } from "../runtime/input.js";
 import type { TerminalUiMessage } from "../state/types.js";
@@ -18,6 +24,7 @@ export function MessageReaderScreen(props: {
   message: TerminalUiMessage;
   terminalWidth: number;
   terminalHeight: number;
+  markdownEnabled: boolean;
   onClose: () => void;
 }) {
   const scrollRef = useRef<ScrollBoxHandle | null>(null);
@@ -27,7 +34,18 @@ export function MessageReaderScreen(props: {
   });
 
   const contentWidth = Math.max(24, props.terminalWidth - 8);
+  const markdownPlan = useMemo(() => {
+    if (!shouldRenderMarkdownMessage(props.message.kind, props.markdownEnabled)) {
+      return null;
+    }
+
+    return buildMarkdownRenderPlan(props.message.content, Math.max(16, contentWidth - 2));
+  }, [contentWidth, props.markdownEnabled, props.message.content, props.message.kind]);
   const lines = useMemo(() => {
+    if (markdownPlan) {
+      return [];
+    }
+
     const renderedLines: string[] = [];
     const blockWidth = Math.max(24, contentWidth - 4);
 
@@ -50,7 +68,7 @@ export function MessageReaderScreen(props: {
     return renderedLines.length > 0
       ? renderedLines
       : wrapText(props.message.content, Math.max(24, contentWidth - 2));
-  }, [contentWidth, props.message.blocks, props.message.content]);
+  }, [contentWidth, markdownPlan, props.message.blocks, props.message.content]);
 
   const syncScrollSnapshot = useCallback(() => {
     const handle = scrollRef.current;
@@ -152,12 +170,17 @@ export function MessageReaderScreen(props: {
   }, { isActive: true });
 
   const viewportHeight = Math.max(MIN_VIEWPORT_ROWS, scrollSnapshot.viewportHeight);
+  const totalLineCount = markdownPlan?.rowCount ?? lines.length;
   const visibleStart = Math.max(0, scrollSnapshot.top - OVERSCAN_LINES);
-  const visibleEnd = Math.min(lines.length, scrollSnapshot.top + viewportHeight + OVERSCAN_LINES);
+  const visibleEnd = Math.min(totalLineCount, scrollSnapshot.top + viewportHeight + OVERSCAN_LINES);
   const visibleLines = lines.slice(visibleStart, visibleEnd);
+  const visibleMarkdownBlocks = markdownPlan
+    ? sliceMarkdownRenderPlan(markdownPlan, visibleStart, visibleEnd)
+    : null;
   const topSpacerHeight = visibleStart;
-  const bottomSpacerHeight = Math.max(0, lines.length - visibleEnd);
-  const lastVisibleLine = lines.length === 0 ? 0 : Math.min(lines.length, scrollSnapshot.top + viewportHeight);
+  const bottomSpacerHeight = Math.max(0, totalLineCount - visibleEnd);
+  const lastVisibleLine =
+    totalLineCount === 0 ? 0 : Math.min(totalLineCount, scrollSnapshot.top + viewportHeight);
   const metadataText = props.message.metadata.join(" | ") || "Full message";
   const badge =
     props.message.kind === "assistant"
@@ -171,6 +194,22 @@ export function MessageReaderScreen(props: {
             : props.message.kind === "error"
               ? "ERROR"
               : "SYSTEM";
+  const badgeColor =
+    props.message.kind === "user" || props.message.kind === "system"
+      ? terminalUiTheme.colors.code
+      : props.message.kind === "assistant"
+        ? terminalUiTheme.colors.assistant
+        : props.message.kind === "tool"
+          ? terminalUiTheme.colors.tool
+          : props.message.kind === "thinking"
+            ? terminalUiTheme.colors.thinking
+            : props.message.kind === "error"
+            ? terminalUiTheme.colors.danger
+              : terminalUiTheme.colors.code;
+  const bodyColor =
+    props.message.kind === "system"
+      ? terminalUiTheme.colors.code
+      : undefined;
 
   return (
     <Box
@@ -184,7 +223,9 @@ export function MessageReaderScreen(props: {
     >
       <Box flexShrink={0} width="100%">
         <Text color={terminalUiTheme.colors.chrome} wrap="truncate-end">
-          [{badge}] {props.message.title}
+          <Text color={badgeColor}>[{badge}]</Text>
+          {" "}
+          {props.message.title}
         </Text>
         <Text color={terminalUiTheme.colors.muted} wrap="truncate-end">
           {metadataText}
@@ -211,22 +252,38 @@ export function MessageReaderScreen(props: {
           minHeight={0}
           width="100%"
         >
-          {topSpacerHeight > 0 ? <Box height={topSpacerHeight} /> : null}
-          {visibleLines.map((line, index) => (
-            <Text
-              key={`${props.message.id}-${visibleStart + index}`}
-              color={line === "Input" || line === "Output" ? terminalUiTheme.colors.subtle : undefined}
-            >
-              {line}
-            </Text>
-          ))}
-          {bottomSpacerHeight > 0 ? <Box height={bottomSpacerHeight} /> : null}
+          {markdownPlan ? (
+            <>
+              {topSpacerHeight > 0 ? <Box height={topSpacerHeight} /> : null}
+              <MarkdownRenderer
+                plan={{
+                  blocks: visibleMarkdownBlocks ?? [],
+                  rowCount: visibleEnd - visibleStart
+                }}
+                kind={props.message.kind}
+              />
+              {bottomSpacerHeight > 0 ? <Box height={bottomSpacerHeight} /> : null}
+            </>
+          ) : (
+            <>
+              {topSpacerHeight > 0 ? <Box height={topSpacerHeight} /> : null}
+              {visibleLines.map((line, index) => (
+                <Text
+                  key={`${props.message.id}-${visibleStart + index}`}
+                  color={line === "Input" || line === "Output" ? terminalUiTheme.colors.subtle : bodyColor}
+                >
+                  {line}
+                </Text>
+              ))}
+              {bottomSpacerHeight > 0 ? <Box height={bottomSpacerHeight} /> : null}
+            </>
+          )}
         </ScrollBox>
       </Box>
       <Box flexShrink={0} width="100%">
         <Divider />
         <Text color={terminalUiTheme.colors.subtle} wrap="truncate-end">
-          Lines {lines.length === 0 ? 0 : scrollSnapshot.top + 1}-{lastVisibleLine} of {lines.length}
+          Lines {totalLineCount === 0 ? 0 : scrollSnapshot.top + 1}-{lastVisibleLine} of {totalLineCount}
           {" | "}
           Up/Down scroll
           {" | "}

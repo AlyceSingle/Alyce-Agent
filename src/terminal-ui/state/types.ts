@@ -47,7 +47,6 @@ export interface TerminalUiMessage {
   preview: string;
   metadata: string[];
   createdAt: string;
-  isTruncated: boolean;
 }
 
 export type SettingsSection = "connection" | "session";

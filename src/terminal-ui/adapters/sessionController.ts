@@ -91,6 +91,41 @@ interface RewindPoint {
   isRestoredFromHistory: boolean;
 }
 
+function getErrorMessage(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
+}
+
+function formatPostResponseFailure(step: string, error: unknown): string {
+  return `${step}: ${getErrorMessage(error)}`;
+}
+
+type CompletedTurnHistoryPlan = {
+  mode: "delta" | "snapshot";
+  apiMessages: SessionRuntime["messages"];
+  uiBaseMessageCount: number;
+};
+
+async function recordCompletedTurnHistory(
+  runtime: SessionRuntime,
+  store: TerminalUiStore,
+  plan: CompletedTurnHistoryPlan
+) {
+  const uiMessages = store.getState().messages.slice(plan.uiBaseMessageCount);
+  if (plan.mode === "snapshot") {
+    await runtime.recordSessionConversationSnapshot({
+      apiMessages: plan.apiMessages,
+      uiMessages,
+      uiBaseMessageCount: plan.uiBaseMessageCount
+    });
+    return;
+  }
+
+  await runtime.recordSessionTurn({
+    apiMessages: plan.apiMessages,
+    uiMessages
+  });
+}
+
 export interface SessionController {
   initialize: () => void;
   submit: (input: string) => Promise<void>;
@@ -958,6 +993,8 @@ export function createSessionController(
       runtime.messages.push(userMessage);
       appendUiMessage(createUserMessage(normalized));
       store.updateState((state) => setLoading(setStatusText(state, "Thinking..."), true));
+      let completedTurnHistoryPlan: CompletedTurnHistoryPlan | null = null;
+      let turnRecorded = false;
 
       try {
         // 每轮都绑定独立的 abort controller 和 tool context，确保取消只影响当前轮次。
@@ -990,6 +1027,22 @@ export function createSessionController(
 
             appendUiMessage(createThinkingMessage(chunk));
           },
+          onReconnect: (event) => {
+            if (event.type === "scheduled") {
+              const statusLabel = event.statusCode ? `HTTP ${event.statusCode}` : event.errorMessage;
+              store.updateState((state) =>
+                setStatusText(
+                  state,
+                  `Reconnecting ${event.attempt}/${event.maxRetries} in ${Math.ceil(
+                    event.retryDelayMs / 1000
+                  )}s... ${statusLabel}`
+                )
+              );
+              return;
+            }
+
+            store.updateState((state) => setStatusText(state, "Thinking..."));
+          },
           onToolCallStart: (toolName, rawArguments) => {
             if (!RESTORABLE_TOOL_NAMES.has(toolName)) {
               checkpoint.hasNonRestorableToolActivity = true;
@@ -1005,29 +1058,64 @@ export function createSessionController(
 
         checkpoint.hasAssistantOutput = true;
         appendUiMessage(createAssistantMessage(reply));
-        const sessionApiMessages = runtime.messages.slice(checkpoint.runtimeMessageCount);
-        const sessionUiMessages = store.getState().messages.slice(checkpoint.uiMessageCount);
+        completedTurnHistoryPlan = {
+          mode: "delta",
+          apiMessages: runtime.messages.slice(checkpoint.runtimeMessageCount),
+          uiBaseMessageCount: checkpoint.uiMessageCount
+        };
         throwIfAborted(controller.signal);
+        let summaryUpdated = false;
+        let compacted = false;
+        const postResponseFailures: string[] = [];
 
-        const summaryUpdated = await runtime.memoryService.maybeRefreshAutoSummary({
-          client,
-          model: currentModel,
-          messages: runtime.messages,
-          abortSignal: controller.signal
-        });
+        try {
+          summaryUpdated = await runtime.memoryService.maybeRefreshAutoSummary({
+            client,
+            model: currentModel,
+            messages: runtime.messages,
+            abortSignal: controller.signal
+          });
+          throwIfAborted(controller.signal);
+        } catch (error) {
+          if (isTurnInterruptedError(error, controller.signal)) {
+            throw error;
+          }
 
-        throwIfAborted(controller.signal);
+          postResponseFailures.push(formatPostResponseFailure("Auto session summary update failed", error));
+        }
 
-        const compacted = await runtime.maybeCompactConversation({
-          client,
-          model: currentModel,
-          abortSignal: controller.signal
-        });
+        try {
+          compacted = await runtime.maybeCompactConversation({
+            client,
+            model: currentModel,
+            abortSignal: controller.signal
+          });
+          if (compacted) {
+            completedTurnHistoryPlan = {
+              mode: "snapshot",
+              apiMessages: runtime.messages.slice(1),
+              uiBaseMessageCount: checkpoint.uiMessageCount
+            };
+          }
+          throwIfAborted(controller.signal);
+        } catch (error) {
+          if (isTurnInterruptedError(error, controller.signal)) {
+            throw error;
+          }
 
-        throwIfAborted(controller.signal);
+          postResponseFailures.push(formatPostResponseFailure("Conversation compaction failed", error));
+        }
 
         if (summaryUpdated || compacted) {
-          await runtime.resetSystemMessage();
+          try {
+            await runtime.resetSystemMessage();
+          } catch (error) {
+            if (isTurnInterruptedError(error, controller.signal)) {
+              throw error;
+            }
+
+            postResponseFailures.push(formatPostResponseFailure("System prompt refresh failed", error));
+          }
         }
 
         if (summaryUpdated) {
@@ -1040,15 +1128,59 @@ export function createSessionController(
           );
         }
 
-        await runtime.recordSessionTurn({
-          apiMessages: sessionApiMessages,
-          uiMessages: sessionUiMessages
-        });
+        try {
+          if (!completedTurnHistoryPlan) {
+            throw new Error("Completed turn history was not prepared.");
+          }
+
+          await recordCompletedTurnHistory(runtime, store, completedTurnHistoryPlan);
+          turnRecorded = true;
+        } catch (error) {
+          postResponseFailures.push(formatPostResponseFailure("Session history save failed", error));
+        }
 
         rememberRewindPoint(checkpoint);
         activeTurn = null;
+        if (postResponseFailures.length > 0) {
+          appendUiMessage(createErrorMessage(postResponseFailures.join("\n")));
+        }
         store.updateState((state) => setStatusText(state, "Idle"));
       } catch (error) {
+        if (checkpoint.hasAssistantOutput) {
+          activeTurn = null;
+
+          if (!turnRecorded && completedTurnHistoryPlan) {
+            try {
+              await recordCompletedTurnHistory(runtime, store, completedTurnHistoryPlan);
+              turnRecorded = true;
+            } catch (historyError) {
+              appendUiMessage(
+                createErrorMessage(
+                  `Completed turn was not fully saved: ${getErrorMessage(historyError)}`
+                )
+              );
+            }
+          }
+
+          rememberRewindPoint(checkpoint);
+
+          if (isTurnInterruptedError(error, controller.signal)) {
+            appendUiMessage(
+              createSystemMessage(
+                "Post-response processing was interrupted. The assistant reply was kept.",
+                "Session"
+              )
+            );
+            store.updateState((state) => setStatusText(state, "Interrupted"));
+          } else {
+            appendUiMessage(
+              createErrorMessage(`Post-response processing failed: ${getErrorMessage(error)}`)
+            );
+            store.updateState((state) => setStatusText(state, "Idle"));
+          }
+          return;
+        }
+
         if (isTurnInterruptedError(error, controller.signal)) {
           activeTurn = null;
 
@@ -1083,7 +1215,7 @@ export function createSessionController(
                 );
               }
             } catch (restoreError) {
-              const restoreMessage = restoreError instanceof Error ? restoreError.message : String(restoreError);
+              const restoreMessage = getErrorMessage(restoreError);
               appendUiMessage(
                 createErrorMessage(`Interrupted, but failed to restore the previous turn: ${restoreMessage}`)
               );
@@ -1099,7 +1231,7 @@ export function createSessionController(
                 uiMessages: interruptedUiMessages
               });
             } catch (historyError) {
-              const historyMessage = historyError instanceof Error ? historyError.message : String(historyError);
+              const historyMessage = getErrorMessage(historyError);
               appendUiMessage(createErrorMessage(`Interrupted turn was not saved: ${historyMessage}`));
             }
 
@@ -1123,10 +1255,13 @@ export function createSessionController(
           }
         } else {
           activeTurn = null;
+          runtime.messages.splice(checkpoint.runtimeMessageCount);
           runtime.discardTurn(turnId);
-          const message = error instanceof Error ? error.message : String(error);
+          const message = getErrorMessage(error);
           appendUiMessage(createErrorMessage(message));
-          store.updateState((state) => setStatusText(state, "Error"));
+          store.updateState((state) =>
+            setDraftInput(setTranscriptSticky(setStatusText(state, "Error"), true), checkpoint.input)
+          );
         }
       } finally {
         store.updateState((state) => setLoading(state, false));

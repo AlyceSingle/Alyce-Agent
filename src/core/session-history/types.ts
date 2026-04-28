@@ -40,7 +40,6 @@ export interface SessionHistoryUiMessage {
   preview: string;
   metadata: string[];
   createdAt: string;
-  isTruncated: boolean;
 }
 
 export type SessionHistoryEntry =

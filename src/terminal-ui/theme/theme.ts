@@ -20,7 +20,20 @@ export const terminalUiTheme = {
     selectionMuted: "#334155",
     inputCursor: "#f8fafc",
     inputCursorText: "#111827",
-    code: "#93c5fd"
+    code: "#93c5fd",
+    messageCardText: "#e2e8f0",
+    messageCardMuted: "#94a3b8",
+    markdownHeading1: "#f8fafc",
+    markdownHeading2: "#fdba74",
+    markdownHeading3: "#86efac",
+    markdownHeading4: "#7dd3fc",
+    markdownQuote: "#93c5fd",
+    markdownRule: "#475569",
+    markdownLink: "#7dd3fc",
+    markdownInlineCode: "#fde68a",
+    markdownCodeLabel: "#94a3b8",
+    markdownTable: "#cbd5e1",
+    markdownTableDivider: "#64748b"
   },
   chrome: {
     title: "Alyce Console"

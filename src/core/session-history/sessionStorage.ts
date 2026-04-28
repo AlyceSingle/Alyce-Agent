@@ -85,36 +85,48 @@ export class SessionHistoryStore {
       wroteMetaEntry = true;
     }
 
-    for (const message of options.apiMessages) {
-      entries.push({
-        type: "api-message",
-        sessionId,
-        sequence: this.nextSequence(),
-        timestamp,
-        message
-      });
+    entries.push(...this.buildTurnEntries(sessionId, timestamp, options.apiMessages, options.uiMessages));
+
+    await this.appendEntries(sessionId, entries);
+    if (wroteMetaEntry) {
+      this.materializedSessions.add(sessionId);
+    }
+  }
+
+  async recordConversationSnapshot(options: {
+    apiMessages: SessionHistoryApiMessage[];
+    uiMessages: SessionHistoryUiMessage[];
+    uiBaseMessageCount: number;
+  }): Promise<void> {
+    if (options.apiMessages.length === 0 && options.uiMessages.length === 0) {
+      return;
     }
 
-    for (const message of options.uiMessages) {
+    const sessionId = this.currentSessionId;
+    const timestamp = new Date().toISOString();
+    const entries: SessionHistoryEntry[] = [];
+    let wroteMetaEntry = false;
+
+    if (!this.materializedSessions.has(sessionId)) {
       entries.push({
-        type: "ui-message",
+        type: "session-meta",
+        schemaVersion: SESSION_HISTORY_SCHEMA_VERSION,
         sessionId,
-        sequence: this.nextSequence(),
-        timestamp,
-        message
+        workspaceRoot: this.options.workspaceRoot,
+        createdAt: timestamp
       });
+      wroteMetaEntry = true;
     }
 
-    const title = extractTitleFromApiMessages(options.apiMessages);
-    if (title) {
-      entries.push({
-        type: "session-title",
-        sessionId,
-        sequence: this.nextSequence(),
-        timestamp,
-        title
-      });
-    }
+    entries.push({
+      type: "session-rewind",
+      sessionId,
+      sequence: this.nextSequence(),
+      timestamp,
+      apiMessageCount: 0,
+      uiMessageCount: Math.max(0, Math.trunc(options.uiBaseMessageCount))
+    });
+    entries.push(...this.buildTurnEntries(sessionId, timestamp, options.apiMessages, options.uiMessages));
 
     await this.appendEntries(sessionId, entries);
     if (wroteMetaEntry) {
@@ -340,6 +352,48 @@ export class SessionHistoryStore {
     return this.currentSequence;
   }
 
+  private buildTurnEntries(
+    sessionId: SessionId,
+    timestamp: string,
+    apiMessages: SessionHistoryApiMessage[],
+    uiMessages: SessionHistoryUiMessage[]
+  ): SessionHistoryEntry[] {
+    const entries: SessionHistoryEntry[] = [];
+
+    for (const message of apiMessages) {
+      entries.push({
+        type: "api-message",
+        sessionId,
+        sequence: this.nextSequence(),
+        timestamp,
+        message
+      });
+    }
+
+    for (const message of uiMessages) {
+      entries.push({
+        type: "ui-message",
+        sessionId,
+        sequence: this.nextSequence(),
+        timestamp,
+        message
+      });
+    }
+
+    const title = extractTitleFromApiMessages(apiMessages);
+    if (title) {
+      entries.push({
+        type: "session-title",
+        sessionId,
+        sequence: this.nextSequence(),
+        timestamp,
+        title
+      });
+    }
+
+    return entries;
+  }
+
   private async appendEntries(sessionId: SessionId, entries: SessionHistoryEntry[]): Promise<void> {
     if (entries.length === 0) {
       return;
@@ -422,8 +476,7 @@ function isUiMessage(value: unknown): value is SessionHistoryUiMessage {
       typeof record.content === "string" &&
       typeof record.preview === "string" &&
       Array.isArray(record.metadata) &&
-      typeof record.createdAt === "string" &&
-      typeof record.isTruncated === "boolean"
+      typeof record.createdAt === "string"
   );
 }
 

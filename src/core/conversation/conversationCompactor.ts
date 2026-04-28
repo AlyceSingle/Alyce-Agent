@@ -34,6 +34,8 @@ const COMPACTION_SUMMARY_TEMPLATE = [
   "# Open Risks and Next Steps",
   ""
 ].join("\n");
+const COMPACTION_SUMMARY_HEADING = "# Compacted Conversation Summary";
+const COMPACTION_UPDATED_AT_PREFIX = "Updated at:";
 
 export class ConversationCompactor {
   private state: ConversationCompactionState | null = null;
@@ -71,10 +73,15 @@ export class ConversationCompactor {
     }
 
     let markdown: string;
+    const existingState = this.state ?? readCompactionStateFromMessages(options.messages);
+    if (!this.state && existingState) {
+      this.state = existingState;
+    }
+
     try {
       markdown = await buildConversationCompactionSummary(options.client, {
         model: options.model,
-        existingSummary: this.state?.markdown,
+        existingSummary: existingState?.markdown,
         messages: archivedMessages,
         maxMessagesForSummary: this.config.maxMessagesForSummary,
         maxCharsPerMessage: this.config.maxCharsPerMessage,
@@ -138,7 +145,7 @@ function createCompactionSummaryMessage(
   return {
     role: "system",
     content: [
-      "# Compacted Conversation Summary",
+      COMPACTION_SUMMARY_HEADING,
       `Updated at: ${state.updatedAt}`,
       "",
       state.markdown
@@ -206,6 +213,52 @@ async function buildConversationCompactionSummary(
   }
 
   return content.replace(/\r\n/g, "\n").replace(/\n{3,}/g, "\n\n").trim();
+}
+
+function readCompactionStateFromMessages(messages: MessageParam[]): ConversationCompactionState | null {
+  for (const message of messages) {
+    if (message.role !== "system") {
+      continue;
+    }
+
+    const parsed = parseCompactionSummaryMessage(extractMessageText(message));
+    if (parsed) {
+      return parsed;
+    }
+  }
+
+  return null;
+}
+
+function parseCompactionSummaryMessage(content: string): ConversationCompactionState | null {
+  const normalized = content.replace(/\r\n/g, "\n").trim();
+  if (!normalized.startsWith(COMPACTION_SUMMARY_HEADING)) {
+    return null;
+  }
+
+  const lines = normalized.split("\n");
+  if ((lines[0] ?? "").trim() !== COMPACTION_SUMMARY_HEADING) {
+    return null;
+  }
+
+  const updatedAtLine = lines[1]?.trim() ?? "";
+  const updatedAt = updatedAtLine.startsWith(COMPACTION_UPDATED_AT_PREFIX)
+    ? updatedAtLine.slice(COMPACTION_UPDATED_AT_PREFIX.length).trim()
+    : "";
+  let contentStart = updatedAt ? 2 : 1;
+  while (contentStart < lines.length && lines[contentStart]?.trim().length === 0) {
+    contentStart += 1;
+  }
+
+  const markdown = lines.slice(contentStart).join("\n").trim();
+  if (!markdown) {
+    return null;
+  }
+
+  return {
+    markdown,
+    updatedAt
+  };
 }
 
 function formatConversationWindow(

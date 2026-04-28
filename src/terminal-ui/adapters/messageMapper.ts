@@ -16,16 +16,10 @@ function normalizeContent(content: string) {
 
 function truncateText(content: string, maxChars: number) {
   if (content.length <= maxChars) {
-    return {
-      preview: content,
-      isTruncated: false
-    };
+    return content;
   }
 
-  return {
-    preview: content.slice(0, maxChars).trimEnd() + " ...",
-    isTruncated: true
-  };
+  return content.slice(0, maxChars).trimEnd() + " ...";
 }
 
 function createBlock(
@@ -73,10 +67,9 @@ function createMessage(options: {
     title: options.title,
     blocks: options.blocks,
     content,
-    preview: preview.preview,
+    preview,
     metadata: options.metadata ?? [],
-    createdAt: new Date().toISOString(),
-    isTruncated: preview.isTruncated
+    createdAt: new Date().toISOString()
   };
 }
 
@@ -84,7 +77,7 @@ export function createSystemMessage(content: string, title = "System") {
   return createMessage({
     kind: "system",
     title,
-    blocks: [createBlock(content, { tone: "warning" })]
+    blocks: [createBlock(content)]
   });
 }
 

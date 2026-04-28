@@ -48,6 +48,12 @@ const FIELD_DEFINITIONS: FieldDefinition[] = [
     section: "session"
   },
   {
+    key: "markdownMessageRenderingEnabled",
+    label: "Markdown Messages",
+    type: "toggle",
+    section: "session"
+  },
+  {
     key: "conversationCompactionEnabled",
     label: "Conversation Compaction",
     type: "toggle",

@@ -46,6 +46,7 @@ export interface SessionSettings extends PromptOverrideConfig {
   commandTimeoutMs: number;
   autoSummaryEnabled: boolean;
   messageTimestampsEnabled: boolean;
+  markdownMessageRenderingEnabled: boolean;
   conversationCompactionEnabled: boolean;
   additionalDirectories: string[];
 }
@@ -112,6 +113,7 @@ const SessionSettingsFileSchema = z
     commandTimeoutMs: z.number().int().positive().optional(),
     autoSummaryEnabled: z.boolean().optional(),
     messageTimestampsEnabled: z.boolean().optional(),
+    markdownMessageRenderingEnabled: z.boolean().optional(),
     conversationCompactionEnabled: z.boolean().optional(),
     languagePreference: z.string().optional(),
     personaPreset: z.string().optional(),
@@ -506,6 +508,7 @@ function normalizeSessionSettings(
     commandTimeoutMs: clampPositiveInt(input.commandTimeoutMs, 120_000),
     autoSummaryEnabled: input.autoSummaryEnabled ?? true,
     messageTimestampsEnabled: input.messageTimestampsEnabled ?? false,
+    markdownMessageRenderingEnabled: input.markdownMessageRenderingEnabled ?? true,
     conversationCompactionEnabled: input.conversationCompactionEnabled ?? true,
     languagePreference: normalizeOptionalText(input.languagePreference),
     personaPreset: resolvePersonaPreset(normalizeOptionalText(input.personaPreset)),
@@ -527,6 +530,10 @@ function serializeSessionSettings(
       "autoSummaryEnabled" in settings ? settings.autoSummaryEnabled : undefined,
     messageTimestampsEnabled:
       "messageTimestampsEnabled" in settings ? settings.messageTimestampsEnabled : undefined,
+    markdownMessageRenderingEnabled:
+      "markdownMessageRenderingEnabled" in settings
+        ? settings.markdownMessageRenderingEnabled
+        : undefined,
     conversationCompactionEnabled:
       "conversationCompactionEnabled" in settings
         ? settings.conversationCompactionEnabled

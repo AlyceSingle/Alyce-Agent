@@ -1,7 +1,10 @@
 import OpenAI from "openai";
 import { executeToolCall, TOOL_SCHEMAS, type ToolExecutionContext } from "../../tools.js";
 import { isTurnInterruptedError, throwIfAborted, toTurnInterruptedError } from "../abort.js";
-import { sendChatCompletion } from "../api/sendChatCompletion.js";
+import {
+  sendChatCompletion,
+  type ChatCompletionReconnectEvent
+} from "../api/sendChatCompletion.js";
 import type { RequestPatchOperation } from "../api/requestPatch.js";
 
 type MessageParam = OpenAI.Chat.Completions.ChatCompletionMessageParam;
@@ -23,6 +26,7 @@ export interface AgentTurnOptions {
   onThinking?: (content: string) => void;
   onToolCallStart?: (toolName: string, rawArguments: string) => void;
   onToolCallResult?: (toolName: string, result: string) => void;
+  onReconnect?: (event: ChatCompletionReconnectEvent) => void;
   messageTimestampsEnabled?: boolean;
 }
 
@@ -46,7 +50,8 @@ export async function runAgentTurn(
         gcliGeminiCompat: options.gcliGeminiCompat,
         messageTimestampsEnabled: options.messageTimestampsEnabled,
         requestPatches: options.requestPatches,
-        abortSignal: options.abortSignal
+        abortSignal: options.abortSignal,
+        onReconnect: options.onReconnect
       });
     } catch (error) {
       if (isTurnInterruptedError(error, options.abortSignal)) {

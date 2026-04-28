@@ -76,6 +76,11 @@ export interface SessionRuntime {
     apiMessages: SessionMessage[];
     uiMessages: SessionHistoryUiMessage[];
   }) => Promise<void>;
+  recordSessionConversationSnapshot: (options: {
+    apiMessages: SessionMessage[];
+    uiMessages: SessionHistoryUiMessage[];
+    uiBaseMessageCount: number;
+  }) => Promise<void>;
   recordSessionRewind: (options: {
     apiMessageCount: number;
     uiMessageCount: number;
@@ -386,6 +391,13 @@ export async function createSessionRuntime(
     recordSessionTurn: async ({ apiMessages, uiMessages }) => {
       await sessionHistory.recordTurn({ apiMessages, uiMessages });
     },
+    recordSessionConversationSnapshot: async ({ apiMessages, uiMessages, uiBaseMessageCount }) => {
+      await sessionHistory.recordConversationSnapshot({
+        apiMessages,
+        uiMessages,
+        uiBaseMessageCount
+      });
+    },
     recordSessionRewind: async (options) => {
       await sessionHistory.recordRewind(options);
     },
@@ -412,7 +424,7 @@ export async function createSessionRuntime(
           role: "system",
           content: await buildSystemPrompt()
         },
-        ...resume.apiMessages.filter((message) => message.role !== "system")
+        ...resume.apiMessages
       );
       return resume;
     },
@@ -580,6 +592,10 @@ function normalizeSettingsPatch(
 
   if ("messageTimestampsEnabled" in patch) {
     normalized.messageTimestampsEnabled = patch.messageTimestampsEnabled;
+  }
+
+  if ("markdownMessageRenderingEnabled" in patch) {
+    normalized.markdownMessageRenderingEnabled = patch.markdownMessageRenderingEnabled;
   }
 
   if ("conversationCompactionEnabled" in patch) {

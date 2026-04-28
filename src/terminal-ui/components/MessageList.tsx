@@ -1,4 +1,10 @@
 import React, { forwardRef, useEffect, useImperativeHandle, useMemo, useRef } from "react";
+import {
+  buildMarkdownRenderPlan,
+  MarkdownRenderer,
+  shouldRenderMarkdownMessage,
+  type MarkdownRenderPlan
+} from "./MarkdownRenderer.js";
 import { Box, ScrollBox, Text, type ScrollBoxHandle } from "../runtime/ink.js";
 import type {
   TerminalUiMessage,
@@ -33,10 +39,17 @@ type RenderedMessageEntry = {
   headerColor: string;
   headerTitle?: string;
   sections: RenderedSection[];
+  markdownPlan?: MarkdownRenderPlan;
   metadataLine?: string;
-  hintLine?: string;
   leadingSpacingRows: number;
+  palette: MessagePalette;
   rowCount: number;
+};
+
+type MessagePalette = {
+  headerColor: string;
+  bodyColor: string;
+  mutedColor: string;
 };
 
 export type MessageListHandle = {
@@ -54,7 +67,7 @@ function pluralizeMessages(count: number) {
 function getMessageBadge(kind: TerminalUiMessage["kind"]) {
   switch (kind) {
     case "user":
-      return { label: "USER", color: terminalUiTheme.colors.user };
+      return { label: "USER", color: terminalUiTheme.colors.code };
     case "assistant":
       return { label: "ALYCE", color: terminalUiTheme.colors.assistant };
     case "thinking":
@@ -65,14 +78,81 @@ function getMessageBadge(kind: TerminalUiMessage["kind"]) {
       return { label: "ERROR", color: terminalUiTheme.colors.danger };
     case "system":
     default:
-      return { label: "SYSTEM", color: terminalUiTheme.colors.system };
+      return { label: "SYSTEM", color: terminalUiTheme.colors.code };
   }
 }
 
-function getToneColor(tone: TerminalUiMessageBlockTone, kind: TerminalUiMessage["kind"]) {
+function getMessagePalette(
+  kind: TerminalUiMessage["kind"],
+  isSelected: boolean
+): MessagePalette {
+  if (isSelected) {
+    return {
+      headerColor:
+        kind === "user" || kind === "system"
+          ? terminalUiTheme.colors.code
+          : terminalUiTheme.colors.chrome,
+      bodyColor:
+        kind === "system"
+          ? terminalUiTheme.colors.code
+          : terminalUiTheme.colors.messageCardText,
+      mutedColor: terminalUiTheme.colors.muted
+    };
+  }
+
+  switch (kind) {
+    case "user":
+      return {
+        headerColor: terminalUiTheme.colors.code,
+        bodyColor: terminalUiTheme.colors.messageCardText,
+        mutedColor: terminalUiTheme.colors.muted
+      };
+    case "assistant":
+      return {
+        headerColor: terminalUiTheme.colors.assistant,
+        bodyColor: terminalUiTheme.colors.messageCardText,
+        mutedColor: terminalUiTheme.colors.muted
+      };
+    case "thinking":
+      return {
+        headerColor: terminalUiTheme.colors.thinking,
+        bodyColor: terminalUiTheme.colors.messageCardMuted,
+        mutedColor: terminalUiTheme.colors.subtle
+      };
+    case "tool":
+      return {
+        headerColor: terminalUiTheme.colors.tool,
+        bodyColor: terminalUiTheme.colors.messageCardText,
+        mutedColor: terminalUiTheme.colors.muted
+      };
+    case "error":
+      return {
+        headerColor: terminalUiTheme.colors.danger,
+        bodyColor: terminalUiTheme.colors.messageCardText,
+        mutedColor: terminalUiTheme.colors.muted
+      };
+    case "system":
+    default:
+      return {
+        headerColor: terminalUiTheme.colors.code,
+        bodyColor: terminalUiTheme.colors.code,
+        mutedColor: terminalUiTheme.colors.muted
+      };
+  }
+}
+
+function getToneColor(
+  tone: TerminalUiMessageBlockTone,
+  kind: TerminalUiMessage["kind"],
+  palette: MessagePalette
+) {
+  if (kind === "system" && tone !== "danger") {
+    return terminalUiTheme.colors.code;
+  }
+
   switch (tone) {
     case "muted":
-      return terminalUiTheme.colors.muted;
+      return palette.mutedColor;
     case "info":
       return terminalUiTheme.colors.info;
     case "success":
@@ -83,7 +163,7 @@ function getToneColor(tone: TerminalUiMessageBlockTone, kind: TerminalUiMessage[
       return terminalUiTheme.colors.danger;
     case "default":
     default:
-      return kind === "thinking" ? terminalUiTheme.colors.muted : terminalUiTheme.colors.chrome;
+      return kind === "thinking" ? palette.mutedColor : palette.bodyColor;
   }
 }
 
@@ -100,27 +180,31 @@ function renderSections(blocks: TerminalUiMessageBlock[], width: number): Render
 function buildRenderedMessageEntries(
   messages: TerminalUiMessage[],
   selectedMessageId: string | null,
-  contentWidth: number
+  contentWidth: number,
+  markdownEnabled: boolean
 ): RenderedMessageEntry[] {
   return messages.map((message, index) => {
     const isSelected = message.id === selectedMessageId;
     const badge = getMessageBadge(message.kind);
-    const sections = renderSections(
-      message.blocks,
-      message.kind === "tool" ? contentWidth - 2 : contentWidth
-    );
+    const palette = getMessagePalette(message.kind, isSelected);
+    const bodyWidth = Math.max(16, contentWidth - 2);
+    const markdownPlan = shouldRenderMarkdownMessage(message.kind, markdownEnabled)
+      ? buildMarkdownRenderPlan(message.content, bodyWidth)
+      : undefined;
+    const sections = markdownPlan
+      ? []
+      : renderSections(message.blocks, message.kind === "tool" ? contentWidth - 2 : contentWidth);
     const headerTitle =
       message.kind === "user" || message.kind === "assistant"
         ? undefined
         : message.title;
     const metadataLine = message.metadata.length > 0 ? message.metadata.join(" | ") : undefined;
-    const hintLine = message.isTruncated
-      ? "Full output available. Press Ctrl+O to open reader."
-      : undefined;
     const leadingSpacingRows = index === 0 ? 0 : 1;
-    const sectionRowCount = sections.reduce((sum, section) => {
-      return sum + section.lines.length + (section.label ? 1 : 0);
-    }, 0);
+    const sectionRowCount = markdownPlan
+      ? markdownPlan.rowCount
+      : sections.reduce((sum, section) => {
+          return sum + section.lines.length + (section.label ? 1 : 0);
+        }, 0);
 
     return {
       message,
@@ -129,15 +213,15 @@ function buildRenderedMessageEntries(
       headerColor: badge.color,
       headerTitle,
       sections,
+      markdownPlan,
       metadataLine,
-      hintLine,
       leadingSpacingRows,
+      palette,
       rowCount:
         leadingSpacingRows +
         1 +
         sectionRowCount +
-        (metadataLine ? 1 : 0) +
-        (hintLine ? 1 : 0)
+        (metadataLine ? 1 : 0)
     };
   });
 }
@@ -166,6 +250,7 @@ const MessageListImpl = forwardRef<MessageListHandle, {
   messages: TerminalUiMessage[];
   selectedMessageId: string | null;
   viewportWidth: number;
+  markdownEnabled: boolean;
   unseenDividerMessageId: string | null;
   unseenMessageCount: number;
   onStickyChange: (sticky: boolean) => void;
@@ -181,8 +266,14 @@ const MessageListImpl = forwardRef<MessageListHandle, {
   } | null>(null);
   const contentWidth = Math.max(24, props.viewportWidth - 8);
   const renderedEntries = useMemo(
-    () => buildRenderedMessageEntries(props.messages, props.selectedMessageId, contentWidth),
-    [contentWidth, props.messages, props.selectedMessageId]
+    () =>
+      buildRenderedMessageEntries(
+        props.messages,
+        props.selectedMessageId,
+        contentWidth,
+        props.markdownEnabled
+      ),
+    [contentWidth, props.markdownEnabled, props.messages, props.selectedMessageId]
   );
   const totalRowCount = useMemo(
     () => renderedEntries.reduce((sum, entry) => sum + entry.rowCount, 0),
@@ -407,8 +498,7 @@ const MessageListImpl = forwardRef<MessageListHandle, {
                     </Text>
                   ) : null}
                   <Text
-                    color={entry.isSelected ? terminalUiTheme.colors.chrome : entry.headerColor}
-                    backgroundColor={entry.isSelected ? terminalUiTheme.colors.selection : undefined}
+                    color={entry.palette.headerColor}
                     wrap="truncate-end"
                   >
                     {entry.isSelected ? ">" : " "}
@@ -423,43 +513,51 @@ const MessageListImpl = forwardRef<MessageListHandle, {
                     {" · "}
                     {timestamp}
                   </Text>
-                  {entry.sections.map((section, sectionIndex) => (
-                    <Box
-                      key={`${entry.message.id}-section-${sectionIndex}`}
-                      flexDirection="column"
-                      width="100%"
-                    >
-                      {section.label ? (
-                        <Text color={terminalUiTheme.colors.subtle} wrap="truncate-end">
-                          {"  "}
-                          {section.label}
-                        </Text>
-                      ) : null}
-                      {section.lines.map((line, lineIndex) => (
-                        <Text
-                          key={`${entry.message.id}-line-${sectionIndex}-${lineIndex}`}
-                          color={
-                            section.style === "code"
-                              ? terminalUiTheme.colors.code
-                              : getToneColor(section.tone, entry.message.kind)
-                          }
-                        >
-                          {section.style === "code" ? "    " : "  "}
-                          {line}
-                        </Text>
-                      ))}
-                    </Box>
-                  ))}
+                  {entry.markdownPlan ? (
+                    <MarkdownRenderer
+                      plan={entry.markdownPlan}
+                      kind={entry.message.kind}
+                      baseColor={entry.palette.bodyColor}
+                    />
+                  ) : (
+                    entry.sections.map((section, sectionIndex) => (
+                      <Box
+                        key={`${entry.message.id}-section-${sectionIndex}`}
+                        flexDirection="column"
+                        width="100%"
+                      >
+                        {section.label ? (
+                          <Text
+                            color={entry.palette.mutedColor}
+                            wrap="truncate-end"
+                          >
+                            {"  "}
+                            {section.label}
+                          </Text>
+                        ) : null}
+                        {section.lines.map((line, lineIndex) => (
+                          <Text
+                            key={`${entry.message.id}-line-${sectionIndex}-${lineIndex}`}
+                            color={
+                              section.style === "code"
+                                ? terminalUiTheme.colors.code
+                                : getToneColor(section.tone, entry.message.kind, entry.palette)
+                            }
+                          >
+                            {section.style === "code" ? "    " : "  "}
+                            {line}
+                          </Text>
+                        ))}
+                      </Box>
+                    ))
+                  )}
                   {entry.metadataLine ? (
-                    <Text color={terminalUiTheme.colors.subtle} wrap="truncate-end">
+                    <Text
+                      color={entry.palette.mutedColor}
+                      wrap="truncate-end"
+                    >
                       {"  "}
                       {entry.metadataLine}
-                    </Text>
-                  ) : null}
-                  {entry.hintLine ? (
-                    <Text color={terminalUiTheme.colors.warning} wrap="truncate-end">
-                      {"  "}
-                      {entry.hintLine}
                     </Text>
                   ) : null}
                 </Box>

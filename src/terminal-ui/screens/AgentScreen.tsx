@@ -38,6 +38,9 @@ const ConversationPane = React.memo(React.forwardRef<MessageListHandle, {
 }>(function ConversationPane(props, ref) {
   const messages = useTerminalUiSelector((value) => value.messages);
   const selectedMessageId = useTerminalUiSelector((value) => value.selectedMessageId);
+  const markdownEnabled = useTerminalUiSelector(
+    (value) => value.settings.markdownMessageRenderingEnabled
+  );
 
   return (
     <MessageList
@@ -45,6 +48,7 @@ const ConversationPane = React.memo(React.forwardRef<MessageListHandle, {
       messages={messages}
       selectedMessageId={selectedMessageId}
       viewportWidth={props.terminalWidth}
+      markdownEnabled={markdownEnabled}
       unseenDividerMessageId={props.unseenDividerMessageId}
       unseenMessageCount={props.unseenMessageCount}
       onStickyChange={props.onStickyChange}
@@ -363,6 +367,7 @@ export function AgentScreen(props: { controller: SessionController }) {
       message={readerMessage}
       terminalWidth={terminalWidth}
       terminalHeight={terminalHeight}
+      markdownEnabled={settings.markdownMessageRenderingEnabled}
       onClose={() => props.controller.closeMessageReader()}
     />
   ) : null;
