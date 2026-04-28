@@ -1,4 +1,4 @@
-import type { ApprovalMode, ConnectionConfig, SessionSettings } from "../../config/runtime.js";
+import type { ApprovalMode, ConnectionConfig } from "../../config/runtime.js";
 import { Box, Text } from "../runtime/ink.js";
 import { terminalUiTheme } from "../theme/theme.js";
 
@@ -16,7 +16,6 @@ function formatApprovalMode(mode: ApprovalMode, allowedKinds: string[]) {
 
 export function StatusBar(props: {
   connection: ConnectionConfig;
-  settings: SessionSettings;
   sessionApprovalMode: ApprovalMode;
   sessionAllowedKinds: string[];
   requestPatchCount: number;
@@ -42,10 +41,6 @@ export function StatusBar(props: {
     <Box width="100%">
       <Text color={terminalUiTheme.colors.muted} wrap="truncate-end">
         Alyce
-        {" | "}
-        Max steps: {props.settings.maxSteps}
-        {" | "}
-        Timeout: {props.settings.commandTimeoutMs} ms
         {requestPatchText}
         {" | "}
         <Text color={connectionColor}>{isReady ? "Ready" : "Setup required"}</Text>

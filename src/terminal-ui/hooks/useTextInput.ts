@@ -14,6 +14,8 @@ type UseTextInputProps = {
   cursorOffset: number;
   onChangeCursorOffset: (offset: number) => void;
   onEscClearPendingChange?: (pending: boolean) => void;
+  firstLinePrefix?: string;
+  continuationPrefix?: string;
 };
 
 function insertText(value: string, cursor: number, text: string) {
@@ -87,6 +89,8 @@ export function useTextInput(props: UseTextInputProps): BaseInputState {
     }
   );
   const safeColumns = Math.max(20, props.columns);
+  const firstLinePrefix = props.firstLinePrefix ?? "> ";
+  const continuationPrefix = props.continuationPrefix ?? "  ";
   const viewport = useMemo(
     () =>
       buildInputEditorViewport(
@@ -209,12 +213,10 @@ export function useTextInput(props: UseTextInputProps): BaseInputState {
     cursorLine: cursorLineIndex,
     cursorColumn:
       (props.value.length === 0
-        ? getDisplayWidth("> ")
-        : getDisplayWidth(cursorLineIndex === 0 ? "> " : "  ")) +
+        ? getDisplayWidth(firstLinePrefix)
+        : getDisplayWidth(cursorLineIndex === 0 ? firstLinePrefix : continuationPrefix)) +
       getDisplayWidth(cursorLine?.before ?? ""),
     hasTopOverflow: viewport.hasTopOverflow,
-    hasBottomOverflow: viewport.hasBottomOverflow,
-    viewportCharOffset: 0,
-    viewportCharEnd: props.value.length
+    hasBottomOverflow: viewport.hasBottomOverflow
   };
 }

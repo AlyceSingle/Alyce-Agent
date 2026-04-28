@@ -1124,12 +1124,30 @@ function renderNodeToOutput(
             // bandwidth crosses the chunk boundary and the frame tears.
             const scrolled = contentCached && contentCached.y !== contentY
             if (scrolled && y1 !== undefined && y2 !== undefined) {
+              const viewportX = Math.floor(x)
+              const viewportY = Math.floor(y1)
+              const viewportWidth = Math.floor(width)
+              const viewportHeight = Math.floor(y2 - y1)
               output.clear({
-                x: Math.floor(x),
-                y: Math.floor(y1),
-                width: Math.floor(width),
-                height: Math.floor(y2 - y1),
+                x: viewportX,
+                y: viewportY,
+                width: viewportWidth,
+                height: viewportHeight,
               })
+              // output.clear() only marks damage on the fresh screen buffer;
+              // it does not overwrite already-blitted cells in the current
+              // frame. Manual transcript scroll disables prevScreen for
+              // children, so we must blank the viewport eagerly or sibling
+              // divider glyphs can remain visible in rows the new content
+              // does not fully cover.
+              if (viewportWidth > 0 && viewportHeight > 0) {
+                const spaces = ' '.repeat(viewportWidth)
+                output.write(
+                  viewportX,
+                  viewportY,
+                  Array(viewportHeight).fill(spaces).join('\n'),
+                )
+              }
             }
             // positionChanged (ScrollBox height shrunk — pill mount) means a
             // child spanning the old bottom edge would blit its full cached

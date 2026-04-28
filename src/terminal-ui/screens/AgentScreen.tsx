@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import React, { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { Box, useApp, useStdout, Text } from "../runtime/ink.js";
 import { FullscreenLayout } from "../components/FullscreenLayout.js";
 import { MessageList, type MessageListHandle } from "../components/MessageList.js";
@@ -18,6 +18,7 @@ import { getBindingDisplayText } from "../keybindings/shortcutDisplay.js";
 import { useSelection } from "../runtime/ink-runtime/hooks/use-selection.js";
 import { setClipboard } from "../runtime/ink-runtime/termio/osc.js";
 import { useTerminalInput } from "../runtime/input.js";
+import { invalidateInkPrevFrame } from "../runtime/instances.js";
 import { getActiveDialog, selectRelativeMessage, setTranscriptSticky } from "../state/actions.js";
 import { useTerminalUiSelector, useTerminalUiStore } from "../state/store.js";
 import { terminalUiTheme } from "../theme/theme.js";
@@ -90,6 +91,11 @@ export function AgentScreen(props: { controller: SessionController }) {
   const hasDialog = activeDialog !== null;
   const isReaderOpen = activeDialog?.type === "reader";
   const hasActiveOverlay = useIsOverlayActive();
+  const layoutSurfaceKey =
+    activeDialog === null
+      ? "conversation"
+      : `${activeDialog.layer}:${activeDialog.type}`;
+  const layoutSurfaceKeyRef = useRef(layoutSurfaceKey);
 
   const readerMessage = useMemo(() => {
     if (activeDialog?.type !== "reader") {
@@ -105,6 +111,13 @@ export function AgentScreen(props: { controller: SessionController }) {
       props.controller.setExitHandler(null);
     };
   }, [exit, props.controller]);
+
+  useLayoutEffect(() => {
+    if (layoutSurfaceKeyRef.current !== layoutSurfaceKey) {
+      layoutSurfaceKeyRef.current = layoutSurfaceKey;
+      invalidateInkPrevFrame(stdout as NodeJS.WriteStream);
+    }
+  }, [layoutSurfaceKey, stdout]);
 
   const setCtrlCCapture = useCallback((capture: boolean) => {
     clearOnCtrlCRef.current = capture;
@@ -279,7 +292,7 @@ export function AgentScreen(props: { controller: SessionController }) {
 
       setExitConfirmationPending(true);
     }
-  }, { isActive: !isReaderOpen });
+  }, { isActive: !hasDialog && !isReaderOpen });
 
   useEffect(() => {
     if (!exitConfirmationPending) {
@@ -344,14 +357,6 @@ export function AgentScreen(props: { controller: SessionController }) {
         }}
         onCtrlCCaptureChange={setCtrlCCapture}
       />
-    ) : activeDialog?.type === "session-picker" ? (
-      <SessionPickerDialog
-        sessions={activeDialog.sessions}
-        onSelect={(sessionId) => {
-          void props.controller.resumeSession(sessionId);
-        }}
-        onCancel={() => props.controller.closeDialog()}
-      />
     ) : activeDialog?.type === "rewind-picker" ? (
       <RewindPickerDialog
         points={activeDialog.points}
@@ -362,15 +367,24 @@ export function AgentScreen(props: { controller: SessionController }) {
       />
     ) : null;
 
-  const modal = readerMessage ? (
-    <MessageReaderScreen
-      message={readerMessage}
-      terminalWidth={terminalWidth}
-      terminalHeight={terminalHeight}
-      markdownEnabled={settings.markdownMessageRenderingEnabled}
-      onClose={() => props.controller.closeMessageReader()}
-    />
-  ) : null;
+  const modal =
+    readerMessage ? (
+      <MessageReaderScreen
+        message={readerMessage}
+        terminalWidth={terminalWidth}
+        terminalHeight={terminalHeight}
+        markdownEnabled={settings.markdownMessageRenderingEnabled}
+        onClose={() => props.controller.closeMessageReader()}
+      />
+    ) : activeDialog?.type === "session-picker" ? (
+      <SessionPickerDialog
+        sessions={activeDialog.sessions}
+        onSelect={(sessionId) => {
+          void props.controller.resumeSession(sessionId);
+        }}
+        onCancel={() => props.controller.closeDialog()}
+      />
+    ) : null;
 
   const unseenMessagePill =
     !transcriptSticky && unseenMessageCount > 0 ? (
@@ -395,7 +409,6 @@ export function AgentScreen(props: { controller: SessionController }) {
       header={
         <StatusBar
           connection={connection}
-          settings={settings}
           sessionApprovalMode={sessionApprovalMode}
           sessionAllowedKinds={sessionAllowedKinds}
           requestPatchCount={requestPatchCount}

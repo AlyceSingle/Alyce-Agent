@@ -1,6 +1,7 @@
 import type { DOMElement } from './dom.js'
 import { ClickEvent } from './events/click-event.js'
 import type { EventHandlerProps } from './events/event-handlers.js'
+import { MouseEvent, type MouseEventAction } from './events/mouse-event.js'
 import { nodeCache } from './node-cache.js'
 
 /**
@@ -86,6 +87,83 @@ export function dispatchClick(
     target = target.parentNode
   }
   return handled
+}
+
+export type DispatchMouseResult = {
+  handled: boolean
+  capturedTarget?: DOMElement
+}
+
+function isNodeAttachedToRoot(root: DOMElement, node: DOMElement): boolean {
+  let current: DOMElement | undefined = node
+  while (current) {
+    if (current === root) return true
+    current = current.parentNode
+  }
+  return false
+}
+
+function getMouseHandler(
+  handlers: EventHandlerProps | undefined,
+  action: MouseEventAction,
+): ((event: MouseEvent) => void) | undefined {
+  switch (action) {
+    case 'down':
+      return handlers?.onMouseDown
+    case 'move':
+      return handlers?.onMouseMove
+    case 'up':
+      return handlers?.onMouseUp
+  }
+}
+
+export function dispatchMouse(
+  root: DOMElement,
+  col: number,
+  row: number,
+  button: number,
+  action: MouseEventAction,
+  cellIsBlank = false,
+  capturedTarget?: DOMElement,
+): DispatchMouseResult {
+  const attachedCapturedTarget =
+    capturedTarget && isNodeAttachedToRoot(root, capturedTarget)
+      ? capturedTarget
+      : undefined
+  let target: DOMElement | undefined =
+    attachedCapturedTarget ?? hitTest(root, col, row) ?? undefined
+  if (!target) return { handled: false }
+
+  const event = new MouseEvent(col, row, button, action, cellIsBlank)
+  let handled = false
+  let nextCapturedTarget = attachedCapturedTarget
+
+  while (target) {
+    const handlers = target._eventHandlers as EventHandlerProps | undefined
+    const handler = getMouseHandler(handlers, action)
+    if (handler) {
+      handled = true
+      nextCapturedTarget ??= target
+      const rect = nodeCache.get(target)
+      if (rect) {
+        event.localCol = col - rect.x
+        event.localRow = row - rect.y
+      }
+      handler(event)
+      if (event.didStopImmediatePropagation()) {
+        return {
+          handled: true,
+          capturedTarget: nextCapturedTarget,
+        }
+      }
+    }
+    target = target.parentNode
+  }
+
+  return {
+    handled,
+    capturedTarget: nextCapturedTarget,
+  }
 }
 
 /**

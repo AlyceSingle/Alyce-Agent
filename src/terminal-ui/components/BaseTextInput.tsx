@@ -9,6 +9,11 @@ export function BaseTextInput(props: BaseTextInputProps & {
   terminalFocus: boolean;
 }) {
   const { inputState } = props;
+  const firstLinePrefix = props.firstLinePrefix ?? "> ";
+  const continuationPrefix = props.continuationPrefix ?? "  ";
+  const prefixColor = props.prefixColor ?? terminalUiTheme.colors.promptAccent;
+  const placeholderColor = props.placeholderColor ?? terminalUiTheme.colors.selectionMuted;
+  const overflowHintColor = props.overflowHintColor ?? terminalUiTheme.colors.promptMuted;
   const cursorRef = useDeclaredCursor({
     line: inputState.cursorLine,
     column: inputState.cursorColumn,
@@ -22,20 +27,20 @@ export function BaseTextInput(props: BaseTextInputProps & {
   return (
     <Box ref={cursorRef} flexDirection="column" width="100%">
       {inputState.hasTopOverflow ? (
-        <Text dimColor>... earlier lines</Text>
+        <Text color={overflowHintColor} dimColor>... earlier lines</Text>
       ) : null}
       {props.value.length === 0 ? (
         <Text>
-          <Text color="yellow">{"> "}</Text>
+          <Text color={prefixColor}>{firstLinePrefix}</Text>
           {props.showCursor ? <Text inverse>{" "}</Text> : null}
-          <Text color={terminalUiTheme.colors.selectionMuted} dimColor>
+          <Text color={placeholderColor} dimColor>
             {props.placeholder ?? ""}
           </Text>
         </Text>
       ) : (
         inputState.lines.map((line, index) => (
           <Text key={`text-input-line-${index}`}>
-            <Text color="yellow">{index === 0 ? "> " : "  "}</Text>
+            <Text color={prefixColor}>{index === 0 ? firstLinePrefix : continuationPrefix}</Text>
             <Text>{line.before}</Text>
             {line.isCursorLine && line.current !== null ? (
               <Text inverse>{line.current}</Text>
@@ -45,7 +50,7 @@ export function BaseTextInput(props: BaseTextInputProps & {
         ))
       )}
       {inputState.hasBottomOverflow ? (
-        <Text dimColor>... more lines below</Text>
+        <Text color={overflowHintColor} dimColor>... more lines below</Text>
       ) : null}
     </Box>
   );

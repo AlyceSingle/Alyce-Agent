@@ -20,7 +20,7 @@ import * as dom from './dom.js';
 import { KeyboardEvent } from './events/keyboard-event.js';
 import { FocusManager } from './focus.js';
 import { emptyFrame, type Frame, type FrameEvent } from './frame.js';
-import { dispatchClick, dispatchHover } from './hit-test.js';
+import { dispatchClick, dispatchHover, dispatchMouse } from './hit-test.js';
 import instances from './instances.js';
 import { LogUpdate } from './log-update.js';
 import { nodeCache } from './node-cache.js';
@@ -176,6 +176,10 @@ export default class Ink {
   // so App.tsx's handleMouseEvent is stateless — dispatchHover diffs
   // against this set and mutates it in place.
   private readonly hoveredNodes = new Set<dom.DOMElement>();
+  // Mouse down handlers can capture subsequent drag / release events so a
+  // scrollbar thumb keeps receiving them even when the pointer strays by a
+  // cell or two during the drag.
+  private capturedMouseTarget: dom.DOMElement | null = null;
   // Set by <AlternateScreen> via setAltScreenActive(). Controls the
   // renderer's cursor.y clamping (keeps cursor in-viewport to avoid
   // LF-induced scroll when screen.height === terminalRows) and gates
@@ -1328,6 +1332,43 @@ export default class Ink {
     if (!this.altScreenActive) return;
     dispatchHover(this.rootNode, col, row, this.hoveredNodes);
   }
+  dispatchMouseDown(col: number, row: number, button: number): boolean {
+    if (!this.altScreenActive) return false;
+    const blank = isEmptyCellAt(this.frontFrame.screen, col, row);
+    const result = dispatchMouse(this.rootNode, col, row, button, 'down', blank);
+    this.capturedMouseTarget = result.capturedTarget ?? null;
+    return result.handled;
+  }
+  dispatchMouseMove(col: number, row: number, button: number): boolean {
+    if (!this.altScreenActive || !this.capturedMouseTarget) return false;
+    const blank = isEmptyCellAt(this.frontFrame.screen, col, row);
+    const result = dispatchMouse(
+      this.rootNode,
+      col,
+      row,
+      button,
+      'move',
+      blank,
+      this.capturedMouseTarget ?? undefined,
+    );
+    this.capturedMouseTarget = result.capturedTarget ?? null;
+    return result.handled;
+  }
+  dispatchMouseUp(col: number, row: number, button: number): boolean {
+    if (!this.altScreenActive || !this.capturedMouseTarget) return false;
+    const blank = isEmptyCellAt(this.frontFrame.screen, col, row);
+    const result = dispatchMouse(
+      this.rootNode,
+      col,
+      row,
+      button,
+      'up',
+      blank,
+      this.capturedMouseTarget ?? undefined,
+    );
+    this.capturedMouseTarget = null;
+    return result.handled;
+  }
   dispatchKeyboardEvent(parsedKey: ParsedKey): void {
     const target = this.focusManager.activeElement ?? this.rootNode;
     const event = new KeyboardEvent(parsedKey);
@@ -1503,7 +1544,7 @@ export default class Ink {
   };
   render(node: ReactNode): void {
     this.currentNode = node;
-    const tree = <App stdin={this.options.stdin} stdout={this.options.stdout} stderr={this.options.stderr} exitOnCtrlC={this.options.exitOnCtrlC} onExit={this.unmount} terminalColumns={this.terminalColumns} terminalRows={this.terminalRows} selection={this.selection} onSelectionChange={this.notifySelectionChange} onClickAt={this.dispatchClick} onHoverAt={this.dispatchHover} getHyperlinkAt={this.getHyperlinkAt} onOpenHyperlink={this.openHyperlink} onMultiClick={this.handleMultiClick} onSelectionDrag={this.handleSelectionDrag} onStdinResume={this.reassertTerminalModes} onTerminalViewportSize={this.applyTerminalViewportSize} onCursorDeclaration={this.setCursorDeclaration} dispatchKeyboardEvent={this.dispatchKeyboardEvent}>
+    const tree = <App stdin={this.options.stdin} stdout={this.options.stdout} stderr={this.options.stderr} exitOnCtrlC={this.options.exitOnCtrlC} onExit={this.unmount} terminalColumns={this.terminalColumns} terminalRows={this.terminalRows} selection={this.selection} onSelectionChange={this.notifySelectionChange} onClickAt={this.dispatchClick} onHoverAt={this.dispatchHover} onMouseDownAt={this.dispatchMouseDown} onMouseMoveAt={this.dispatchMouseMove} onMouseUpAt={this.dispatchMouseUp} getHyperlinkAt={this.getHyperlinkAt} onOpenHyperlink={this.openHyperlink} onMultiClick={this.handleMultiClick} onSelectionDrag={this.handleSelectionDrag} onStdinResume={this.reassertTerminalModes} onTerminalViewportSize={this.applyTerminalViewportSize} onCursorDeclaration={this.setCursorDeclaration} dispatchKeyboardEvent={this.dispatchKeyboardEvent}>
         <TerminalWriteProvider value={this.writeRaw}>
           {node}
         </TerminalWriteProvider>

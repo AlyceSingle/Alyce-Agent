@@ -1,4 +1,4 @@
-import React, { forwardRef, useEffect, useImperativeHandle, useMemo, useRef } from "react";
+import React, { forwardRef, useEffect, useImperativeHandle, useMemo, useRef, useState } from "react";
 import {
   buildMarkdownRenderPlan,
   MarkdownRenderer,
@@ -6,6 +6,8 @@ import {
   type MarkdownRenderPlan
 } from "./MarkdownRenderer.js";
 import { Box, ScrollBox, Text, type ScrollBoxHandle } from "../runtime/ink.js";
+import type { MouseEvent as TerminalMouseEvent } from "../runtime/ink-runtime/events/mouse-event.js";
+import type { Color } from "../runtime/ink-runtime/styles.js";
 import type {
   TerminalUiMessage,
   TerminalUiMessageBlock,
@@ -16,6 +18,12 @@ import { terminalUiTheme } from "../theme/theme.js";
 import { wrapText } from "../utils/text.js";
 
 const SCROLL_HEADROOM_ROWS = 2;
+const MESSAGE_CONTENT_WIDTH_OFFSET = 13;
+const SCROLLBAR_FADE_MS = 900;
+const SCROLLBAR_TRACK_CHAR = "╎╎";
+const SCROLLBAR_THUMB_IDLE_CHAR = "││";
+const SCROLLBAR_THUMB_ACTIVE_CHAR = "┃┃";
+const SCROLLBAR_WIDTH = 2;
 
 function isHandleAtBottom(handle: ScrollBoxHandle) {
   const scrollTop = handle.getScrollTop();
@@ -32,11 +40,12 @@ type RenderedSection = {
   style: TerminalUiMessageBlockStyle;
 };
 
+type ThemeColor = Color;
+
 type RenderedMessageEntry = {
   message: TerminalUiMessage;
   isSelected: boolean;
   headerLabel: string;
-  headerColor: string;
   headerTitle?: string;
   sections: RenderedSection[];
   markdownPlan?: MarkdownRenderPlan;
@@ -47,9 +56,34 @@ type RenderedMessageEntry = {
 };
 
 type MessagePalette = {
-  headerColor: string;
-  bodyColor: string;
-  mutedColor: string;
+  headerColor: ThemeColor;
+  bodyColor: ThemeColor;
+  mutedColor: ThemeColor;
+  railColor: ThemeColor;
+};
+
+type ScrollIndicatorState = {
+  scrollTop: number;
+  viewportHeight: number;
+  scrollHeight: number;
+  visible: boolean;
+  active: boolean;
+};
+
+type ScrollIndicatorLine = {
+  key: string;
+  char: string;
+  color: ThemeColor;
+  dimColor?: boolean;
+};
+
+type ScrollIndicatorMetrics = {
+  height: number;
+  visible: boolean;
+  thumbHeight: number;
+  thumbTop: number;
+  maxThumbTop: number;
+  maxScrollTop: number;
 };
 
 export type MessageListHandle = {
@@ -60,25 +94,21 @@ export type MessageListHandle = {
   getDetailTargetMessageId: () => string | null;
 };
 
-function pluralizeMessages(count: number) {
-  return count === 1 ? "message" : "messages";
-}
-
 function getMessageBadge(kind: TerminalUiMessage["kind"]) {
   switch (kind) {
     case "user":
-      return { label: "USER", color: terminalUiTheme.colors.code };
+      return { label: "USER" };
     case "assistant":
-      return { label: "ALYCE", color: terminalUiTheme.colors.assistant };
+      return { label: "ALYCE" };
     case "thinking":
-      return { label: "THINK", color: terminalUiTheme.colors.thinking };
+      return { label: "THINK" };
     case "tool":
-      return { label: "TOOL", color: terminalUiTheme.colors.tool };
+      return { label: "TOOL" };
     case "error":
-      return { label: "ERROR", color: terminalUiTheme.colors.danger };
+      return { label: "ERROR" };
     case "system":
     default:
-      return { label: "SYSTEM", color: terminalUiTheme.colors.code };
+      return { label: "SYSTEM" };
   }
 }
 
@@ -86,58 +116,51 @@ function getMessagePalette(
   kind: TerminalUiMessage["kind"],
   isSelected: boolean
 ): MessagePalette {
-  if (isSelected) {
-    return {
-      headerColor:
-        kind === "user" || kind === "system"
-          ? terminalUiTheme.colors.code
-          : terminalUiTheme.colors.chrome,
-      bodyColor:
-        kind === "system"
-          ? terminalUiTheme.colors.code
-          : terminalUiTheme.colors.messageCardText,
-      mutedColor: terminalUiTheme.colors.muted
-    };
-  }
+  const makePalette = (headerColor: ThemeColor, bodyColor: ThemeColor, mutedColor: ThemeColor): MessagePalette => ({
+    headerColor,
+    bodyColor,
+    mutedColor: isSelected ? terminalUiTheme.colors.muted : mutedColor,
+    railColor: headerColor
+  });
 
   switch (kind) {
     case "user":
-      return {
-        headerColor: terminalUiTheme.colors.code,
-        bodyColor: terminalUiTheme.colors.messageCardText,
-        mutedColor: terminalUiTheme.colors.muted
-      };
+      return makePalette(
+        terminalUiTheme.colors.code,
+        terminalUiTheme.colors.messageCardText,
+        terminalUiTheme.colors.muted
+      );
     case "assistant":
-      return {
-        headerColor: terminalUiTheme.colors.assistant,
-        bodyColor: terminalUiTheme.colors.messageCardText,
-        mutedColor: terminalUiTheme.colors.muted
-      };
+      return makePalette(
+        terminalUiTheme.colors.assistant,
+        terminalUiTheme.colors.messageCardText,
+        terminalUiTheme.colors.muted
+      );
     case "thinking":
-      return {
-        headerColor: terminalUiTheme.colors.thinking,
-        bodyColor: terminalUiTheme.colors.messageCardMuted,
-        mutedColor: terminalUiTheme.colors.subtle
-      };
+      return makePalette(
+        terminalUiTheme.colors.thinking,
+        terminalUiTheme.colors.messageCardMuted,
+        terminalUiTheme.colors.subtle
+      );
     case "tool":
-      return {
-        headerColor: terminalUiTheme.colors.tool,
-        bodyColor: terminalUiTheme.colors.messageCardText,
-        mutedColor: terminalUiTheme.colors.muted
-      };
+      return makePalette(
+        terminalUiTheme.colors.tool,
+        terminalUiTheme.colors.messageCardText,
+        terminalUiTheme.colors.muted
+      );
     case "error":
-      return {
-        headerColor: terminalUiTheme.colors.danger,
-        bodyColor: terminalUiTheme.colors.messageCardText,
-        mutedColor: terminalUiTheme.colors.muted
-      };
+      return makePalette(
+        terminalUiTheme.colors.danger,
+        terminalUiTheme.colors.messageCardText,
+        terminalUiTheme.colors.muted
+      );
     case "system":
     default:
-      return {
-        headerColor: terminalUiTheme.colors.code,
-        bodyColor: terminalUiTheme.colors.code,
-        mutedColor: terminalUiTheme.colors.muted
-      };
+      return makePalette(
+        terminalUiTheme.colors.code,
+        terminalUiTheme.colors.code,
+        terminalUiTheme.colors.muted
+      );
   }
 }
 
@@ -187,13 +210,13 @@ function buildRenderedMessageEntries(
     const isSelected = message.id === selectedMessageId;
     const badge = getMessageBadge(message.kind);
     const palette = getMessagePalette(message.kind, isSelected);
-    const bodyWidth = Math.max(16, contentWidth - 2);
+    const bodyWidth = Math.max(16, contentWidth);
     const markdownPlan = shouldRenderMarkdownMessage(message.kind, markdownEnabled)
       ? buildMarkdownRenderPlan(message.content, bodyWidth)
       : undefined;
     const sections = markdownPlan
       ? []
-      : renderSections(message.blocks, message.kind === "tool" ? contentWidth - 2 : contentWidth);
+      : renderSections(message.blocks, contentWidth);
     const headerTitle =
       message.kind === "user" || message.kind === "assistant"
         ? undefined
@@ -210,7 +233,6 @@ function buildRenderedMessageEntries(
       message,
       isSelected,
       headerLabel: badge.label,
-      headerColor: badge.color,
       headerTitle,
       sections,
       markdownPlan,
@@ -224,6 +246,67 @@ function buildRenderedMessageEntries(
         (metadataLine ? 1 : 0)
     };
   });
+}
+
+function buildScrollIndicatorLines(state: ScrollIndicatorState): ScrollIndicatorLine[] {
+  const metrics = resolveScrollIndicatorMetrics(state);
+  if (!metrics.visible || metrics.height === 0) {
+    return Array.from({ length: metrics.height }, (_, index) => ({
+      key: `scroll-indicator-empty-${index}`,
+      char: " ",
+      color: terminalUiTheme.colors.scrollbarTrack,
+      dimColor: true
+    }));
+  }
+
+  return Array.from({ length: metrics.height }, (_, index) => {
+    const isThumb = index >= metrics.thumbTop && index < metrics.thumbTop + metrics.thumbHeight;
+    return {
+      key: `scroll-indicator-${index}`,
+      char: isThumb
+        ? (state.active ? SCROLLBAR_THUMB_ACTIVE_CHAR : SCROLLBAR_THUMB_IDLE_CHAR)
+        : SCROLLBAR_TRACK_CHAR,
+      color: isThumb
+        ? (state.active ? terminalUiTheme.colors.scrollbarThumbActive : terminalUiTheme.colors.scrollbarThumb)
+        : terminalUiTheme.colors.scrollbarTrack,
+      dimColor: !isThumb
+    };
+  });
+}
+
+function resolveScrollIndicatorMetrics(state: ScrollIndicatorState): ScrollIndicatorMetrics {
+  const height = Math.max(0, state.viewportHeight);
+  if (!state.visible || height === 0 || state.scrollHeight <= state.viewportHeight) {
+    return {
+      height,
+      visible: false,
+      thumbHeight: 0,
+      thumbTop: 0,
+      maxThumbTop: 0,
+      maxScrollTop: 0
+    };
+  }
+
+  const maxScrollTop = Math.max(1, state.scrollHeight - state.viewportHeight);
+  const minimumThumbHeight = height >= 6 ? 2 : 1;
+  const thumbHeight = Math.min(
+    height,
+    Math.max(minimumThumbHeight, Math.round((state.viewportHeight / state.scrollHeight) * height))
+  );
+  const maxThumbTop = Math.max(0, height - thumbHeight);
+  const thumbTop = Math.min(
+    maxThumbTop,
+    Math.max(0, Math.round((state.scrollTop / maxScrollTop) * maxThumbTop))
+  );
+
+  return {
+    height,
+    visible: true,
+    thumbHeight,
+    thumbTop,
+    maxThumbTop,
+    maxScrollTop
+  };
 }
 
 function resolveDetailTargetMessageId(
@@ -256,15 +339,24 @@ const MessageListImpl = forwardRef<MessageListHandle, {
   onStickyChange: (sticky: boolean) => void;
 }>(function MessageList(props, ref) {
   const scrollRef = useRef<ScrollBoxHandle | null>(null);
+  const scrollIndicatorTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const scrollDragOffsetRef = useRef<number | null>(null);
   const detailTargetMessageIdRef = useRef<string | null>(props.selectedMessageId);
   const selectedMessageSnapshotRef = useRef<string | null>(props.selectedMessageId);
   const stickySnapshotRef = useRef(true);
+  const [scrollIndicator, setScrollIndicator] = useState<ScrollIndicatorState>({
+    scrollTop: 0,
+    viewportHeight: 0,
+    scrollHeight: 0,
+    visible: false,
+    active: false
+  });
   const layoutSignatureRef = useRef<{
     contentWidth: number;
     messageCount: number;
     totalRowCount: number;
   } | null>(null);
-  const contentWidth = Math.max(24, props.viewportWidth - 8);
+  const contentWidth = Math.max(24, props.viewportWidth - MESSAGE_CONTENT_WIDTH_OFFSET);
   const renderedEntries = useMemo(
     () =>
       buildRenderedMessageEntries(
@@ -287,6 +379,131 @@ const MessageListImpl = forwardRef<MessageListHandle, {
       return top;
     });
   }, [renderedEntries]);
+  const scrollIndicatorLines = useMemo(
+    () => buildScrollIndicatorLines(scrollIndicator),
+    [scrollIndicator]
+  );
+
+  function armScrollIndicatorFade() {
+    if (scrollIndicatorTimeoutRef.current) {
+      clearTimeout(scrollIndicatorTimeoutRef.current);
+    }
+    scrollIndicatorTimeoutRef.current = setTimeout(() => {
+      scrollIndicatorTimeoutRef.current = null;
+      setScrollIndicator((previous) => (
+        previous.active
+          ? {
+              ...previous,
+              active: false
+            }
+          : previous
+      ));
+    }, SCROLLBAR_FADE_MS);
+  }
+
+  function activateScrollIndicator() {
+    setScrollIndicator((previous) => (
+      previous.visible && !previous.active
+        ? {
+            ...previous,
+            active: true
+          }
+        : previous
+    ));
+    armScrollIndicatorFade();
+  }
+
+  function getCurrentScrollIndicatorState() {
+    const handle = scrollRef.current;
+    if (!handle) {
+      return null;
+    }
+
+    const viewportHeight = handle.getViewportHeight();
+    const scrollHeight = Math.max(
+      handle.getScrollHeight(),
+      handle.getFreshScrollHeight()
+    );
+
+    return {
+      scrollTop: handle.getScrollTop(),
+      viewportHeight,
+      scrollHeight,
+      visible: scrollHeight > viewportHeight,
+      active: true
+    } satisfies ScrollIndicatorState;
+  }
+
+  function applyScrollbarPosition(localRow: number, dragOffset: number) {
+    const handle = scrollRef.current;
+    const nextState = getCurrentScrollIndicatorState();
+    if (!handle || !nextState) {
+      return;
+    }
+
+    const metrics = resolveScrollIndicatorMetrics(nextState);
+    if (!metrics.visible) {
+      return;
+    }
+
+    const thumbTop = Math.max(
+      0,
+      Math.min(metrics.maxThumbTop, Math.round(localRow - dragOffset))
+    );
+    const scrollTop =
+      metrics.maxThumbTop === 0
+        ? 0
+        : Math.round((thumbTop / metrics.maxThumbTop) * metrics.maxScrollTop);
+
+    handle.scrollTo(scrollTop);
+    activateScrollIndicator();
+  }
+
+  function handleScrollbarMouseDown(event: TerminalMouseEvent) {
+    if (event.button !== 0) {
+      return;
+    }
+
+    const nextState = getCurrentScrollIndicatorState();
+    if (!nextState) {
+      return;
+    }
+
+    const metrics = resolveScrollIndicatorMetrics(nextState);
+    if (!metrics.visible) {
+      return;
+    }
+
+    const localRow = Math.max(0, Math.min(metrics.height - 1, event.localRow));
+    const clickedThumb =
+      localRow >= metrics.thumbTop && localRow < metrics.thumbTop + metrics.thumbHeight;
+    const dragOffset = clickedThumb
+      ? localRow - metrics.thumbTop
+      : Math.floor(metrics.thumbHeight / 2);
+
+    scrollDragOffsetRef.current = dragOffset;
+    applyScrollbarPosition(localRow, dragOffset);
+  }
+
+  function handleScrollbarMouseMove(event: TerminalMouseEvent) {
+    const dragOffset = scrollDragOffsetRef.current;
+    if (dragOffset === null) {
+      return;
+    }
+
+    const viewportHeight = Math.max(1, scrollIndicator.viewportHeight);
+    const localRow = Math.max(0, Math.min(viewportHeight - 1, event.localRow));
+    applyScrollbarPosition(localRow, dragOffset);
+  }
+
+  function handleScrollbarMouseUp() {
+    if (scrollDragOffsetRef.current === null) {
+      return;
+    }
+
+    scrollDragOffsetRef.current = null;
+    armScrollIndicatorFade();
+  }
 
   useImperativeHandle(ref, () => ({
     scrollBy: (delta) => {
@@ -328,6 +545,10 @@ const MessageListImpl = forwardRef<MessageListHandle, {
 
       const scrollTop = currentHandle.getScrollTop();
       const viewportHeight = currentHandle.getViewportHeight();
+      const scrollHeight = Math.max(
+        currentHandle.getScrollHeight(),
+        currentHandle.getFreshScrollHeight()
+      );
       const isAtBottom = isHandleAtBottom(currentHandle);
       const effectiveSticky = currentHandle.isSticky() || isAtBottom;
 
@@ -339,6 +560,27 @@ const MessageListImpl = forwardRef<MessageListHandle, {
         scrollTop,
         viewportHeight
       );
+      setScrollIndicator((previous) => {
+        const visible = scrollHeight > viewportHeight;
+        if (
+          previous.scrollTop === scrollTop &&
+          previous.viewportHeight === viewportHeight &&
+          previous.scrollHeight === scrollHeight &&
+          previous.visible === visible &&
+          previous.active
+        ) {
+          return previous;
+        }
+
+        return {
+          scrollTop,
+          viewportHeight,
+          scrollHeight,
+          visible,
+          active: true
+        };
+      });
+      armScrollIndicatorFade();
     };
 
     syncScrollState();
@@ -350,6 +592,16 @@ const MessageListImpl = forwardRef<MessageListHandle, {
       unsubscribe();
     };
   }, [entryOffsets, props.onStickyChange, renderedEntries]);
+
+  useEffect(() => {
+    return () => {
+      scrollDragOffsetRef.current = null;
+      if (scrollIndicatorTimeoutRef.current) {
+        clearTimeout(scrollIndicatorTimeoutRef.current);
+        scrollIndicatorTimeoutRef.current = null;
+      }
+    };
+  }, []);
 
   useEffect(() => {
     const handle = scrollRef.current;
@@ -441,16 +693,8 @@ const MessageListImpl = forwardRef<MessageListHandle, {
       width="100%"
       overflow="hidden"
     >
-      <Box flexShrink={0} width="100%">
-        <Text
-          color={terminalUiTheme.colors.subtle}
-          wrap="truncate-end"
-        >
-          {props.messages.length} {pluralizeMessages(props.messages.length)}
-        </Text>
-      </Box>
       <Box
-        flexDirection="column"
+        flexDirection="row"
         flexGrow={1}
         flexShrink={1}
         minHeight={0}
@@ -464,11 +708,11 @@ const MessageListImpl = forwardRef<MessageListHandle, {
           flexGrow={1}
           flexShrink={1}
           minHeight={0}
+          minWidth={0}
           // Keep the host sticky attribute stable. Manual scrollBy/scrollTo
           // already sets the imperative sticky flag to false, so toggling the
           // prop here only risks remount/reset churn when leaving the bottom.
           stickyScroll
-          width="100%"
         >
           {props.messages.length === 0 ? (
             <Box flexDirection="column" width="100%" paddingBottom={1}>
@@ -480,92 +724,123 @@ const MessageListImpl = forwardRef<MessageListHandle, {
           ) : (
             <Box flexDirection="column" width="100%" paddingBottom={1}>
               {renderedEntries.map((entry) => {
-              const timestamp = new Date(entry.message.createdAt).toLocaleTimeString("zh-CN", {
-                hour: "2-digit",
-                minute: "2-digit"
-              });
+                const timestamp = new Date(entry.message.createdAt).toLocaleTimeString("zh-CN", {
+                  hour: "2-digit",
+                  minute: "2-digit"
+                });
 
-              return (
-                <Box
-                  key={entry.message.id}
-                  flexDirection="column"
-                  marginTop={entry.leadingSpacingRows}
-                  width="100%"
-                >
-                  {props.unseenDividerMessageId === entry.message.id ? (
-                    <Text color={terminalUiTheme.colors.warning} wrap="truncate-end">
-                      -- {props.unseenMessageCount} new message{props.unseenMessageCount === 1 ? "" : "s"} --
-                    </Text>
-                  ) : null}
-                  <Text
-                    color={entry.palette.headerColor}
-                    wrap="truncate-end"
+                return (
+                  <Box
+                    key={entry.message.id}
+                    flexDirection="column"
+                    marginTop={entry.leadingSpacingRows}
+                    width="100%"
                   >
-                    {entry.isSelected ? ">" : " "}
-                    {" "}
-                    {entry.headerLabel}
-                    {entry.headerTitle ? (
-                      <>
-                        {" · "}
-                        {entry.headerTitle}
-                      </>
+                    {props.unseenDividerMessageId === entry.message.id ? (
+                      <Text color={terminalUiTheme.colors.warning} wrap="truncate-end">
+                        -- {props.unseenMessageCount} new message{props.unseenMessageCount === 1 ? "" : "s"} --
+                      </Text>
                     ) : null}
-                    {" · "}
-                    {timestamp}
-                  </Text>
-                  {entry.markdownPlan ? (
-                    <MarkdownRenderer
-                      plan={entry.markdownPlan}
-                      kind={entry.message.kind}
-                      baseColor={entry.palette.bodyColor}
-                    />
-                  ) : (
-                    entry.sections.map((section, sectionIndex) => (
-                      <Box
-                        key={`${entry.message.id}-section-${sectionIndex}`}
-                        flexDirection="column"
-                        width="100%"
-                      >
-                        {section.label ? (
-                          <Text
-                            color={entry.palette.mutedColor}
-                            wrap="truncate-end"
-                          >
-                            {"  "}
-                            {section.label}
-                          </Text>
-                        ) : null}
-                        {section.lines.map((line, lineIndex) => (
-                          <Text
-                            key={`${entry.message.id}-line-${sectionIndex}-${lineIndex}`}
-                            color={
-                              section.style === "code"
-                                ? terminalUiTheme.colors.code
-                                : getToneColor(section.tone, entry.message.kind, entry.palette)
-                            }
-                          >
-                            {section.style === "code" ? "    " : "  "}
-                            {line}
-                          </Text>
-                        ))}
-                      </Box>
-                    ))
-                  )}
-                  {entry.metadataLine ? (
-                    <Text
-                      color={entry.palette.mutedColor}
-                      wrap="truncate-end"
+                    <Box
+                      flexDirection="column"
+                      width="100%"
+                      borderStyle="single"
+                      borderTop={false}
+                      borderRight={false}
+                      borderBottom={false}
+                      borderLeftColor={entry.palette.railColor}
+                      borderLeftDimColor={!entry.isSelected}
+                      paddingLeft={1}
                     >
-                      {"  "}
-                      {entry.metadataLine}
-                    </Text>
-                  ) : null}
-                </Box>
-              );
-            })}
+                      <Text wrap="truncate-end">
+                        <Text color={entry.isSelected ? terminalUiTheme.colors.accent : entry.palette.mutedColor}>
+                          {entry.isSelected ? ">" : " "}
+                        </Text>
+                        <Text color={entry.palette.headerColor}> {entry.headerLabel}</Text>
+                        {entry.headerTitle ? (
+                          <Text color={entry.palette.bodyColor}> · {entry.headerTitle}</Text>
+                        ) : null}
+                        <Text color={entry.palette.mutedColor}> · {timestamp}</Text>
+                      </Text>
+                      {entry.markdownPlan ? (
+                        <MarkdownRenderer
+                          plan={entry.markdownPlan}
+                          kind={entry.message.kind}
+                          baseColor={entry.palette.bodyColor}
+                        />
+                      ) : (
+                        entry.sections.map((section, sectionIndex) => (
+                          <Box
+                            key={`${entry.message.id}-section-${sectionIndex}`}
+                            flexDirection="column"
+                            width="100%"
+                          >
+                            {section.label ? (
+                              <Text
+                                color={entry.palette.mutedColor}
+                                wrap="truncate-end"
+                              >
+                                {section.label}
+                              </Text>
+                            ) : null}
+                            {section.lines.map((line, lineIndex) => (
+                              <Text
+                                key={`${entry.message.id}-line-${sectionIndex}-${lineIndex}`}
+                                color={
+                                  section.style === "code"
+                                    ? terminalUiTheme.colors.code
+                                    : getToneColor(section.tone, entry.message.kind, entry.palette)
+                                }
+                              >
+                                {line}
+                              </Text>
+                            ))}
+                          </Box>
+                        ))
+                      )}
+                      {entry.metadataLine ? (
+                        <Text
+                          color={entry.palette.mutedColor}
+                          wrap="truncate-end"
+                        >
+                          {entry.metadataLine}
+                        </Text>
+                      ) : null}
+                    </Box>
+                  </Box>
+                );
+              })}
             </Box>
           )}
         </ScrollBox>
+        <Box
+          flexDirection="column"
+          flexShrink={0}
+          width={SCROLLBAR_WIDTH}
+          marginLeft={1}
+          noSelect
+          onMouseDown={scrollIndicator.visible ? handleScrollbarMouseDown : undefined}
+          onMouseMove={scrollIndicator.visible ? handleScrollbarMouseMove : undefined}
+          onMouseUp={scrollIndicator.visible ? handleScrollbarMouseUp : undefined}
+          onMouseEnter={scrollIndicator.visible ? activateScrollIndicator : undefined}
+          onMouseLeave={scrollIndicator.visible
+            ? () => {
+                if (scrollDragOffsetRef.current === null) {
+                  armScrollIndicatorFade();
+                }
+              }
+            : undefined}
+        >
+          {scrollIndicatorLines.map((line) => (
+            <Text
+              key={line.key}
+              color={line.color}
+              dimColor={line.dimColor}
+            >
+              {line.char}
+            </Text>
+          ))}
+        </Box>
       </Box>
     </Box>
   );

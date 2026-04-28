@@ -1,6 +1,11 @@
 import React from "react";
 import { Box } from "../runtime/ink.js";
-import { Divider } from "./Divider.js";
+
+const SECTION_GAP_ROWS = 1;
+
+function LayoutGap() {
+  return <Box flexShrink={0} height={SECTION_GAP_ROWS} width="100%" />;
+}
 
 export function FullscreenLayout(props: {
   header?: React.ReactNode;
@@ -10,14 +15,16 @@ export function FullscreenLayout(props: {
   modal?: React.ReactNode;
   bottom?: React.ReactNode;
 }) {
+  const hasHeader = props.header !== undefined && props.header !== null;
+
   return (
     <Box flexDirection="column" width="100%" height="100%" overflow="hidden">
-      {props.header !== undefined && props.header !== null ? (
+      {hasHeader ? (
         <Box flexShrink={0} paddingX={1} width="100%">
           {props.header}
         </Box>
       ) : null}
-      <Divider />
+      {hasHeader ? <LayoutGap /> : null}
       {props.modal !== undefined && props.modal !== null ? (
         <Box
           flexDirection="column"
@@ -49,7 +56,7 @@ export function FullscreenLayout(props: {
           ) : null}
           {props.overlay !== undefined && props.overlay !== null ? (
             <>
-              <Divider />
+              <LayoutGap />
               <Box flexShrink={0} paddingX={1} paddingY={1} width="100%">
                 {props.overlay}
               </Box>
@@ -59,7 +66,7 @@ export function FullscreenLayout(props: {
       )}
       {props.bottom !== undefined && props.bottom !== null && (props.modal === undefined || props.modal === null) ? (
         <>
-          <Divider />
+          <LayoutGap />
           <Box flexShrink={0} paddingX={1} width="100%">
             {props.bottom}
           </Box>

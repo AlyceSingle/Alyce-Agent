@@ -4,6 +4,7 @@ import type { DOMElement } from '../dom.js'
 import type { ClickEvent } from '../events/click-event.js'
 import type { FocusEvent } from '../events/focus-event.js'
 import type { KeyboardEvent } from '../events/keyboard-event.js'
+import type { MouseEvent } from '../events/mouse-event.js'
 import type { Styles } from '../styles.js'
 import * as warn from '../warn.js'
 
@@ -18,6 +19,9 @@ export type Props = Except<Styles, 'textWrap'> & {
   onBlurCapture?: (event: FocusEvent) => void
   onKeyDown?: (event: KeyboardEvent) => void
   onKeyDownCapture?: (event: KeyboardEvent) => void
+  onMouseDown?: (event: MouseEvent) => void
+  onMouseMove?: (event: MouseEvent) => void
+  onMouseUp?: (event: MouseEvent) => void
   onMouseEnter?: () => void
   onMouseLeave?: () => void
 }
@@ -36,6 +40,9 @@ function Box({
   onFocusCapture,
   onBlur,
   onBlurCapture,
+  onMouseDown,
+  onMouseMove,
+  onMouseUp,
   onMouseEnter,
   onMouseLeave,
   onKeyDown,
@@ -70,6 +77,9 @@ function Box({
       onFocusCapture={onFocusCapture}
       onBlur={onBlur}
       onBlurCapture={onBlurCapture}
+      onMouseDown={onMouseDown}
+      onMouseMove={onMouseMove}
+      onMouseUp={onMouseUp}
       onMouseEnter={onMouseEnter}
       onMouseLeave={onMouseLeave}
       onKeyDown={onKeyDown}

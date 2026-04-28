@@ -1,7 +1,7 @@
 import { Text, useStdout } from "../runtime/ink.js";
 import { terminalUiTheme } from "../theme/theme.js";
 
-const DEFAULT_DIVIDER_CHAR = "-";
+const DEFAULT_DIVIDER_CHAR = "─";
 const SINGLE_WIDTH_ASCII_CHAR_PATTERN = /^[\x21-\x7E]$/;
 
 export function Divider(props: {

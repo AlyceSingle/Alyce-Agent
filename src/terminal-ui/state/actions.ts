@@ -191,7 +191,7 @@ export function openSessionPickerDialog(
 ): TerminalUiState {
   return pushDialog(state, {
     type: "session-picker",
-    layer: "overlay",
+    layer: "modal",
     sessions
   });
 }

@@ -1,6 +1,5 @@
 import { useEffect, useState } from "react";
 import type { SessionHistoryListItem } from "../../core/session-history/types.js";
-import { useRegisterOverlay } from "../context/overlayContext.js";
 import { Box, Text, useInput } from "../runtime/ink.js";
 import { terminalUiTheme } from "../theme/theme.js";
 import { Pane } from "./Pane.js";
@@ -13,8 +12,6 @@ export function SessionPickerDialog(props: {
   onCancel: () => void;
 }) {
   const [selectedIndex, setSelectedIndex] = useState(0);
-
-  useRegisterOverlay("session-picker", props.sessions.length > 0);
 
   useEffect(() => {
     setSelectedIndex(0);

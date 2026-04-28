@@ -58,6 +58,11 @@ type Props = {
   // DOM elements. Called for mode-1003 motion events with no button held.
   // No-op outside fullscreen (Ink.dispatchHover gates on altScreenActive).
   readonly onHoverAt: (col: number, row: number) => void;
+  // Dispatch mouse press / drag / release events to host components.
+  // Used by interactive gutters such as the message list scrollbar.
+  readonly onMouseDownAt: (col: number, row: number, button: number) => boolean;
+  readonly onMouseMoveAt: (col: number, row: number, button: number) => boolean;
+  readonly onMouseUpAt: (col: number, row: number, button: number) => boolean;
   // Look up the OSC 8 hyperlink at (col, row) synchronously at click
   // time. Returns the URL or undefined. The browser-open is deferred by
   // MULTI_CLICK_TIMEOUT_MS so double-click can cancel it.
@@ -565,6 +570,7 @@ export function handleMouseEvent(app: App, m: ParsedMouse): void {
   const baseButton = m.button & 0x03;
   if (m.action === 'press') {
     if ((m.button & 0x20) !== 0 && baseButton === 3) {
+      if (app.props.onMouseUpAt(col, row, baseButton)) return;
       // Mode-1003 motion with no button held. Dispatch hover; skip the
       // rest of this handler (no selection, no click-count side effects).
       // Lost-release recovery: no-button motion while isDragging=true means
@@ -590,6 +596,7 @@ export function handleMouseEvent(app: App, m: ParsedMouse): void {
       return;
     }
     if ((m.button & 0x20) !== 0) {
+      if (app.props.onMouseMoveAt(col, row, baseButton)) return;
       // Drag motion: mode-aware extension (char/word/line). onSelectionDrag
       // calls notifySelectionChange internally — no extra onSelectionChange.
       app.props.onSelectionDrag(col, row);
@@ -604,6 +611,7 @@ export function handleMouseEvent(app: App, m: ParsedMouse): void {
       finishSelection(sel);
       app.props.onSelectionChange();
     }
+    if (app.props.onMouseDownAt(col, row, baseButton)) return;
     // Fresh left press. Detect multi-click HERE (not on release) so the
     // word/line highlight appears immediately and a subsequent drag can
     // extend by word/line like native macOS. Previously detected on
@@ -643,6 +651,7 @@ export function handleMouseEvent(app: App, m: ParsedMouse): void {
   // isDragging=true and leave drag-to-scroll's timer running until the
   // scroll boundary. Only act on non-left releases when we ARE dragging
   // (so an unrelated middle/right click-release doesn't touch selection).
+  if (app.props.onMouseUpAt(col, row, baseButton)) return;
   if (baseButton !== 0) {
     if (!sel.isDragging) return;
     finishSelection(sel);

@@ -3,6 +3,8 @@ import { Box, Text } from "../runtime/ink.js";
 import { terminalUiTheme } from "../theme/theme.js";
 import TextInput from "./TextInput.js";
 
+const PROMPT_INPUT_VIEWPORT_OFFSET = 8;
+
 export function PromptInput(props: {
   value: string;
   viewportWidth: number;
@@ -90,30 +92,47 @@ export function PromptInput(props: {
 
   return (
     <Box flexDirection="column" width="100%">
-      <TextInput
-        value={props.value}
-        onChange={handleChange}
-        onSubmit={(value) => {
-          void props.onSubmit(value);
-        }}
-        focus={!props.disabled}
-        multiline
-        showCursor={!props.disabled}
-        columns={Math.max(20, props.viewportWidth - 2)}
-        maxVisibleLines={4}
-        cursorOffset={cursorOffset}
-        onChangeCursorOffset={handleCursorOffsetChange}
-        onEscClearPendingChange={setEscClearPending}
-        placeholder="Ask Alyce to inspect, edit, or explain something..."
-      />
-      {statusHint ? (
-        <Text
-          color={props.disabled ? terminalUiTheme.colors.warning : terminalUiTheme.colors.subtle}
-          wrap="truncate-end"
-        >
-          {statusHint}
-        </Text>
-      ) : null}
+      <Box
+        flexDirection="column"
+        width="100%"
+        borderStyle="round"
+        borderColor={terminalUiTheme.colors.inputBorder}
+        borderLeftColor={props.disabled ? terminalUiTheme.colors.warning : terminalUiTheme.colors.promptAccent}
+        borderDimColor={props.disabled}
+        paddingX={1}
+      >
+        <TextInput
+          value={props.value}
+          onChange={handleChange}
+          onSubmit={(value) => {
+            void props.onSubmit(value);
+          }}
+          focus={!props.disabled}
+          multiline
+          showCursor={!props.disabled}
+          columns={Math.max(20, props.viewportWidth - PROMPT_INPUT_VIEWPORT_OFFSET)}
+          maxVisibleLines={4}
+          cursorOffset={cursorOffset}
+          onChangeCursorOffset={handleCursorOffsetChange}
+          onEscClearPendingChange={setEscClearPending}
+          placeholder="Ask Alyce to inspect, edit, or explain something..."
+          firstLinePrefix="› "
+          continuationPrefix="  "
+          prefixColor={props.disabled ? terminalUiTheme.colors.muted : terminalUiTheme.colors.promptAccent}
+          placeholderColor={terminalUiTheme.colors.inputPlaceholder}
+          overflowHintColor={terminalUiTheme.colors.promptMuted}
+        />
+        {statusHint ? (
+          <Box marginTop={1} width="100%">
+            <Text
+              color={props.disabled ? terminalUiTheme.colors.warning : terminalUiTheme.colors.inputTray}
+              wrap="truncate-end"
+            >
+              {statusHint}
+            </Text>
+          </Box>
+        ) : null}
+      </Box>
     </Box>
   );
 }

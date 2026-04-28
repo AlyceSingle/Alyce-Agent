@@ -73,7 +73,7 @@ export type ActiveDialog =
   | { type: "permission"; layer: "overlay"; request: ToolApprovalRequest }
   | { type: "question"; layer: "overlay"; request: AskUserQuestionRequest }
   | { type: "settings"; layer: "overlay"; section: SettingsSection; reason?: string }
-  | { type: "session-picker"; layer: "overlay"; sessions: SessionHistoryListItem[] }
+  | { type: "session-picker"; layer: "modal"; sessions: SessionHistoryListItem[] }
   | { type: "rewind-picker"; layer: "overlay"; points: TerminalUiRewindPoint[] }
   | { type: "reader"; layer: "modal"; messageId: string };
 
@@ -81,7 +81,6 @@ export type TerminalUiOverlayId =
   | "permission"
   | "question"
   | "settings"
-  | "session-picker"
   | "rewind-picker";
 
 export interface TerminalUiState {

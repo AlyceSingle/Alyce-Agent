@@ -1,5 +1,5 @@
 import React from "react";
-import { Box, useStdout } from "../runtime/ink.js";
+import { useStdout } from "../runtime/ink.js";
 import { useTextInput } from "../hooks/useTextInput.js";
 import type { BaseTextInputProps } from "../types/textInputTypes.js";
 import { BaseTextInput } from "./BaseTextInput.js";
@@ -15,16 +15,16 @@ export default function TextInput(props: BaseTextInputProps): React.ReactNode {
     maxVisibleLines: props.maxVisibleLines,
     cursorOffset: props.cursorOffset,
     onChangeCursorOffset: props.onChangeCursorOffset,
-    onEscClearPendingChange: props.onEscClearPendingChange
+    onEscClearPendingChange: props.onEscClearPendingChange,
+    firstLinePrefix: props.firstLinePrefix,
+    continuationPrefix: props.continuationPrefix
   });
 
   return (
-    <Box>
-      <BaseTextInput
-        {...props}
-        inputState={textInputState}
-        terminalFocus
-      />
-    </Box>
+    <BaseTextInput
+      {...props}
+      inputState={textInputState}
+      terminalFocus
+    />
   );
 }
