@@ -35,12 +35,19 @@ function isHandleAtBottom(handle: ScrollBoxHandle) {
 
 type RenderedSection = {
   label?: string;
-  lines: string[];
+  lines: RenderedSectionLine[];
   tone: TerminalUiMessageBlockTone;
   style: TerminalUiMessageBlockStyle;
+  isDiff?: boolean;
 };
 
 type ThemeColor = Color;
+type DiffLineKind = "meta" | "hunk" | "add" | "remove" | "context";
+
+type RenderedSectionLine = {
+  content: string;
+  diffKind?: DiffLineKind;
+};
 
 type RenderedMessageEntry = {
   message: TerminalUiMessage;
@@ -50,7 +57,12 @@ type RenderedMessageEntry = {
   sections: RenderedSection[];
   markdownPlan?: MarkdownRenderPlan;
   metadataLine?: string;
+<<<<<<< HEAD
+=======
+  isToolExpandable: boolean;
+>>>>>>> 3154985 (Refine transcript diff rendering)
   leadingSpacingRows: number;
+  unseenDividerRows: number;
   palette: MessagePalette;
   rowCount: number;
 };
@@ -86,6 +98,28 @@ type ScrollIndicatorMetrics = {
   maxScrollTop: number;
 };
 
+<<<<<<< HEAD
+=======
+type ExpandableRenderState = {
+  sections: RenderedSection[];
+  metadataLine?: string;
+  expandable: boolean;
+  expanded: boolean;
+};
+
+function SelectionSafeRow(props: React.ComponentProps<typeof Text>) {
+  const { children, backgroundColor, ...textProps } = props;
+  const rowBackgroundColor = backgroundColor as ThemeColor | undefined;
+
+  return (
+    <Box flexDirection="row" width="100%" backgroundColor={rowBackgroundColor}>
+      <Text {...textProps} backgroundColor={backgroundColor}>{children}</Text>
+      <Box flexGrow={1} noSelect backgroundColor={rowBackgroundColor} />
+    </Box>
+  );
+}
+
+>>>>>>> 3154985 (Refine transcript diff rendering)
 export type MessageListHandle = {
   scrollBy: (delta: number) => void;
   scrollPage: (delta: -1 | 1) => void;
@@ -192,19 +226,474 @@ function getToneColor(
 
 function renderSections(blocks: TerminalUiMessageBlock[], width: number): RenderedSection[] {
   const safeWidth = Math.max(12, width);
-  return blocks.map((block) => ({
-    label: block.label,
-    lines: wrapText(block.content, safeWidth),
-    tone: block.tone ?? "default",
-    style: block.style ?? "plain"
-  }));
+  return blocks.map((block) => buildRenderedSection(block, safeWidth));
 }
 
+function buildRenderedSection(block: TerminalUiMessageBlock, width: number): RenderedSection {
+  return {
+    label: block.label,
+    lines: renderBlockLines(block, width),
+    tone: block.tone ?? "default",
+    style: block.style ?? "plain",
+    isDiff: isDiffPatchBlock(block)
+  };
+}
+
+function renderBlockLines(block: TerminalUiMessageBlock, width: number): RenderedSectionLine[] {
+  if (isDiffPatchBlock(block)) {
+    return wrapDiffPatchLines(block.content, width);
+  }
+
+  return wrapText(block.content, width).map((content) => ({ content }));
+}
+
+function isDiffPatchBlock(block: TerminalUiMessageBlock) {
+  return block.style === "code" && block.label === "Patch";
+}
+
+function wrapDiffPatchLines(content: string, width: number): RenderedSectionLine[] {
+  return content
+    .split(/\r?\n/)
+    .flatMap((rawLine) => {
+      const diffKind = classifyDiffLine(rawLine);
+      if (diffKind === "meta" || diffKind === "hunk") {
+        return [];
+      }
+
+      const wrappedLines = wrapText(rawLine, width);
+
+      return wrappedLines.map((line) => ({
+        content: line,
+        diffKind
+      }));
+    });
+}
+
+function classifyDiffLine(line: string): DiffLineKind | undefined {
+  if (line.startsWith("+++ ") || line.startsWith("--- ")) {
+    return "meta";
+  }
+
+  if (line.startsWith("@@")) {
+    return "hunk";
+  }
+
+  if (line.startsWith("+")) {
+    return "add";
+  }
+
+  if (line.startsWith("-")) {
+    return "remove";
+  }
+
+  if (line.startsWith(" ")) {
+    return "context";
+  }
+
+  return undefined;
+}
+
+function getRenderedLineColors(
+  line: RenderedSectionLine,
+  section: RenderedSection,
+  messageKind: TerminalUiMessage["kind"],
+  palette: MessagePalette
+): {
+  color: ThemeColor;
+  backgroundColor?: ThemeColor;
+} {
+  switch (line.diffKind) {
+    case "add":
+      return {
+        color: terminalUiTheme.colors.diffAdded,
+        backgroundColor: terminalUiTheme.colors.diffAddedBackground
+      };
+    case "remove":
+      return {
+        color: terminalUiTheme.colors.diffRemoved,
+        backgroundColor: terminalUiTheme.colors.diffRemovedBackground
+      };
+    case "meta":
+      return {
+        color: terminalUiTheme.colors.diffMeta
+      };
+    case "hunk":
+      return {
+        color: terminalUiTheme.colors.diffHunk
+      };
+    case "context":
+      return {
+        color: terminalUiTheme.colors.code
+      };
+    default:
+      return {
+        color:
+          section.style === "code"
+            ? terminalUiTheme.colors.code
+            : getToneColor(section.tone, messageKind, palette)
+      };
+  }
+}
+
+function getRenderableToolBlocks(
+  blocks: TerminalUiMessageBlock[],
+  toolData: TerminalUiToolData
+) {
+  if (toolData.resultKind !== "edit") {
+    return blocks;
+  }
+
+  return blocks.filter((block) => block.label !== "Edit");
+}
+
+function buildCollapsedRenderedSections(
+  blocks: TerminalUiMessageBlock[],
+  width: number,
+  maxLines: number
+): {
+  sections: RenderedSection[];
+  truncated: boolean;
+} {
+  const previewSections: RenderedSection[] = [];
+  let remainingLines = Math.max(1, maxLines);
+  let truncated = false;
+
+  for (const block of blocks) {
+    if (remainingLines <= 0) {
+      truncated = true;
+      break;
+    }
+
+    const section = buildRenderedSection(block, width);
+    if (section.lines.length === 0) {
+      continue;
+    }
+
+    const visibleLineCount = Math.min(section.lines.length, remainingLines);
+    previewSections.push({
+      ...section,
+      lines: section.lines.slice(0, visibleLineCount)
+    });
+
+    truncated ||= section.lines.length > visibleLineCount;
+    remainingLines -= visibleLineCount;
+    if (section.lines.length > visibleLineCount) {
+      break;
+    }
+  }
+
+  if (previewSections.length === 0) {
+    previewSections.push({
+      label: "Output",
+      lines: [{ content: "(empty)" }],
+      tone: "muted",
+      style: "plain"
+    });
+  }
+
+  return {
+    sections: previewSections,
+    truncated
+  };
+}
+
+function shouldDisplaySectionLabel(section: RenderedSection) {
+  return Boolean(section.label) && !section.isDiff;
+}
+
+<<<<<<< HEAD
+=======
+function renderToolMessageState(
+  message: TerminalUiMessage,
+  width: number,
+  expanded: boolean
+): ExpandableRenderState {
+  const toolData = message.toolData;
+  const baseMetadata = message.metadata;
+
+  if (!toolData) {
+    return renderLegacyToolMessageState(message, width, expanded);
+  }
+
+  if (toolData.phase === "start") {
+    return {
+      sections: [],
+      metadataLine: baseMetadata.length > 0 ? baseMetadata.join(" | ") : undefined,
+      expandable: false,
+      expanded: false
+    };
+  }
+
+  if (toolData.ok === false) {
+    return {
+      sections: renderSections(getRenderableToolBlocks(message.blocks, toolData), width),
+      metadataLine: baseMetadata.length > 0 ? baseMetadata.join(" | ") : undefined,
+      expandable: false,
+      expanded: false
+    };
+  }
+
+  if (toolData.resultKind === "edit") {
+    const renderableBlocks = getRenderableToolBlocks(message.blocks, toolData);
+    const collapsedPreview = buildCollapsedRenderedSections(renderableBlocks, width, 12);
+    const sections = expanded
+      ? renderSections(renderableBlocks, width)
+      : collapsedPreview.sections;
+    const toggleHint = collapsedPreview.truncated
+      ? expanded
+        ? "Click to collapse"
+        : "Click to expand"
+      : undefined;
+
+    return {
+      sections,
+      metadataLine: buildExpandableMetadataLine(baseMetadata, toggleHint),
+      expandable: Boolean(toggleHint),
+      expanded
+    };
+  }
+
+  const collapsedPreview = buildCollapsedToolBlocks(message, toolData, width);
+  const renderableBlocks = getRenderableToolBlocks(message.blocks, toolData);
+  const sections = renderSections(expanded ? renderableBlocks : collapsedPreview.blocks, width);
+  const toggleHint = collapsedPreview.truncated
+    ? expanded
+      ? "Click to collapse"
+      : "Click to expand"
+    : undefined;
+
+  return {
+    sections,
+    metadataLine: buildExpandableMetadataLine(baseMetadata, toggleHint),
+    expandable: Boolean(toggleHint),
+    expanded
+  };
+}
+
+function renderLegacyToolMessageState(
+  message: TerminalUiMessage,
+  width: number,
+  expanded: boolean
+): ExpandableRenderState {
+  const baseMetadata = message.metadata;
+
+  if (baseMetadata.includes("Tool call")) {
+    return {
+      sections: [],
+      metadataLine: baseMetadata.length > 0 ? baseMetadata.join(" | ") : undefined,
+      expandable: false,
+      expanded: false
+    };
+  }
+
+  const collapsedPreview = buildCollapsedLegacyToolBlocks(message, width);
+  const sections = renderSections(expanded ? message.blocks : collapsedPreview.blocks, width);
+  const toggleHint = collapsedPreview.truncated
+    ? expanded
+      ? "Click to collapse"
+      : "Click to expand"
+    : undefined;
+
+  return {
+    sections,
+    metadataLine: buildExpandableMetadataLine(baseMetadata, toggleHint),
+    expandable: Boolean(toggleHint),
+    expanded
+  };
+}
+
+function isContextPreviewMessage(message: TerminalUiMessage) {
+  return message.kind === "system" && message.title === "Context Preview";
+}
+
+function renderContextPreviewMessageState(
+  message: TerminalUiMessage,
+  width: number,
+  expanded: boolean
+): ExpandableRenderState {
+  const baseMetadata = message.metadata;
+  const collapsedPreview = buildCollapsedMessageBlocks(message.blocks, width, 16);
+  const sections = renderSections(expanded ? message.blocks : collapsedPreview.blocks, width);
+  const toggleHint = collapsedPreview.truncated
+    ? expanded
+      ? "Click to collapse"
+      : "Click to expand"
+    : undefined;
+
+  return {
+    sections,
+    metadataLine: buildExpandableMetadataLine(baseMetadata, toggleHint),
+    expandable: Boolean(toggleHint),
+    expanded
+  };
+}
+
+function buildCollapsedMessageBlocks(
+  blocks: TerminalUiMessageBlock[],
+  width: number,
+  maxLines: number
+): {
+  blocks: TerminalUiMessageBlock[];
+  truncated: boolean;
+} {
+  const safeWidth = Math.max(16, width);
+  const previewBlocks: TerminalUiMessageBlock[] = [];
+  let remainingLines = maxLines;
+  let truncated = false;
+
+  for (const block of blocks) {
+    if (remainingLines <= 0) {
+      truncated = true;
+      break;
+    }
+
+    const preview = wrapTextClamped(block.content, safeWidth, remainingLines);
+    previewBlocks.push({
+      ...block,
+      content: preview.lines.join("\n")
+    });
+
+    truncated ||= preview.truncated;
+    remainingLines -= preview.lines.length;
+    if (preview.truncated) {
+      break;
+    }
+  }
+
+  if (previewBlocks.length === 0) {
+    previewBlocks.push({
+      label: "Output",
+      content: "(empty)",
+      tone: "muted"
+    });
+  }
+
+  return {
+    blocks: previewBlocks,
+    truncated
+  };
+}
+
+function buildCollapsedLegacyToolBlocks(
+  message: TerminalUiMessage,
+  width: number
+): {
+  blocks: TerminalUiMessageBlock[];
+  truncated: boolean;
+} {
+  return buildCollapsedMessageBlocks(message.blocks, width, 10);
+}
+
+function buildCollapsedToolBlocks(
+  message: TerminalUiMessage,
+  toolData: TerminalUiToolData,
+  width: number
+): {
+  blocks: TerminalUiMessageBlock[];
+  truncated: boolean;
+} {
+  const safeWidth = Math.max(16, width);
+
+  switch (toolData.resultKind) {
+    case "shell": {
+      const shell = toolData.shell;
+      if (!shell) {
+        break;
+      }
+
+      const blocks: TerminalUiMessageBlock[] = [
+        {
+          label: "Command",
+          content: `$ ${shell.command}`,
+          style: "code"
+        }
+      ];
+      const combinedOutput = combineShellOutput(shell.stdout, shell.stderr);
+      if (!combinedOutput) {
+        blocks.push({
+          content: "(no output)",
+          tone: "muted"
+        });
+        return { blocks, truncated: false };
+      }
+
+      const preview = wrapTextClamped(combinedOutput.text, safeWidth, 10);
+      blocks.push({
+        label: combinedOutput.label,
+        content: preview.lines.join("\n"),
+        style: "code",
+        tone: combinedOutput.tone
+      });
+      return {
+        blocks,
+        truncated: preview.truncated
+      };
+    }
+    case "generic":
+      return buildCollapsedMessageBlocks(message.blocks, width, 3);
+    case "write":
+    case "edit":
+    default: {
+      return buildCollapsedMessageBlocks(message.blocks, width, 12);
+    }
+  }
+
+  return buildCollapsedMessageBlocks(message.blocks, width, 12);
+}
+
+function combineShellOutput(stdout: string, stderr: string): {
+  label: string;
+  text: string;
+  tone?: TerminalUiMessageBlockTone;
+} | null {
+  const trimmedStdout = stdout.trim();
+  const trimmedStderr = stderr.trim();
+
+  if (trimmedStdout && trimmedStderr) {
+    return {
+      label: "Output",
+      text: `${trimmedStdout}\n\n[stderr]\n${trimmedStderr}`,
+      tone: "warning"
+    };
+  }
+
+  if (trimmedStdout) {
+    return {
+      label: "Stdout",
+      text: trimmedStdout,
+      tone: "success"
+    };
+  }
+
+  if (trimmedStderr) {
+    return {
+      label: "Stderr",
+      text: trimmedStderr,
+      tone: "warning"
+    };
+  }
+
+  return null;
+}
+
+function buildExpandableMetadataLine(metadata: string[], toggleHint?: string) {
+  const parts = toggleHint ? [...metadata, toggleHint] : metadata;
+  return parts.length > 0 ? parts.join(" | ") : undefined;
+}
+
+>>>>>>> 3154985 (Refine transcript diff rendering)
 function buildRenderedMessageEntries(
   messages: TerminalUiMessage[],
   selectedMessageId: string | null,
   contentWidth: number,
+<<<<<<< HEAD
   markdownEnabled: boolean
+=======
+  markdownEnabled: boolean,
+  expandedToolMessageIds: ReadonlySet<string>,
+  assistantLabel: string,
+  unseenDividerMessageId: string | null
+>>>>>>> 3154985 (Refine transcript diff rendering)
 ): RenderedMessageEntry[] {
   return messages.map((message, index) => {
     const isSelected = message.id === selectedMessageId;
@@ -223,10 +712,11 @@ function buildRenderedMessageEntries(
         : message.title;
     const metadataLine = message.metadata.length > 0 ? message.metadata.join(" | ") : undefined;
     const leadingSpacingRows = index === 0 ? 0 : 1;
+    const unseenDividerRows = message.id === unseenDividerMessageId ? 1 : 0;
     const sectionRowCount = markdownPlan
-      ? markdownPlan.rowCount
-      : sections.reduce((sum, section) => {
-          return sum + section.lines.length + (section.label ? 1 : 0);
+        ? markdownPlan.rowCount
+        : sections.reduce((sum, section) => {
+          return sum + section.lines.length + (shouldDisplaySectionLabel(section) ? 1 : 0);
         }, 0);
 
     return {
@@ -237,10 +727,16 @@ function buildRenderedMessageEntries(
       sections,
       markdownPlan,
       metadataLine,
+<<<<<<< HEAD
+=======
+      isToolExpandable: expandableRenderState?.expandable ?? false,
+>>>>>>> 3154985 (Refine transcript diff rendering)
       leadingSpacingRows,
+      unseenDividerRows,
       palette,
       rowCount:
         leadingSpacingRows +
+        unseenDividerRows +
         1 +
         sectionRowCount +
         (metadataLine ? 1 : 0)
@@ -363,9 +859,26 @@ const MessageListImpl = forwardRef<MessageListHandle, {
         props.messages,
         props.selectedMessageId,
         contentWidth,
+<<<<<<< HEAD
         props.markdownEnabled
       ),
     [contentWidth, props.markdownEnabled, props.messages, props.selectedMessageId]
+=======
+        props.markdownEnabled,
+        expandedToolMessageIds,
+        props.assistantLabel,
+        props.unseenDividerMessageId
+      ),
+    [
+      contentWidth,
+      expandedToolMessageIds,
+      props.assistantLabel,
+      props.markdownEnabled,
+      props.messages,
+      props.selectedMessageId,
+      props.unseenDividerMessageId
+    ]
+>>>>>>> 3154985 (Refine transcript diff rendering)
   );
   const totalRowCount = useMemo(
     () => renderedEntries.reduce((sum, entry) => sum + entry.rowCount, 0),
@@ -505,6 +1018,50 @@ const MessageListImpl = forwardRef<MessageListHandle, {
     armScrollIndicatorFade();
   }
 
+<<<<<<< HEAD
+=======
+  function handleToolMessageClick(messageId: string, event: TerminalClickEvent) {
+    if (event.cellIsBlank) {
+      return;
+    }
+
+    setExpandedToolMessageIds((previous) => {
+      const next = new Set(previous);
+      if (next.has(messageId)) {
+        next.delete(messageId);
+      } else {
+        next.add(messageId);
+      }
+      return next;
+    });
+  }
+
+  useEffect(() => {
+    setExpandedToolMessageIds((previous) => {
+      if (previous.size === 0) {
+        return previous;
+      }
+
+      const validIds = new Set(
+        props.messages
+          .filter((message) => message.kind === "tool" || isContextPreviewMessage(message))
+          .map((message) => message.id)
+      );
+      const next = new Set<string>();
+      let changed = false;
+      for (const id of previous) {
+        if (validIds.has(id)) {
+          next.add(id);
+        } else {
+          changed = true;
+        }
+      }
+
+      return changed ? next : previous;
+    });
+  }, [props.messages]);
+
+>>>>>>> 3154985 (Refine transcript diff rendering)
   useImperativeHandle(ref, () => ({
     scrollBy: (delta) => {
       scrollRef.current?.scrollBy(delta);
@@ -728,6 +1285,13 @@ const MessageListImpl = forwardRef<MessageListHandle, {
                   hour: "2-digit",
                   minute: "2-digit"
                 });
+<<<<<<< HEAD
+=======
+                const railRowCount = Math.max(
+                  1,
+                  entry.rowCount - entry.leadingSpacingRows - entry.unseenDividerRows
+                );
+>>>>>>> 3154985 (Refine transcript diff rendering)
 
                 return (
                   <Box
@@ -736,7 +1300,21 @@ const MessageListImpl = forwardRef<MessageListHandle, {
                     marginTop={entry.leadingSpacingRows}
                     width="100%"
                   >
+<<<<<<< HEAD
                     {props.unseenDividerMessageId === entry.message.id ? (
+=======
+                    {Array.from({ length: entry.leadingSpacingRows }, (_, spacerIndex) => (
+                      <Box
+                        key={`${entry.message.id}-spacer-${spacerIndex}`}
+                        flexDirection="row"
+                        width="100%"
+                        noSelect="from-left-edge"
+                      >
+                        <Text> </Text>
+                      </Box>
+                    ))}
+                    {entry.unseenDividerRows > 0 ? (
+>>>>>>> 3154985 (Refine transcript diff rendering)
                       <Text color={terminalUiTheme.colors.warning} wrap="truncate-end">
                         -- {props.unseenMessageCount} new message{props.unseenMessageCount === 1 ? "" : "s"} --
                       </Text>
@@ -752,6 +1330,7 @@ const MessageListImpl = forwardRef<MessageListHandle, {
                       borderLeftDimColor={!entry.isSelected}
                       paddingLeft={1}
                     >
+<<<<<<< HEAD
                       <Text wrap="truncate-end">
                         <Text color={entry.isSelected ? terminalUiTheme.colors.accent : entry.palette.mutedColor}>
                           {entry.isSelected ? ">" : " "}
@@ -759,6 +1338,90 @@ const MessageListImpl = forwardRef<MessageListHandle, {
                         <Text color={entry.palette.headerColor}> {entry.headerLabel}</Text>
                         {entry.headerTitle ? (
                           <Text color={entry.palette.bodyColor}> · {entry.headerTitle}</Text>
+=======
+                      <Box
+                        flexDirection="column"
+                        flexShrink={0}
+                        width={MESSAGE_RAIL_GUTTER_WIDTH}
+                        noSelect="from-left-edge"
+                      >
+                        {Array.from({ length: railRowCount }, (_, rowIndex) => (
+                          <Text
+                            key={`${entry.message.id}-rail-${rowIndex}`}
+                            color={entry.palette.railColor}
+                            dimColor={!entry.isSelected}
+                          >
+                            {MESSAGE_RAIL_GUTTER}
+                          </Text>
+                        ))}
+                      </Box>
+                      <Box
+                        flexDirection="column"
+                        flexGrow={1}
+                        flexShrink={1}
+                        minWidth={0}
+                        width="100%"
+                        onClick={entry.isToolExpandable
+                          ? (event) => handleToolMessageClick(entry.message.id, event)
+                          : undefined}
+                      >
+                        <SelectionSafeRow wrap="truncate-end">
+                          <Text color={entry.palette.headerColor}>{entry.headerLabel}</Text>
+                          {entry.headerTitle ? (
+                            <Text color={entry.palette.bodyColor}> · {entry.headerTitle}</Text>
+                          ) : null}
+                          <Text color={entry.palette.mutedColor}> · {timestamp}</Text>
+                        </SelectionSafeRow>
+                        {entry.markdownPlan ? (
+                          <MarkdownRenderer
+                            plan={entry.markdownPlan}
+                            kind={entry.message.kind}
+                            baseColor={entry.palette.bodyColor}
+                          />
+                        ) : (
+                          entry.sections.map((section, sectionIndex) => (
+                            <Box
+                              key={`${entry.message.id}-section-${sectionIndex}`}
+                              flexDirection="column"
+                              width="100%"
+                            >
+                              {shouldDisplaySectionLabel(section) ? (
+                                <SelectionSafeRow
+                                  color={entry.palette.mutedColor}
+                                  wrap="truncate-end"
+                                >
+                                  {section.label}
+                                </SelectionSafeRow>
+                              ) : null}
+                              {section.lines.map((line, lineIndex) => {
+                                const lineColors = getRenderedLineColors(
+                                  line,
+                                  section,
+                                  entry.message.kind,
+                                  entry.palette
+                                );
+
+                                return (
+                                  <SelectionSafeRow
+                                    key={`${entry.message.id}-line-${sectionIndex}-${lineIndex}`}
+                                    color={lineColors.color}
+                                    backgroundColor={lineColors.backgroundColor}
+                                  >
+                                    {line.content || " "}
+                                  </SelectionSafeRow>
+                                );
+                              })}
+                            </Box>
+                          ))
+                        )}
+                        {entry.metadataLine ? (
+                          <SelectionSafeRow
+                            color={entry.palette.mutedColor}
+                            wrap="truncate-end"
+                          >
+                            {entry.metadataLine}
+                          </SelectionSafeRow>
+>>>>>>> 3154985 (Refine transcript diff rendering)
                         ) : null}
                         <Text color={entry.palette.mutedColor}> · {timestamp}</Text>
                       </Text>

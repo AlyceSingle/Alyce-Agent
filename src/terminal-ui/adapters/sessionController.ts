@@ -58,8 +58,9 @@ import {
   createSystemMessage,
   createThinkingMessage,
   createToolResultMessage,
-  createToolStartMessage,
-  createUserMessage
+  createUserMessage,
+  shouldKeepUiMessage,
+  shouldSkipThinkingContent
 } from "./messageMapper.js";
 
 // SessionController 负责把 REPL/UI 事件翻译成会话运行时调用，并维护中断恢复状态。
@@ -162,8 +163,14 @@ export function createSessionController(
   let rewindPoints: RewindPoint[] = [];
 
   const appendUiMessage = (message: TerminalUiMessage) => {
+    if (!shouldKeepUiMessage(message)) {
+      return;
+    }
+
     store.updateState((state) => appendMessage(state, message));
   };
+
+  const filterUiMessages = (messages: TerminalUiMessage[]) => messages.filter(shouldKeepUiMessage);
 
   const requestExit = () => {
     void runtime.flushSessionHistory().finally(() => exitHandler?.());
@@ -539,7 +546,7 @@ export function createSessionController(
     sessionAllowedKinds.clear();
     sessionApprovalMode = runtime.getSettings().approvalMode;
 
-    const restoredMessages = resumed.uiMessages as TerminalUiMessage[];
+    const restoredMessages = filterUiMessages(resumed.uiMessages as TerminalUiMessage[]);
     rebuildRewindPointsFromCurrentConversation(restoredMessages);
     const systemMessage = createSystemMessage(
       [
@@ -1021,7 +1028,7 @@ export function createSessionController(
           requestPatches: runtime.requestPatches,
           onThinking: (thinking) => {
             const chunk = thinking.trim();
-            if (!chunk) {
+            if (!chunk || shouldSkipThinkingContent(chunk)) {
               return;
             }
 
@@ -1043,12 +1050,19 @@ export function createSessionController(
 
             store.updateState((state) => setStatusText(state, "Thinking..."));
           },
+<<<<<<< HEAD
           onToolCallStart: (toolName, rawArguments) => {
+=======
+          onToolCallStart: (toolName) => {
+>>>>>>> 3154985 (Refine transcript diff rendering)
             if (!RESTORABLE_TOOL_NAMES.has(toolName)) {
               checkpoint.hasNonRestorableToolActivity = true;
             }
 
+<<<<<<< HEAD
             appendUiMessage(createToolStartMessage(toolName, rawArguments));
+=======
+>>>>>>> 3154985 (Refine transcript diff rendering)
             store.updateState((state) => setStatusText(state, `Running ${toolName}...`));
           },
           onToolCallResult: (toolName, result) => {

@@ -31,6 +31,22 @@ const PAGE_DOWN_SHORTCUT = getBindingDisplayText("scroll:pageDown", "Scroll") ??
 const LAST_MESSAGE_SHORTCUT = getBindingDisplayText("scroll:bottom", "Scroll") ?? "End";
 const LINE_SCROLL_ROWS = 2;
 
+<<<<<<< HEAD
+=======
+function resolveAssistantLabel(personaPreset?: string) {
+  switch (personaPreset?.trim().toLowerCase()) {
+    case "lilith":
+      return "LILITH";
+    case "corin":
+      return "CORIN";
+    case "alyce":
+      return "ALYCE";
+    default:
+      return "ASSISTANT";
+  }
+}
+
+>>>>>>> 3154985 (Refine transcript diff rendering)
 const ConversationPane = React.memo(React.forwardRef<MessageListHandle, {
   terminalWidth: number;
   unseenDividerMessageId: string | null;

@@ -1,4 +1,16 @@
 import OpenAI from "openai";
+import type {
+  UiMessageBlock,
+  UiMessageBlockStyle,
+  UiMessageBlockTone,
+  UiMessageKind,
+  UiToolData,
+  UiToolEditResult,
+  UiToolMessagePhase,
+  UiToolResultKind,
+  UiToolShellResult,
+  UiToolWriteResult
+} from "./uiMessageTypes.js";
 
 export const SESSION_HISTORY_SCHEMA_VERSION = 1;
 
@@ -6,6 +18,7 @@ export type SessionId = string;
 export type SessionHistoryApiMessage = OpenAI.Chat.Completions.ChatCompletionMessageParam;
 export type SessionHistoryRewindMode = "conversation" | "code-and-conversation";
 
+<<<<<<< HEAD
 export type SessionHistoryUiMessageKind =
   | "system"
   | "user"
@@ -30,6 +43,18 @@ export interface SessionHistoryUiMessageBlock {
   tone?: SessionHistoryUiMessageBlockTone;
   style?: SessionHistoryUiMessageBlockStyle;
 }
+=======
+export type SessionHistoryUiMessageKind = UiMessageKind;
+export type SessionHistoryUiMessageBlockTone = UiMessageBlockTone;
+export type SessionHistoryUiMessageBlockStyle = UiMessageBlockStyle;
+export type SessionHistoryUiMessageBlock = UiMessageBlock;
+export type SessionHistoryUiToolMessagePhase = UiToolMessagePhase;
+export type SessionHistoryUiToolResultKind = UiToolResultKind;
+export type SessionHistoryUiToolShellResult = UiToolShellResult;
+export type SessionHistoryUiToolWriteResult = UiToolWriteResult;
+export type SessionHistoryUiToolEditResult = UiToolEditResult;
+export type SessionHistoryUiToolData = UiToolData;
+>>>>>>> 3154985 (Refine transcript diff rendering)
 
 export interface SessionHistoryUiMessage {
   id: string;

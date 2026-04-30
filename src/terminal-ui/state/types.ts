@@ -12,7 +12,20 @@ import type {
   ToolPermissionKind
 } from "../../tools/types.js";
 import type { SessionHistoryListItem } from "../../core/session-history/types.js";
+import type {
+  UiMessageBlock,
+  UiMessageBlockStyle,
+  UiMessageBlockTone,
+  UiMessageKind,
+  UiToolData,
+  UiToolEditResult,
+  UiToolMessagePhase,
+  UiToolResultKind,
+  UiToolShellResult,
+  UiToolWriteResult
+} from "../../core/session-history/uiMessageTypes.js";
 
+<<<<<<< HEAD
 export type TerminalUiMessageKind =
   | "system"
   | "user"
@@ -37,6 +50,18 @@ export interface TerminalUiMessageBlock {
   tone?: TerminalUiMessageBlockTone;
   style?: TerminalUiMessageBlockStyle;
 }
+=======
+export type TerminalUiMessageKind = UiMessageKind;
+export type TerminalUiMessageBlockTone = UiMessageBlockTone;
+export type TerminalUiMessageBlockStyle = UiMessageBlockStyle;
+export type TerminalUiMessageBlock = UiMessageBlock;
+export type TerminalUiToolMessagePhase = UiToolMessagePhase;
+export type TerminalUiToolResultKind = UiToolResultKind;
+export type TerminalUiToolShellResult = UiToolShellResult;
+export type TerminalUiToolWriteResult = UiToolWriteResult;
+export type TerminalUiToolEditResult = UiToolEditResult;
+export type TerminalUiToolData = UiToolData;
+>>>>>>> 3154985 (Refine transcript diff rendering)
 
 export interface TerminalUiMessage {
   id: string;

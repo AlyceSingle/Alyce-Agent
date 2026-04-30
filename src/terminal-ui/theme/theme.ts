@@ -40,6 +40,12 @@ export const terminalUiTheme = {
     markdownCodeLabel: "#7c8794",
     markdownTable: "#d6dde5",
     markdownTableDivider: "#5a6470",
+    diffAdded: "#b9f5c9",
+    diffAddedBackground: "#173525",
+    diffRemoved: "#ffb8bf",
+    diffRemovedBackground: "#4a1f24",
+    diffMeta: "#8fb7ff",
+    diffHunk: "#7fd7ff",
     scrollbarTrack: "#4a4f57",
     scrollbarThumb: "#b8c2cc",
     scrollbarThumbActive: "#7fb4ff"
