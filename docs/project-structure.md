@@ -188,7 +188,7 @@ UI state management — what's selected, what's open, what's loading.
 
 #### `src/terminal-ui/keybindings/`
 
-Keyboard shortcut definitions. `Ctrl+X`, `Ctrl+O`, `Ctrl+Q` — they're all defined here.
+Keyboard shortcut definitions. `Ctrl+X`, `Ctrl+Q`, `PageUp`, `PageDown`, `Home`, `End` — they're all defined here.
 
 #### `src/terminal-ui/runtime/ink-runtime/`
 

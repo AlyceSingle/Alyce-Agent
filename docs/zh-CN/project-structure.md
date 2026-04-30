@@ -188,7 +188,7 @@ UI 状态管理——什么被选中了、什么打开了、什么在加载。
 
 #### `src/terminal-ui/keybindings/`
 
-快捷键定义。`Ctrl+X`、`Ctrl+O`、`Ctrl+Q`，全在这儿。
+快捷键定义。`Ctrl+X`、`Ctrl+Q`，全在这儿。
 
 #### `src/terminal-ui/runtime/ink-runtime/`
 

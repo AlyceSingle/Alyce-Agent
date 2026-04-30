@@ -3,17 +3,39 @@ import type {
   TerminalUiMessage,
   TerminalUiMessageBlock,
   TerminalUiMessageBlockStyle,
-  TerminalUiMessageBlockTone
+  TerminalUiMessageBlockTone,
+  TerminalUiToolData,
+  TerminalUiToolEditResult,
+  TerminalUiToolShellResult,
+  TerminalUiToolWriteResult
 } from "../state/types.js";
 
 const DEFAULT_PREVIEW_MAX_CHARS = 320;
 const TOOL_PREVIEW_MAX_CHARS = 520;
-<<<<<<< HEAD
-=======
 const TOOL_TITLE_MAX_CHARS = 96;
 const TOOL_TARGET_KEYS = ["file_path", "filePath", "path", "url", "query", "pattern", "command", "cwd"];
 const ASSISTANT_TOOL_CALL_PLACEHOLDER = "(assistant requested a tool call)";
->>>>>>> 3154985 (Refine transcript diff rendering)
+
+type ToolResultIssue = {
+  path: string;
+  code: string;
+  message: string;
+};
+
+type ToolResultError = {
+  type?: string;
+  message: string;
+  issues?: ToolResultIssue[];
+};
+
+type ParsedToolCallExecutionResult = {
+  toolName: string;
+  parsedArgs?: Record<string, unknown>;
+  structuredResult: unknown;
+  displayResult: string;
+  ok: boolean;
+  error?: ToolResultError;
+};
 
 function normalizeBlockContent(content: string, preserveWhitespaceOnly = false) {
   if (content.trim().length > 0 || (preserveWhitespaceOnly && content.length > 0)) {
@@ -65,6 +87,7 @@ function createMessage(options: {
   blocks: TerminalUiMessageBlock[];
   metadata?: string[];
   maxPreviewChars?: number;
+  toolData?: TerminalUiToolData;
 }): TerminalUiMessage {
   const serializedContent = serializeBlocks(options.blocks);
   const content = serializedContent.length > 0 ? serializedContent : "(empty)";
@@ -78,7 +101,8 @@ function createMessage(options: {
     content,
     preview,
     metadata: options.metadata ?? [],
-    createdAt: new Date().toISOString()
+    createdAt: new Date().toISOString(),
+    toolData: options.toolData
   };
 }
 
@@ -122,54 +146,15 @@ export function createErrorMessage(content: string) {
   });
 }
 
-export function createToolStartMessage(toolName: string, rawArguments: string) {
-  return createMessage({
-    kind: "tool",
-    title: toolName,
-    blocks: [
-      createBlock(rawArguments, {
-        label: "Input",
-        tone: "info",
-        style: "code"
-      })
-    ],
-    metadata: ["Tool call"],
-<<<<<<< HEAD
-    maxPreviewChars: TOOL_PREVIEW_MAX_CHARS
-  });
-}
-
-export function createToolResultMessage(toolName: string, result: string) {
-  return createMessage({
-    kind: "tool",
-    title: toolName,
-    blocks: [
-      createBlock(result, {
-        label: "Output",
-        tone: "success",
-        style: "code"
-      })
-    ],
-    metadata: ["Tool result"],
-    maxPreviewChars: TOOL_PREVIEW_MAX_CHARS
-  });
-}
-=======
-    maxPreviewChars: TOOL_PREVIEW_MAX_CHARS,
-    toolData: {
-      phase: "start",
-      toolName,
-      summary
-    }
-  });
-}
-
 export function shouldSkipThinkingContent(content: string) {
   return content.trim() === ASSISTANT_TOOL_CALL_PLACEHOLDER;
 }
 
 export function shouldKeepUiMessage(message: TerminalUiMessage) {
-  if (message.kind === "tool" && message.toolData?.phase === "start") {
+  if (
+    message.kind === "tool" &&
+    (message.toolData?.phase === "start" || message.metadata.includes("Tool call"))
+  ) {
     return false;
   }
 
@@ -180,7 +165,8 @@ export function shouldKeepUiMessage(message: TerminalUiMessage) {
   return true;
 }
 
-export function createToolResultMessage(result: ToolCallExecutionResult) {
+export function createToolResultMessage(toolName: string, displayResult: string, rawArguments = "") {
+  const result = parseToolCallExecutionResult(toolName, displayResult, rawArguments);
   const summary = buildToolSummary(result.toolName, result.parsedArgs, result.structuredResult);
   const toolData = buildToolResultData(result, summary);
 
@@ -194,7 +180,7 @@ export function createToolResultMessage(result: ToolCallExecutionResult) {
   });
 }
 
-function buildToolResultData(result: ToolCallExecutionResult, summary: string): TerminalUiToolData {
+function buildToolResultData(result: ParsedToolCallExecutionResult, summary: string): TerminalUiToolData {
   if (!result.ok) {
     return {
       phase: "result",
@@ -251,7 +237,7 @@ function buildToolResultData(result: ToolCallExecutionResult, summary: string): 
 }
 
 function buildToolResultBlocks(
-  result: ToolCallExecutionResult,
+  result: ParsedToolCallExecutionResult,
   toolData: TerminalUiToolData
 ): TerminalUiMessageBlock[] {
   if (!toolData.ok) {
@@ -330,11 +316,6 @@ function buildToolResultMetadata(toolData: TerminalUiToolData) {
     metadata.push(toolData.write.mode === "create" ? "Created" : "Updated");
     metadata.push(`${toolData.write.bytes} bytes`);
     metadata.push(`${toolData.write.lineCount} lines`);
-  }
-
-  if (toolData.edit) {
-    metadata.push(`Matches: ${toolData.edit.matchCount}`);
-    metadata.push(`Replace all: ${toolData.edit.replaceAll ? "yes" : "no"}`);
   }
 
   return metadata;
@@ -514,10 +495,7 @@ function extractStructuredPatchLines(record: Record<string, unknown>) {
   });
 }
 
-function formatToolError(
-  error: ToolCallExecutionResult["error"],
-  fallback: string
-) {
+function formatToolError(error: ParsedToolCallExecutionResult["error"], fallback: string) {
   if (!error) {
     return fallback;
   }
@@ -530,6 +508,45 @@ function formatToolError(
     );
   }
   return lines.join("\n");
+}
+
+function parseToolCallExecutionResult(
+  toolName: string,
+  displayResult: string,
+  rawArguments: string
+): ParsedToolCallExecutionResult {
+  const parsedArgs = tryParseRecord(rawArguments);
+  const envelope = tryParseRecord(displayResult);
+
+  if (!envelope) {
+    return {
+      toolName,
+      parsedArgs,
+      structuredResult: displayResult,
+      displayResult,
+      ok: true
+    };
+  }
+
+  const ok = asBoolean(envelope.ok);
+  if (ok === false) {
+    return {
+      toolName,
+      parsedArgs,
+      structuredResult: envelope.error,
+      displayResult,
+      ok: false,
+      error: toToolResultError(envelope.error)
+    };
+  }
+
+  return {
+    toolName,
+    parsedArgs,
+    structuredResult: envelope.result ?? envelope,
+    displayResult,
+    ok: true
+  };
 }
 
 function formatStructuredValue(value: unknown) {
@@ -571,6 +588,19 @@ function asRecord(value: unknown): Record<string, unknown> | null {
   return value && typeof value === "object" ? (value as Record<string, unknown>) : null;
 }
 
+function tryParseRecord(value: string): Record<string, unknown> | undefined {
+  if (!value.trim()) {
+    return undefined;
+  }
+
+  try {
+    const parsed = JSON.parse(value) as unknown;
+    return asRecord(parsed) ?? undefined;
+  } catch {
+    return undefined;
+  }
+}
+
 function asString(value: unknown): string | undefined {
   return typeof value === "string" ? value : undefined;
 }
@@ -590,4 +620,30 @@ function asNullableNumber(value: unknown): number | null {
 function asNullableString(value: unknown): string | null {
   return value === null ? null : asString(value) ?? null;
 }
->>>>>>> 3154985 (Refine transcript diff rendering)
+
+function toToolResultError(value: unknown): ToolResultError | undefined {
+  const record = asRecord(value);
+  const message = record ? asString(record.message) : undefined;
+  if (!record || !message) {
+    return undefined;
+  }
+
+  return {
+    type: asString(record.type),
+    message,
+    issues: Array.isArray(record.issues)
+      ? record.issues.flatMap((issue) => {
+          const issueRecord = asRecord(issue);
+          const path = issueRecord ? asString(issueRecord.path) : undefined;
+          const code = issueRecord ? asString(issueRecord.code) : undefined;
+          const issueMessage = issueRecord ? asString(issueRecord.message) : undefined;
+
+          if (!path || !code || !issueMessage) {
+            return [];
+          }
+
+          return [{ path, code, message: issueMessage }];
+        })
+      : undefined
+  };
+}

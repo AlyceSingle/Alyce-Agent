@@ -25,7 +25,7 @@ export interface AgentTurnOptions {
   abortSignal?: AbortSignal;
   onThinking?: (content: string) => void;
   onToolCallStart?: (toolName: string, rawArguments: string) => void;
-  onToolCallResult?: (toolName: string, result: string) => void;
+  onToolCallResult?: (toolName: string, result: string, rawArguments: string) => void;
   onReconnect?: (event: ChatCompletionReconnectEvent) => void;
   messageTimestampsEnabled?: boolean;
 }
@@ -102,7 +102,7 @@ export async function runAgentTurn(
       }
 
       throwIfAborted(options.abortSignal);
-      options.onToolCallResult?.(toolCall.function.name, result);
+      options.onToolCallResult?.(toolCall.function.name, result, toolCall.function.arguments);
 
       messages.push({
         role: "tool",

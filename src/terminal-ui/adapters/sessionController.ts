@@ -24,10 +24,8 @@ import type {
 } from "../../tools/types.js";
 import {
   appendMessage,
-  closeMessageReader,
   closeDialog,
   getActiveDialog,
-  openMessageReader,
   openPermissionDialog,
   openQuestionDialog,
   openRewindPickerDialog,
@@ -137,8 +135,6 @@ export interface SessionController {
   respondToApproval: (decision: PermissionDecision) => void;
   respondToQuestion: (response: AskUserQuestionResponse | null) => void;
   openSettings: (section?: SettingsSection, reason?: string) => void;
-  openMessageReader: (messageId: string) => void;
-  closeMessageReader: () => void;
   closeDialog: () => void;
   resumeSession: (sessionId: string) => Promise<void>;
   saveConfig: (
@@ -1050,23 +1046,15 @@ export function createSessionController(
 
             store.updateState((state) => setStatusText(state, "Thinking..."));
           },
-<<<<<<< HEAD
-          onToolCallStart: (toolName, rawArguments) => {
-=======
           onToolCallStart: (toolName) => {
->>>>>>> 3154985 (Refine transcript diff rendering)
             if (!RESTORABLE_TOOL_NAMES.has(toolName)) {
               checkpoint.hasNonRestorableToolActivity = true;
             }
 
-<<<<<<< HEAD
-            appendUiMessage(createToolStartMessage(toolName, rawArguments));
-=======
->>>>>>> 3154985 (Refine transcript diff rendering)
             store.updateState((state) => setStatusText(state, `Running ${toolName}...`));
           },
-          onToolCallResult: (toolName, result) => {
-            appendUiMessage(createToolResultMessage(toolName, result));
+          onToolCallResult: (toolName, result, rawArguments) => {
+            appendUiMessage(createToolResultMessage(toolName, result, rawArguments));
           }
         });
 
@@ -1307,12 +1295,6 @@ export function createSessionController(
     },
     openSettings: (section = "session", reason) => {
       store.updateState((state) => openSettingsDialog(state, section, reason));
-    },
-    openMessageReader: (messageId) => {
-      store.updateState((state) => openMessageReader(state, messageId));
-    },
-    closeMessageReader: () => {
-      store.updateState((state) => closeMessageReader(state));
     },
     closeDialog: () => {
       const activeDialog = getActiveDialog(store.getState());

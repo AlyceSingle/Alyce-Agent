@@ -207,31 +207,6 @@ export function openRewindPickerDialog(
   });
 }
 
-export function openMessageReader(
-  state: TerminalUiState,
-  messageId: string
-): TerminalUiState {
-  const activeDialog = getActiveDialog(state);
-  if (activeDialog?.type === "reader" && activeDialog.messageId === messageId) {
-    return state;
-  }
-
-  return pushDialog(state, {
-    type: "reader",
-    layer: "modal",
-    messageId
-  });
-}
-
-export function closeMessageReader(state: TerminalUiState): TerminalUiState {
-  const activeDialog = getActiveDialog(state);
-  if (activeDialog?.type !== "reader") {
-    return state;
-  }
-
-  return closeDialog(state);
-}
-
 export function closeDialog(state: TerminalUiState): TerminalUiState {
   if (state.dialogQueue.length === 0) {
     return state;

@@ -6,19 +6,24 @@ import {
   type MarkdownRenderPlan
 } from "./MarkdownRenderer.js";
 import { Box, ScrollBox, Text, type ScrollBoxHandle } from "../runtime/ink.js";
+import { useSelection } from "../runtime/ink-runtime/hooks/use-selection.js";
 import type { MouseEvent as TerminalMouseEvent } from "../runtime/ink-runtime/events/mouse-event.js";
+import type { ClickEvent as TerminalClickEvent } from "../runtime/ink-runtime/events/click-event.js";
 import type { Color } from "../runtime/ink-runtime/styles.js";
 import type {
   TerminalUiMessage,
   TerminalUiMessageBlock,
   TerminalUiMessageBlockStyle,
-  TerminalUiMessageBlockTone
+  TerminalUiMessageBlockTone,
+  TerminalUiToolData
 } from "../state/types.js";
 import { terminalUiTheme } from "../theme/theme.js";
-import { wrapText } from "../utils/text.js";
+import { wrapText, wrapTextClamped } from "../utils/text.js";
 
 const SCROLL_HEADROOM_ROWS = 2;
-const MESSAGE_CONTENT_WIDTH_OFFSET = 13;
+const MESSAGE_CONTENT_WIDTH_OFFSET = 14;
+const MESSAGE_RAIL_GUTTER = "│ ";
+const MESSAGE_RAIL_GUTTER_WIDTH = MESSAGE_RAIL_GUTTER.length;
 const SCROLLBAR_FADE_MS = 900;
 const SCROLLBAR_TRACK_CHAR = "╎╎";
 const SCROLLBAR_THUMB_IDLE_CHAR = "││";
@@ -57,10 +62,7 @@ type RenderedMessageEntry = {
   sections: RenderedSection[];
   markdownPlan?: MarkdownRenderPlan;
   metadataLine?: string;
-<<<<<<< HEAD
-=======
-  isToolExpandable: boolean;
->>>>>>> 3154985 (Refine transcript diff rendering)
+  isExpandable: boolean;
   leadingSpacingRows: number;
   unseenDividerRows: number;
   palette: MessagePalette;
@@ -98,13 +100,10 @@ type ScrollIndicatorMetrics = {
   maxScrollTop: number;
 };
 
-<<<<<<< HEAD
-=======
 type ExpandableRenderState = {
   sections: RenderedSection[];
   metadataLine?: string;
   expandable: boolean;
-  expanded: boolean;
 };
 
 function SelectionSafeRow(props: React.ComponentProps<typeof Text>) {
@@ -119,21 +118,18 @@ function SelectionSafeRow(props: React.ComponentProps<typeof Text>) {
   );
 }
 
->>>>>>> 3154985 (Refine transcript diff rendering)
 export type MessageListHandle = {
   scrollBy: (delta: number) => void;
   scrollPage: (delta: -1 | 1) => void;
   scrollToTop: () => void;
   scrollToBottom: () => void;
-  getDetailTargetMessageId: () => string | null;
+  getVisibleMessageId: () => string | null;
 };
 
 function getMessageBadge(kind: TerminalUiMessage["kind"]) {
   switch (kind) {
     case "user":
       return { label: "USER" };
-    case "assistant":
-      return { label: "ALYCE" };
     case "thinking":
       return { label: "THINK" };
     case "tool":
@@ -401,8 +397,23 @@ function shouldDisplaySectionLabel(section: RenderedSection) {
   return Boolean(section.label) && !section.isDiff;
 }
 
-<<<<<<< HEAD
-=======
+function isDefaultExpandedToolMessage(message: TerminalUiMessage) {
+  return (
+    message.kind === "tool" &&
+    message.toolData?.phase === "result" &&
+    message.toolData.resultKind === "edit" &&
+    message.toolData.ok === true
+  );
+}
+
+function isMessageExpanded(message: TerminalUiMessage, expandedMessageIds: ReadonlySet<string>) {
+  if (isDefaultExpandedToolMessage(message)) {
+    return !expandedMessageIds.has(message.id);
+  }
+
+  return expandedMessageIds.has(message.id);
+}
+
 function renderToolMessageState(
   message: TerminalUiMessage,
   width: number,
@@ -419,8 +430,7 @@ function renderToolMessageState(
     return {
       sections: [],
       metadataLine: baseMetadata.length > 0 ? baseMetadata.join(" | ") : undefined,
-      expandable: false,
-      expanded: false
+      expandable: false
     };
   }
 
@@ -428,8 +438,7 @@ function renderToolMessageState(
     return {
       sections: renderSections(getRenderableToolBlocks(message.blocks, toolData), width),
       metadataLine: baseMetadata.length > 0 ? baseMetadata.join(" | ") : undefined,
-      expandable: false,
-      expanded: false
+      expandable: false
     };
   }
 
@@ -448,8 +457,7 @@ function renderToolMessageState(
     return {
       sections,
       metadataLine: buildExpandableMetadataLine(baseMetadata, toggleHint),
-      expandable: Boolean(toggleHint),
-      expanded
+      expandable: Boolean(toggleHint)
     };
   }
 
@@ -465,8 +473,7 @@ function renderToolMessageState(
   return {
     sections,
     metadataLine: buildExpandableMetadataLine(baseMetadata, toggleHint),
-    expandable: Boolean(toggleHint),
-    expanded
+    expandable: Boolean(toggleHint)
   };
 }
 
@@ -481,8 +488,7 @@ function renderLegacyToolMessageState(
     return {
       sections: [],
       metadataLine: baseMetadata.length > 0 ? baseMetadata.join(" | ") : undefined,
-      expandable: false,
-      expanded: false
+      expandable: false
     };
   }
 
@@ -497,8 +503,7 @@ function renderLegacyToolMessageState(
   return {
     sections,
     metadataLine: buildExpandableMetadataLine(baseMetadata, toggleHint),
-    expandable: Boolean(toggleHint),
-    expanded
+    expandable: Boolean(toggleHint)
   };
 }
 
@@ -523,8 +528,7 @@ function renderContextPreviewMessageState(
   return {
     sections,
     metadataLine: buildExpandableMetadataLine(baseMetadata, toggleHint),
-    expandable: Boolean(toggleHint),
-    expanded
+    expandable: Boolean(toggleHint)
   };
 }
 
@@ -681,36 +685,43 @@ function buildExpandableMetadataLine(metadata: string[], toggleHint?: string) {
   return parts.length > 0 ? parts.join(" | ") : undefined;
 }
 
->>>>>>> 3154985 (Refine transcript diff rendering)
 function buildRenderedMessageEntries(
   messages: TerminalUiMessage[],
   selectedMessageId: string | null,
   contentWidth: number,
-<<<<<<< HEAD
-  markdownEnabled: boolean
-=======
   markdownEnabled: boolean,
-  expandedToolMessageIds: ReadonlySet<string>,
+  expandedMessageIds: ReadonlySet<string>,
   assistantLabel: string,
   unseenDividerMessageId: string | null
->>>>>>> 3154985 (Refine transcript diff rendering)
 ): RenderedMessageEntry[] {
   return messages.map((message, index) => {
     const isSelected = message.id === selectedMessageId;
-    const badge = getMessageBadge(message.kind);
+    const badge =
+      message.kind === "assistant"
+        ? { label: assistantLabel }
+        : getMessageBadge(message.kind);
     const palette = getMessagePalette(message.kind, isSelected);
     const bodyWidth = Math.max(16, contentWidth);
+    const isExpanded = isMessageExpanded(message, expandedMessageIds);
+    const expandableRenderState =
+      message.kind === "tool"
+        ? renderToolMessageState(message, contentWidth, isExpanded)
+        : isContextPreviewMessage(message)
+          ? renderContextPreviewMessageState(message, contentWidth, isExpanded)
+        : null;
     const markdownPlan = shouldRenderMarkdownMessage(message.kind, markdownEnabled)
       ? buildMarkdownRenderPlan(message.content, bodyWidth)
       : undefined;
     const sections = markdownPlan
       ? []
-      : renderSections(message.blocks, contentWidth);
+      : expandableRenderState?.sections ?? renderSections(message.blocks, contentWidth);
     const headerTitle =
       message.kind === "user" || message.kind === "assistant"
         ? undefined
         : message.title;
-    const metadataLine = message.metadata.length > 0 ? message.metadata.join(" | ") : undefined;
+    const metadataLine =
+      expandableRenderState?.metadataLine ??
+      (message.metadata.length > 0 ? message.metadata.join(" | ") : undefined);
     const leadingSpacingRows = index === 0 ? 0 : 1;
     const unseenDividerRows = message.id === unseenDividerMessageId ? 1 : 0;
     const sectionRowCount = markdownPlan
@@ -727,10 +738,7 @@ function buildRenderedMessageEntries(
       sections,
       markdownPlan,
       metadataLine,
-<<<<<<< HEAD
-=======
-      isToolExpandable: expandableRenderState?.expandable ?? false,
->>>>>>> 3154985 (Refine transcript diff rendering)
+      isExpandable: expandableRenderState?.expandable ?? false,
       leadingSpacingRows,
       unseenDividerRows,
       palette,
@@ -805,7 +813,7 @@ function resolveScrollIndicatorMetrics(state: ScrollIndicatorState): ScrollIndic
   };
 }
 
-function resolveDetailTargetMessageId(
+function resolveVisibleMessageId(
   renderedEntries: RenderedMessageEntry[],
   entryOffsets: number[],
   scrollTop: number,
@@ -830,6 +838,7 @@ const MessageListImpl = forwardRef<MessageListHandle, {
   selectedMessageId: string | null;
   viewportWidth: number;
   markdownEnabled: boolean;
+  assistantLabel: string;
   unseenDividerMessageId: string | null;
   unseenMessageCount: number;
   onStickyChange: (sticky: boolean) => void;
@@ -837,9 +846,11 @@ const MessageListImpl = forwardRef<MessageListHandle, {
   const scrollRef = useRef<ScrollBoxHandle | null>(null);
   const scrollIndicatorTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const scrollDragOffsetRef = useRef<number | null>(null);
-  const detailTargetMessageIdRef = useRef<string | null>(props.selectedMessageId);
+  const visibleMessageIdRef = useRef<string | null>(props.selectedMessageId);
   const selectedMessageSnapshotRef = useRef<string | null>(props.selectedMessageId);
   const stickySnapshotRef = useRef(true);
+  const selection = useSelection();
+  const [expandedMessageIds, setExpandedMessageIds] = useState<ReadonlySet<string>>(() => new Set());
   const [scrollIndicator, setScrollIndicator] = useState<ScrollIndicatorState>({
     scrollTop: 0,
     viewportHeight: 0,
@@ -859,26 +870,20 @@ const MessageListImpl = forwardRef<MessageListHandle, {
         props.messages,
         props.selectedMessageId,
         contentWidth,
-<<<<<<< HEAD
-        props.markdownEnabled
-      ),
-    [contentWidth, props.markdownEnabled, props.messages, props.selectedMessageId]
-=======
         props.markdownEnabled,
-        expandedToolMessageIds,
+        expandedMessageIds,
         props.assistantLabel,
         props.unseenDividerMessageId
       ),
     [
       contentWidth,
-      expandedToolMessageIds,
+      expandedMessageIds,
       props.assistantLabel,
       props.markdownEnabled,
       props.messages,
       props.selectedMessageId,
       props.unseenDividerMessageId
     ]
->>>>>>> 3154985 (Refine transcript diff rendering)
   );
   const totalRowCount = useMemo(
     () => renderedEntries.reduce((sum, entry) => sum + entry.rowCount, 0),
@@ -968,8 +973,104 @@ const MessageListImpl = forwardRef<MessageListHandle, {
         ? 0
         : Math.round((thumbTop / metrics.maxThumbTop) * metrics.maxScrollTop);
 
-    handle.scrollTo(scrollTop);
+    scrollManuallyTo(scrollTop);
     activateScrollIndicator();
+  }
+
+  function maybeShiftSelectionForManualScroll(actualDelta: number) {
+    if (actualDelta === 0) {
+      return;
+    }
+
+    const state = selection.getState();
+    if (!state?.anchor) {
+      return;
+    }
+
+    const handle = scrollRef.current;
+    if (!handle) {
+      return;
+    }
+
+    const viewportTop = handle.getViewportTop();
+    const viewportHeight = Math.max(1, handle.getViewportHeight());
+    const viewportBottom = viewportTop + viewportHeight - 1;
+    const anchorInViewport =
+      state.anchor.row >= viewportTop && state.anchor.row <= viewportBottom;
+
+    if (!anchorInViewport) {
+      return;
+    }
+
+    if (state.isDragging) {
+      if (selection.hasSelection()) {
+        if (actualDelta > 0) {
+          selection.captureScrolledRows(viewportTop, viewportTop + actualDelta - 1, "above");
+        } else {
+          selection.captureScrolledRows(viewportBottom + actualDelta + 1, viewportBottom, "below");
+        }
+      }
+      selection.shiftAnchor(-actualDelta, viewportTop, viewportBottom);
+      return;
+    }
+
+    const focusInViewport =
+      !state.focus ||
+      (state.focus.row >= viewportTop && state.focus.row <= viewportBottom);
+
+    if (!focusInViewport || !selection.hasSelection()) {
+      return;
+    }
+
+    if (actualDelta > 0) {
+      selection.captureScrolledRows(viewportTop, viewportTop + actualDelta - 1, "above");
+    } else {
+      selection.captureScrolledRows(viewportBottom + actualDelta + 1, viewportBottom, "below");
+    }
+
+    selection.shiftSelection(-actualDelta, viewportTop, viewportBottom);
+  }
+
+  function scrollManuallyBy(requestedDelta: number) {
+    const handle = scrollRef.current;
+    if (!handle) {
+      return;
+    }
+
+    const currentScrollTop = handle.getScrollTop();
+    const viewportHeight = Math.max(1, handle.getViewportHeight());
+    const scrollHeight = Math.max(handle.getScrollHeight(), handle.getFreshScrollHeight());
+    const maxScrollTop = Math.max(0, scrollHeight - viewportHeight);
+    const nextScrollTop = Math.max(0, Math.min(currentScrollTop + requestedDelta, maxScrollTop));
+    const actualDelta = nextScrollTop - currentScrollTop;
+
+    if (actualDelta === 0) {
+      return;
+    }
+
+    maybeShiftSelectionForManualScroll(actualDelta);
+    handle.scrollBy(actualDelta);
+  }
+
+  function scrollManuallyTo(targetScrollTop: number) {
+    const handle = scrollRef.current;
+    if (!handle) {
+      return;
+    }
+
+    const currentScrollTop = handle.getScrollTop();
+    const viewportHeight = Math.max(1, handle.getViewportHeight());
+    const scrollHeight = Math.max(handle.getScrollHeight(), handle.getFreshScrollHeight());
+    const maxScrollTop = Math.max(0, scrollHeight - viewportHeight);
+    const nextScrollTop = Math.max(0, Math.min(Math.floor(targetScrollTop), maxScrollTop));
+    const actualDelta = nextScrollTop - currentScrollTop;
+
+    if (actualDelta === 0) {
+      return;
+    }
+
+    maybeShiftSelectionForManualScroll(actualDelta);
+    handle.scrollTo(nextScrollTop);
   }
 
   function handleScrollbarMouseDown(event: TerminalMouseEvent) {
@@ -1018,26 +1119,36 @@ const MessageListImpl = forwardRef<MessageListHandle, {
     armScrollIndicatorFade();
   }
 
-<<<<<<< HEAD
-=======
-  function handleToolMessageClick(messageId: string, event: TerminalClickEvent) {
+  function handleExpandableMessageClick(message: TerminalUiMessage, event: TerminalClickEvent) {
     if (event.cellIsBlank) {
       return;
     }
 
-    setExpandedToolMessageIds((previous) => {
+    setExpandedMessageIds((previous) => {
       const next = new Set(previous);
-      if (next.has(messageId)) {
-        next.delete(messageId);
-      } else {
-        next.add(messageId);
+      const expanded = isMessageExpanded(message, previous);
+
+      if (isDefaultExpandedToolMessage(message)) {
+        if (expanded) {
+          next.add(message.id);
+        } else {
+          next.delete(message.id);
+        }
+        return next;
       }
+
+      if (expanded) {
+        next.delete(message.id);
+      } else {
+        next.add(message.id);
+      }
+
       return next;
     });
   }
 
   useEffect(() => {
-    setExpandedToolMessageIds((previous) => {
+    setExpandedMessageIds((previous) => {
       if (previous.size === 0) {
         return previous;
       }
@@ -1061,10 +1172,9 @@ const MessageListImpl = forwardRef<MessageListHandle, {
     });
   }, [props.messages]);
 
->>>>>>> 3154985 (Refine transcript diff rendering)
   useImperativeHandle(ref, () => ({
     scrollBy: (delta) => {
-      scrollRef.current?.scrollBy(delta);
+      scrollManuallyBy(delta);
     },
     scrollPage: (delta) => {
       const handle = scrollRef.current;
@@ -1073,20 +1183,27 @@ const MessageListImpl = forwardRef<MessageListHandle, {
       }
 
       const pageStep = Math.max(1, handle.getViewportHeight() - 2);
-      handle.scrollBy(delta * pageStep);
+      scrollManuallyBy(delta * pageStep);
     },
     scrollToTop: () => {
-      scrollRef.current?.scrollTo(0);
+      scrollManuallyTo(0);
     },
     scrollToBottom: () => {
-      scrollRef.current?.scrollToBottom();
+      const handle = scrollRef.current;
+      if (!handle) {
+        return;
+      }
+
+      const viewportHeight = Math.max(1, handle.getViewportHeight());
+      const scrollHeight = Math.max(handle.getScrollHeight(), handle.getFreshScrollHeight());
+      scrollManuallyTo(Math.max(0, scrollHeight - viewportHeight));
     },
-    getDetailTargetMessageId: () =>
-      detailTargetMessageIdRef.current ??
+    getVisibleMessageId: () =>
+      visibleMessageIdRef.current ??
       props.selectedMessageId ??
       props.messages.at(-1)?.id ??
       null
-  }), [props.messages, props.selectedMessageId]);
+  }), [props.messages, props.selectedMessageId, selection]);
 
   useEffect(() => {
     const handle = scrollRef.current;
@@ -1111,7 +1228,7 @@ const MessageListImpl = forwardRef<MessageListHandle, {
 
       stickySnapshotRef.current = effectiveSticky;
       props.onStickyChange(effectiveSticky);
-      detailTargetMessageIdRef.current = resolveDetailTargetMessageId(
+      visibleMessageIdRef.current = resolveVisibleMessageId(
         renderedEntries,
         entryOffsets,
         scrollTop,
@@ -1285,24 +1402,17 @@ const MessageListImpl = forwardRef<MessageListHandle, {
                   hour: "2-digit",
                   minute: "2-digit"
                 });
-<<<<<<< HEAD
-=======
                 const railRowCount = Math.max(
                   1,
                   entry.rowCount - entry.leadingSpacingRows - entry.unseenDividerRows
                 );
->>>>>>> 3154985 (Refine transcript diff rendering)
 
                 return (
                   <Box
                     key={entry.message.id}
                     flexDirection="column"
-                    marginTop={entry.leadingSpacingRows}
                     width="100%"
                   >
-<<<<<<< HEAD
-                    {props.unseenDividerMessageId === entry.message.id ? (
-=======
                     {Array.from({ length: entry.leadingSpacingRows }, (_, spacerIndex) => (
                       <Box
                         key={`${entry.message.id}-spacer-${spacerIndex}`}
@@ -1314,31 +1424,14 @@ const MessageListImpl = forwardRef<MessageListHandle, {
                       </Box>
                     ))}
                     {entry.unseenDividerRows > 0 ? (
->>>>>>> 3154985 (Refine transcript diff rendering)
                       <Text color={terminalUiTheme.colors.warning} wrap="truncate-end">
                         -- {props.unseenMessageCount} new message{props.unseenMessageCount === 1 ? "" : "s"} --
                       </Text>
                     ) : null}
                     <Box
-                      flexDirection="column"
+                      flexDirection="row"
                       width="100%"
-                      borderStyle="single"
-                      borderTop={false}
-                      borderRight={false}
-                      borderBottom={false}
-                      borderLeftColor={entry.palette.railColor}
-                      borderLeftDimColor={!entry.isSelected}
-                      paddingLeft={1}
                     >
-<<<<<<< HEAD
-                      <Text wrap="truncate-end">
-                        <Text color={entry.isSelected ? terminalUiTheme.colors.accent : entry.palette.mutedColor}>
-                          {entry.isSelected ? ">" : " "}
-                        </Text>
-                        <Text color={entry.palette.headerColor}> {entry.headerLabel}</Text>
-                        {entry.headerTitle ? (
-                          <Text color={entry.palette.bodyColor}> · {entry.headerTitle}</Text>
-=======
                       <Box
                         flexDirection="column"
                         flexShrink={0}
@@ -1361,8 +1454,8 @@ const MessageListImpl = forwardRef<MessageListHandle, {
                         flexShrink={1}
                         minWidth={0}
                         width="100%"
-                        onClick={entry.isToolExpandable
-                          ? (event) => handleToolMessageClick(entry.message.id, event)
+                        onClick={entry.isExpandable
+                          ? (event) => handleExpandableMessageClick(entry.message, event)
                           : undefined}
                       >
                         <SelectionSafeRow wrap="truncate-end">
@@ -1421,54 +1514,8 @@ const MessageListImpl = forwardRef<MessageListHandle, {
                           >
                             {entry.metadataLine}
                           </SelectionSafeRow>
->>>>>>> 3154985 (Refine transcript diff rendering)
                         ) : null}
-                        <Text color={entry.palette.mutedColor}> · {timestamp}</Text>
-                      </Text>
-                      {entry.markdownPlan ? (
-                        <MarkdownRenderer
-                          plan={entry.markdownPlan}
-                          kind={entry.message.kind}
-                          baseColor={entry.palette.bodyColor}
-                        />
-                      ) : (
-                        entry.sections.map((section, sectionIndex) => (
-                          <Box
-                            key={`${entry.message.id}-section-${sectionIndex}`}
-                            flexDirection="column"
-                            width="100%"
-                          >
-                            {section.label ? (
-                              <Text
-                                color={entry.palette.mutedColor}
-                                wrap="truncate-end"
-                              >
-                                {section.label}
-                              </Text>
-                            ) : null}
-                            {section.lines.map((line, lineIndex) => (
-                              <Text
-                                key={`${entry.message.id}-line-${sectionIndex}-${lineIndex}`}
-                                color={
-                                  section.style === "code"
-                                    ? terminalUiTheme.colors.code
-                                    : getToneColor(section.tone, entry.message.kind, entry.palette)
-                                }
-                              >
-                                {line}
-                              </Text>
-                            ))}
-                          </Box>
-                        ))
-                      )}
-                      {entry.metadataLine ? (
-                        <Text
-                          color={entry.palette.mutedColor}
-                          wrap="truncate-end"
-                        >
-                          {entry.metadataLine}
-                        </Text>
-                      ) : null}
+                      </Box>
                     </Box>
                   </Box>
                 );

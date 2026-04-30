@@ -2,7 +2,6 @@ import React, { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useSta
 import { Box, useApp, useStdout, Text } from "../runtime/ink.js";
 import { FullscreenLayout } from "../components/FullscreenLayout.js";
 import { MessageList, type MessageListHandle } from "../components/MessageList.js";
-import { MessageReaderScreen } from "../components/MessageReaderScreen.js";
 import { PromptInput } from "../components/PromptInput.js";
 import { StatusBar } from "../components/StatusBar.js";
 import { TodoPanel } from "../components/TodoPanel.js";
@@ -25,14 +24,11 @@ import { terminalUiTheme } from "../theme/theme.js";
 
 const EXIT_CONFIRMATION_STATUS = "Press Ctrl+C again to quit";
 const COPY_STATUS_DURATION_MS = 1800;
-const OPEN_DETAIL_SHORTCUT = getBindingDisplayText("conversation:openDetail", "Global") ?? "Ctrl+O";
 const PAGE_UP_SHORTCUT = getBindingDisplayText("scroll:pageUp", "Scroll") ?? "PgUp";
 const PAGE_DOWN_SHORTCUT = getBindingDisplayText("scroll:pageDown", "Scroll") ?? "PgDn";
 const LAST_MESSAGE_SHORTCUT = getBindingDisplayText("scroll:bottom", "Scroll") ?? "End";
 const LINE_SCROLL_ROWS = 2;
 
-<<<<<<< HEAD
-=======
 function resolveAssistantLabel(personaPreset?: string) {
   switch (personaPreset?.trim().toLowerCase()) {
     case "lilith":
@@ -46,7 +42,6 @@ function resolveAssistantLabel(personaPreset?: string) {
   }
 }
 
->>>>>>> 3154985 (Refine transcript diff rendering)
 const ConversationPane = React.memo(React.forwardRef<MessageListHandle, {
   terminalWidth: number;
   unseenDividerMessageId: string | null;
@@ -58,6 +53,9 @@ const ConversationPane = React.memo(React.forwardRef<MessageListHandle, {
   const markdownEnabled = useTerminalUiSelector(
     (value) => value.settings.markdownMessageRenderingEnabled
   );
+  const assistantLabel = useTerminalUiSelector(
+    (value) => resolveAssistantLabel(value.settings.personaPreset)
+  );
 
   return (
     <MessageList
@@ -66,6 +64,7 @@ const ConversationPane = React.memo(React.forwardRef<MessageListHandle, {
       selectedMessageId={selectedMessageId}
       viewportWidth={props.terminalWidth}
       markdownEnabled={markdownEnabled}
+      assistantLabel={assistantLabel}
       unseenDividerMessageId={props.unseenDividerMessageId}
       unseenMessageCount={props.unseenMessageCount}
       onStickyChange={props.onStickyChange}
@@ -105,21 +104,12 @@ export function AgentScreen(props: { controller: SessionController }) {
   const terminalHeight = stdout.rows || 36;
   const activeDialog = dialogQueue[0] ?? null;
   const hasDialog = activeDialog !== null;
-  const isReaderOpen = activeDialog?.type === "reader";
   const hasActiveOverlay = useIsOverlayActive();
   const layoutSurfaceKey =
     activeDialog === null
       ? "conversation"
       : `${activeDialog.layer}:${activeDialog.type}`;
   const layoutSurfaceKeyRef = useRef(layoutSurfaceKey);
-
-  const readerMessage = useMemo(() => {
-    if (activeDialog?.type !== "reader") {
-      return null;
-    }
-
-    return messages.find((message) => message.id === activeDialog.messageId) ?? null;
-  }, [activeDialog, messages]);
 
   useEffect(() => {
     props.controller.setExitHandler(() => exit());
@@ -205,17 +195,6 @@ export function AgentScreen(props: { controller: SessionController }) {
         props.controller.openRewindSelector();
       }
     },
-    "conversation:openDetail": () => {
-      const detailTargetMessageId =
-        transcriptRef.current?.getDetailTargetMessageId() ??
-        selectedMessageId ??
-        messages.at(-1)?.id ??
-        null;
-
-      if (detailTargetMessageId) {
-        props.controller.openMessageReader(detailTargetMessageId);
-      }
-    },
     "conversation:previousMessage": () => {
       store.updateState((state) =>
         setTranscriptSticky(selectRelativeMessage(state, -1), false)
@@ -256,7 +235,7 @@ export function AgentScreen(props: { controller: SessionController }) {
 
   useKeybindings(keybindingHandlers, {
     contexts: ["Scroll", "Conversation", "Global"],
-    isActive: !hasDialog && !hasActiveOverlay && !isReaderOpen
+    isActive: !hasDialog && !hasActiveOverlay
   });
 
   useTerminalInput((input, key) => {
@@ -282,7 +261,7 @@ export function AgentScreen(props: { controller: SessionController }) {
 
       if (!transcriptSticky) {
         const targetMessageId =
-          transcriptRef.current?.getDetailTargetMessageId() ??
+          transcriptRef.current?.getVisibleMessageId() ??
           selectedMessageId ??
           messages.at(-1)?.id ??
           null;
@@ -308,21 +287,20 @@ export function AgentScreen(props: { controller: SessionController }) {
 
       setExitConfirmationPending(true);
     }
-  }, { isActive: !hasDialog && !isReaderOpen });
+  }, { isActive: !hasDialog });
 
   useEffect(() => {
     if (!exitConfirmationPending) {
       return;
     }
 
-    if (clearOnCtrlCRef.current || hasDialog || hasActiveOverlay || isReaderOpen) {
+    if (clearOnCtrlCRef.current || hasDialog || hasActiveOverlay) {
       resetExitConfirmation();
     }
   }, [
     exitConfirmationPending,
     hasActiveOverlay,
     hasDialog,
-    isReaderOpen,
     resetExitConfirmation
   ]);
 
@@ -333,12 +311,12 @@ export function AgentScreen(props: { controller: SessionController }) {
   }, [draftInput.length, exitConfirmationPending, resetExitConfirmation]);
 
   useEffect(() => {
-    if (!transcriptSticky || hasDialog || isReaderOpen) {
+    if (!transcriptSticky || hasDialog) {
       return;
     }
 
     transcriptRef.current?.scrollToBottom();
-  }, [hasDialog, isReaderOpen, messages.length, terminalHeight, terminalWidth, transcriptSticky]);
+  }, [hasDialog, messages.length, terminalHeight, terminalWidth, transcriptSticky]);
 
   const displayedStatusText = exitConfirmationPending
     ? EXIT_CONFIRMATION_STATUS
@@ -384,15 +362,7 @@ export function AgentScreen(props: { controller: SessionController }) {
     ) : null;
 
   const modal =
-    readerMessage ? (
-      <MessageReaderScreen
-        message={readerMessage}
-        terminalWidth={terminalWidth}
-        terminalHeight={terminalHeight}
-        markdownEnabled={settings.markdownMessageRenderingEnabled}
-        onClose={() => props.controller.closeMessageReader()}
-      />
-    ) : activeDialog?.type === "session-picker" ? (
+    activeDialog?.type === "session-picker" ? (
       <SessionPickerDialog
         sessions={activeDialog.sessions}
         onSelect={(sessionId) => {
@@ -405,7 +375,7 @@ export function AgentScreen(props: { controller: SessionController }) {
   const unseenMessagePill =
     !transcriptSticky && unseenMessageCount > 0 ? (
       <Text color={terminalUiTheme.colors.warning} wrap="truncate-end">
-        {unseenMessageCount} new message{unseenMessageCount === 1 ? "" : "s"} | {LAST_MESSAGE_SHORTCUT} jump to bottom | {PAGE_UP_SHORTCUT}/{PAGE_DOWN_SHORTCUT} scroll | {OPEN_DETAIL_SHORTCUT} reader
+        {unseenMessageCount} new message{unseenMessageCount === 1 ? "" : "s"} | {LAST_MESSAGE_SHORTCUT} jump to bottom | {PAGE_UP_SHORTCUT}/{PAGE_DOWN_SHORTCUT} scroll
       </Text>
     ) : null;
 

@@ -7,7 +7,6 @@ export const DEFAULT_BINDINGS: KeybindingBlock[] = [
     bindings: {
       "ctrl+q": "app:quit",
       "ctrl+x": "app:openSettings",
-      "ctrl+o": "conversation:openDetail",
       escape: "app:escape"
     }
   },

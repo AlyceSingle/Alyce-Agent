@@ -70,7 +70,6 @@ These work anywhere in the app — no matter what dialog is open.
 |---|---|
 | `Ctrl+Q` | Quit. *No confirmation dialog, so make sure you mean it.* |
 | `Ctrl+X` | Open settings. *Probably the most-used key after typing.* |
-| `Ctrl+O` | Open a detailed view of the current selected message. Useful for reading long tool outputs. |
 | `Esc` | Interrupt Alyce while a request is running. From empty input, opens rewind; inside rewind, pressing it repeatedly walks to older prompts. |
 
 ## Interrupts

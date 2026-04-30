@@ -25,32 +25,6 @@ import type {
   UiToolWriteResult
 } from "../../core/session-history/uiMessageTypes.js";
 
-<<<<<<< HEAD
-export type TerminalUiMessageKind =
-  | "system"
-  | "user"
-  | "assistant"
-  | "thinking"
-  | "tool"
-  | "error";
-
-export type TerminalUiMessageBlockTone =
-  | "default"
-  | "muted"
-  | "info"
-  | "success"
-  | "warning"
-  | "danger";
-
-export type TerminalUiMessageBlockStyle = "plain" | "code";
-
-export interface TerminalUiMessageBlock {
-  label?: string;
-  content: string;
-  tone?: TerminalUiMessageBlockTone;
-  style?: TerminalUiMessageBlockStyle;
-}
-=======
 export type TerminalUiMessageKind = UiMessageKind;
 export type TerminalUiMessageBlockTone = UiMessageBlockTone;
 export type TerminalUiMessageBlockStyle = UiMessageBlockStyle;
@@ -61,7 +35,6 @@ export type TerminalUiToolShellResult = UiToolShellResult;
 export type TerminalUiToolWriteResult = UiToolWriteResult;
 export type TerminalUiToolEditResult = UiToolEditResult;
 export type TerminalUiToolData = UiToolData;
->>>>>>> 3154985 (Refine transcript diff rendering)
 
 export interface TerminalUiMessage {
   id: string;
@@ -72,6 +45,7 @@ export interface TerminalUiMessage {
   preview: string;
   metadata: string[];
   createdAt: string;
+  toolData?: TerminalUiToolData;
 }
 
 export type SettingsSection = "connection" | "session";
@@ -99,8 +73,7 @@ export type ActiveDialog =
   | { type: "question"; layer: "overlay"; request: AskUserQuestionRequest }
   | { type: "settings"; layer: "overlay"; section: SettingsSection; reason?: string }
   | { type: "session-picker"; layer: "modal"; sessions: SessionHistoryListItem[] }
-  | { type: "rewind-picker"; layer: "overlay"; points: TerminalUiRewindPoint[] }
-  | { type: "reader"; layer: "modal"; messageId: string };
+  | { type: "rewind-picker"; layer: "overlay"; points: TerminalUiRewindPoint[] };
 
 export type TerminalUiOverlayId =
   | "permission"
