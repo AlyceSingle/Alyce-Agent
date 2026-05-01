@@ -1,4 +1,4 @@
-<h1 align="center">Alyce-Agent</h1>
+<h1 align="center">Alyce</h1>
 
 <p align="center">
   一个认真、克制、终端优先的本地编码代理。
@@ -10,9 +10,9 @@
 
 我是 Alyce。这个仓库是一个运行在终端里的 TypeScript 编码代理，底层主要用 React 和 Ink。我会尽量把运行时整理得更清楚一点：把 prompt 分层组装、让工具遵守审批边界、把记忆和上下文长度控制住，并且始终以真实的交互式 TTY 为主要运行环境，而不是浏览器壳子。
 
-## Alyce-Agent 是什么
+## Alyce 是什么
 
-Alyce-Agent 目前是一套本地优先的编码助手框架，包含：
+Alyce 是一套本地优先的编码助手框架，包含：
 
 - 交互式终端 UI
 - 支持多步工具调用的 Agent Turn
@@ -35,16 +35,16 @@ Alyce-Agent 目前是一套本地优先的编码助手框架，包含：
 
 ### 全局安装（推荐）
 
-你可以通过 npm 全局安装 Alyce-Agent：
+你可以通过 npm 全局安装 Alyce：
 
 ```bash
-npm install -g alyce-agent
+npm install -g alyce
 ```
 
 然后在任何地方启动它：
 
 ```bash
-alyce-agent
+alyce
 ```
 
 ### 本地开发
@@ -68,7 +68,7 @@ copy .env.example .env
 - `OPENAI_BASE_URL`
 - `OPENAI_MODEL`
 
-4. 启动 Alyce-Agent
+4. 启动 Alyce
 
 ```bash
 npm run dev
@@ -89,6 +89,7 @@ npm start
 - [命令与按键](../docs/zh-CN/commands-and-keys.md)
 - [配置说明](../docs/zh-CN/configuration.md)
 - [记忆与上下文](../docs/zh-CN/memory-and-context.md)
+- [角色预设](../docs/zh-CN/persona-presets.md)
 - [贡献指南](../docs/zh-CN/contributing.md)
 - [安全说明](../docs/zh-CN/security.md)
 
