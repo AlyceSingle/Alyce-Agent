@@ -16,7 +16,21 @@
 
 三者缺一的话，程序启动时就会直接告诉你。*它可不是那种闷声崩溃的类型。*
 
-## 装依赖
+## 全局安装（推荐）
+
+最简单的使用方式是通过 npm 全局安装 Alyce-Agent：
+
+```bash
+npm install -g alyce-agent
+```
+
+然后你可以在任何目录下直接输入以下命令启动：
+
+```bash
+alyce-agent
+```
+
+## 本地开发（装依赖）
 
 ```bash
 npm install

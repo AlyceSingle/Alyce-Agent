@@ -243,7 +243,7 @@ function applyGroupedReplacements(
   return result;
 }
 
-function splitLines(text: string) {
+export function splitLines(text: string) {
   if (text.length === 0) {
     return [];
   }

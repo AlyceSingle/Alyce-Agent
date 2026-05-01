@@ -5,6 +5,7 @@ import { throwIfAborted } from "../../core/abort.js";
 import { resolvePathFromInput, toWorkspaceRelative } from "../internal/pathSandbox.js";
 import type { ToolExecutionContext } from "../types.js";
 import { FILE_WRITE_TOOL_NAME, getWriteToolDescription } from "./prompt.js";
+import { getPatchForWrite, type StructuredPatchHunk } from "./utils.js";
 
 export const FileWriteInputSchema = z
   .object({
@@ -22,6 +23,7 @@ export interface FileWriteResult {
   filePath: string;
   bytes: number;
   lineCount: number;
+  structuredPatch: StructuredPatchHunk[];
 }
 
 export const FILE_WRITE_TOOL_DESCRIPTION = getWriteToolDescription();
@@ -36,6 +38,7 @@ export async function executeFileWrite(
 
   const exists = await fileExists(fullFilePath);
   const mode: FileWriteResult["type"] = exists ? "update" : "create";
+  const originalFile = exists ? await fs.readFile(fullFilePath, "utf8") : "";
   const byteSize = Buffer.byteLength(input.content, "utf8");
 
   const approved = await context.requestApproval({
@@ -51,6 +54,20 @@ export async function executeFileWrite(
 
   throwIfAborted(context.abortSignal);
 
+  if (exists && originalFile === input.content) {
+    return {
+      type: mode,
+      filePath: relativePath,
+      bytes: byteSize,
+      lineCount: input.content.length === 0 ? 0 : input.content.split(/\r?\n/).length,
+      structuredPatch: getPatchForWrite({
+        filePath: relativePath,
+        originalFile,
+        nextFile: input.content
+      })
+    };
+  }
+
   // 写入前确保父目录存在，兼容创建新文件场景。
   await context.captureFileBeforeWrite(fullFilePath);
   await fs.mkdir(path.dirname(fullFilePath), { recursive: true });
@@ -60,7 +77,12 @@ export async function executeFileWrite(
     type: mode,
     filePath: relativePath,
     bytes: byteSize,
-    lineCount: input.content.length === 0 ? 0 : input.content.split(/\r?\n/).length
+    lineCount: input.content.length === 0 ? 0 : input.content.split(/\r?\n/).length,
+    structuredPatch: getPatchForWrite({
+      filePath: relativePath,
+      originalFile,
+      nextFile: input.content
+    })
   };
 }
 

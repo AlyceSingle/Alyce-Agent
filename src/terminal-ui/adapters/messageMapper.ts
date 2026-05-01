@@ -9,6 +9,7 @@ import type {
   TerminalUiToolShellResult,
   TerminalUiToolWriteResult
 } from "../state/types.js";
+import { serializeMessageBlocks } from "../utils/messageBlocks.js";
 
 const DEFAULT_PREVIEW_MAX_CHARS = 320;
 const TOOL_PREVIEW_MAX_CHARS = 520;
@@ -31,8 +32,8 @@ type ToolResultError = {
 type ParsedToolCallExecutionResult = {
   toolName: string;
   parsedArgs?: Record<string, unknown>;
-  structuredResult: unknown;
   displayResult: string;
+  structuredResult: unknown;
   ok: boolean;
   error?: ToolResultError;
 };
@@ -69,18 +70,6 @@ function createBlock(
   };
 }
 
-function serializeBlocks(blocks: TerminalUiMessageBlock[]) {
-  return blocks
-    .map((block) => {
-      if (!block.label) {
-        return block.content;
-      }
-
-      return `${block.label}\n${block.content}`;
-    })
-    .join("\n\n");
-}
-
 function createMessage(options: {
   kind: TerminalUiMessage["kind"];
   title: string;
@@ -89,7 +78,7 @@ function createMessage(options: {
   maxPreviewChars?: number;
   toolData?: TerminalUiToolData;
 }): TerminalUiMessage {
-  const serializedContent = serializeBlocks(options.blocks);
+  const serializedContent = serializeMessageBlocks(options.blocks);
   const content = serializedContent.length > 0 ? serializedContent : "(empty)";
   const preview = truncateText(content, options.maxPreviewChars ?? DEFAULT_PREVIEW_MAX_CHARS);
 
@@ -269,7 +258,10 @@ function buildToolResultBlocks(
       return blocks;
     }
     case "write": {
-      return [createBlock(asString(result.parsedArgs?.content) ?? "", { label: "Content", style: "code" })];
+      const patchText = extractStructuredPatchDisplayText(result.structuredResult);
+      return [
+        createBlock(patchText || "(empty patch)", { label: "Patch", style: "code" })
+      ];
     }
     case "edit": {
       const edit = toolData.edit;
@@ -522,8 +514,8 @@ function parseToolCallExecutionResult(
     return {
       toolName,
       parsedArgs,
-      structuredResult: displayResult,
       displayResult,
+      structuredResult: displayResult,
       ok: true
     };
   }
@@ -533,8 +525,8 @@ function parseToolCallExecutionResult(
     return {
       toolName,
       parsedArgs,
-      structuredResult: envelope.error,
       displayResult,
+      structuredResult: envelope.error,
       ok: false,
       error: toToolResultError(envelope.error)
     };
@@ -543,8 +535,8 @@ function parseToolCallExecutionResult(
   return {
     toolName,
     parsedArgs,
-    structuredResult: envelope.result ?? envelope,
     displayResult,
+    structuredResult: envelope.result ?? envelope,
     ok: true
   };
 }

@@ -33,6 +33,22 @@ Alyce-Agent is a local coding assistant framework with:
 
 ## Quick Start
 
+### Global Installation (Recommended)
+
+You can install Alyce-Agent globally via npm:
+
+```bash
+npm install -g alyce-agent
+```
+
+Then start it from anywhere:
+
+```bash
+alyce-agent
+```
+
+### Local Development
+
 1. Install dependencies
 
 ```bash

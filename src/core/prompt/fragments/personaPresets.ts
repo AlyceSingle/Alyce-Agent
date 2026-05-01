@@ -43,6 +43,14 @@ export function getBuiltinPersonaPresetNames(): BuiltinPersonaPreset[] {
   return Object.keys(BUILTIN_PERSONA_PRESETS) as BuiltinPersonaPreset[];
 }
 
+export function getBuiltinPersonaPresetTitle(preset?: string): string | null {
+  if (!preset) {
+    return null;
+  }
+
+  return BUILTIN_PERSONA_PRESETS[preset as BuiltinPersonaPreset]?.title ?? null;
+}
+
 export function buildBuiltinPersonaSection(preset?: string) {
   if (!preset) {
     return null;

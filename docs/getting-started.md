@@ -16,7 +16,21 @@ The only goal here is to get Alyce-Agent running on your machine. No reverse-eng
 
 If any of those is missing, you'll know pretty quickly because the app will tell you. *It's not the type to suffer in silence.*
 
-## Install Dependencies
+## Global Installation (Recommended)
+
+The easiest way to use Alyce-Agent is to install it globally via npm:
+
+```bash
+npm install -g alyce-agent
+```
+
+Then you can start it from any directory by simply typing:
+
+```bash
+alyce-agent
+```
+
+## Local Development (Install Dependencies)
 
 ```bash
 npm install

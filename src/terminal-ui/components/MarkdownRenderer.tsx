@@ -5,6 +5,7 @@ import type { TerminalUiMessageKind } from "../state/types.js";
 import { terminalUiTheme } from "../theme/theme.js";
 import { decodeHtmlEntities } from "../utils/htmlEntities.js";
 import { measureCharWidth } from "../utils/text.js";
+import { renderLatexMathToText, splitMarkdownMathSegments } from "../utils/math.js";
 
 type MarkdownToken = {
   type: string;
@@ -40,6 +41,7 @@ type MarkdownLineVariant =
   | "list"
   | "code"
   | "code-label"
+  | "math"
   | "rule"
   | "table";
 
@@ -236,6 +238,11 @@ function getLineStyle(
         color: terminalUiTheme.colors.markdownCodeLabel,
         bold: true
       };
+    case "math":
+      return {
+        color: terminalUiTheme.colors.markdownInlineCode,
+        bold: true
+      };
     case "rule":
       return {
         color: terminalUiTheme.colors.markdownRule
@@ -323,13 +330,7 @@ function renderSingleBlockToken(
     }
     case "paragraph":
     case "text":
-      return [
-        createWrappedSpanBlock(toInlineSpans(getInlineTokenSource(token)), width, {
-          key,
-          indent: baseIndent,
-          variant: "paragraph"
-        })
-      ];
+      return renderParagraphLikeToken(token, width, key, baseIndent, "paragraph");
     case "blockquote": {
       const nestedTokens = getNestedTokens(token);
       const rendered = renderBlockTokens(
@@ -354,9 +355,42 @@ function renderSingleBlockToken(
         return [];
       }
 
-      return [renderRawBlock(fallbackText, width, key, baseIndent)];
+      return renderParagraphLikeContent(fallbackText, width, key, baseIndent, "paragraph");
     }
   }
+}
+
+function renderParagraphLikeToken(
+  token: MarkdownToken,
+  width: number,
+  key: string,
+  baseIndent: number,
+  variant: Extract<MarkdownLineVariant, "paragraph" | "quote" | "list">
+): MarkdownRenderBlock[] {
+  const inlineSource = getInlineTokenSource(token);
+  return renderInlineContentWithMath(
+    inlineSource,
+    width,
+    key,
+    baseIndent,
+    variant
+  );
+}
+
+function renderParagraphLikeContent(
+  content: string,
+  width: number,
+  key: string,
+  baseIndent: number,
+  variant: Extract<MarkdownLineVariant, "paragraph" | "quote" | "list">
+): MarkdownRenderBlock[] {
+  return buildBlocksFromMathSegments(
+    splitMarkdownMathSegments(content),
+    width,
+    key,
+    baseIndent,
+    variant
+  );
 }
 
 function renderListToken(
@@ -384,13 +418,15 @@ function renderListToken(
 
     if (firstToken && isInlineBlockToken(firstToken)) {
       blocks.push(
-        createWrappedSpanBlock(toInlineSpans(getInlineTokenSource(firstToken)), width, {
-          key: `${itemKey}-head`,
-          indent: baseIndent,
-          prefixFirst: prefix,
-          prefixRest: continuationPrefix,
-          variant: "list"
-        })
+        ...renderInlineContentWithMath(
+          getInlineTokenSource(firstToken),
+          width,
+          `${itemKey}-head`,
+          baseIndent,
+          "list",
+          prefix,
+          continuationPrefix
+        )
       );
 
       const tailBlocks = renderBlockTokens(
@@ -406,13 +442,15 @@ function renderListToken(
     if (nestedTokens.length === 0) {
       const fallbackText = asString(item.text) ?? "";
       blocks.push(
-        createWrappedSpanBlock([{ text: fallbackText || " " }], width, {
-          key: `${itemKey}-fallback`,
-          indent: baseIndent,
-          prefixFirst: prefix,
-          prefixRest: continuationPrefix,
-          variant: "list"
-        })
+        ...buildBlocksFromMathSegments(
+          splitMarkdownMathSegments(fallbackText || " "),
+          width,
+          `${itemKey}-fallback`,
+          baseIndent,
+          "list",
+          prefix,
+          continuationPrefix
+        )
       );
       continue;
     }
@@ -670,7 +708,7 @@ function toInlineSpans(tokens: MarkdownToken[]): MarkdownSpan[] {
         if (nestedTokens.length > 0) {
           spans.push(...toInlineSpans(nestedTokens));
         } else {
-          spans.push({ text: decodeHtmlEntities(asString(token.text) ?? asString(token.raw) ?? "") });
+          spans.push(...spansFromMarkdownText(asString(token.text) ?? asString(token.raw) ?? ""));
         }
         break;
       }
@@ -697,11 +735,9 @@ function toInlineSpans(tokens: MarkdownToken[]): MarkdownSpan[] {
         const linkSpans =
           nestedTokens.length > 0
             ? toInlineSpans(nestedTokens)
-            : [{
-                text: decodeHtmlEntities(
-                  asString(token.text) ?? asString(token.href) ?? asString(token.raw) ?? ""
-                )
-              }];
+            : spansFromMarkdownText(
+                asString(token.text) ?? asString(token.href) ?? asString(token.raw) ?? ""
+              );
         spans.push(
           ...applySpanStyle(linkSpans, {
             color: terminalUiTheme.colors.markdownLink,
@@ -725,12 +761,198 @@ function toInlineSpans(tokens: MarkdownToken[]): MarkdownSpan[] {
         });
         break;
       default:
-        spans.push({ text: decodeHtmlEntities(asString(token.text) ?? asString(token.raw) ?? "") });
+        spans.push(...spansFromMarkdownText(asString(token.text) ?? asString(token.raw) ?? ""));
         break;
     }
   }
 
   return mergeAdjacentSpans(spans);
+}
+
+function renderInlineContentWithMath(
+  tokens: MarkdownToken[],
+  width: number,
+  key: string,
+  indent: number,
+  variant: Extract<MarkdownLineVariant, "paragraph" | "quote" | "list">,
+  prefixFirst?: string,
+  prefixRest?: string
+): MarkdownRenderBlock[] {
+  const rawText = extractInlinePlainText(tokens);
+  const segments = splitMarkdownMathSegments(rawText);
+  const hasDisplayMath = segments.some((segment) => segment.type === "math" && segment.display);
+  if (!hasDisplayMath) {
+    return [
+      createWrappedSpanBlock(toInlineSpans(tokens), width, {
+        key,
+        indent,
+        prefixFirst,
+        prefixRest,
+        variant
+      })
+    ];
+  }
+
+  return buildBlocksFromMathSegments(
+    segments,
+    width,
+    key,
+    indent,
+    variant,
+    prefixFirst,
+    prefixRest
+  );
+}
+
+function spansFromMarkdownText(text: string): MarkdownSpan[] {
+  const segments = splitMarkdownMathSegments(text);
+  const spans: MarkdownSpan[] = [];
+
+  for (const segment of segments) {
+    if (segment.type === "text") {
+      if (segment.content.length > 0) {
+        spans.push({
+          text: decodeHtmlEntities(segment.content)
+        });
+      }
+      continue;
+    }
+
+    if (segment.display) {
+      spans.push({
+        text: `\n${renderLatexMathToText(segment.content) || segment.content}\n`,
+        color: terminalUiTheme.colors.markdownInlineCode,
+        bold: true
+      });
+      continue;
+    }
+
+    spans.push({
+      text: renderLatexMathToText(segment.content) || segment.content,
+      color: terminalUiTheme.colors.markdownInlineCode,
+      bold: true
+    });
+  }
+
+  return spans.length > 0 ? spans : [{ text: "" }];
+}
+
+function buildBlocksFromMathSegments(
+  segments: ReturnType<typeof splitMarkdownMathSegments>,
+  width: number,
+  key: string,
+  indent: number,
+  variant: Extract<MarkdownLineVariant, "paragraph" | "quote" | "list">,
+  prefixFirst?: string,
+  prefixRest?: string
+): MarkdownRenderBlock[] {
+  const blocks: MarkdownRenderBlock[] = [];
+  let blockIndex = 0;
+  let currentInlineSpans: MarkdownSpan[] = [];
+
+  const flushInlineBlock = () => {
+    if (currentInlineSpans.length === 0) {
+      return;
+    }
+
+    blocks.push(createWrappedSpanBlock(currentInlineSpans, width, {
+      key: `${key}-inline-${blockIndex}`,
+      indent,
+      prefixFirst: blocks.length === 0 ? prefixFirst : undefined,
+      prefixRest,
+      variant
+    }));
+    blockIndex += 1;
+    currentInlineSpans = [];
+  };
+
+  for (const segment of segments) {
+    if (segment.type === "text") {
+      if (segment.content.length > 0) {
+        currentInlineSpans.push({ text: decodeHtmlEntities(segment.content) });
+      }
+      continue;
+    }
+
+    if (!segment.display) {
+      currentInlineSpans.push({
+        text: renderLatexMathToText(segment.content) || segment.content,
+        color: terminalUiTheme.colors.markdownInlineCode,
+        bold: true
+      });
+      continue;
+    }
+
+    flushInlineBlock();
+    const continuedPrefix = blocks.length === 0 ? prefixFirst : prefixRest;
+    const mathIndent = continuedPrefix ? indent : indent + 2;
+    blocks.push(createWrappedSpanBlock([{
+      text: renderLatexMathToText(segment.content) || segment.content,
+      color: terminalUiTheme.colors.markdownInlineCode,
+      bold: true
+    }], width, {
+      key: `${key}-math-${blockIndex}`,
+      indent: mathIndent,
+      prefixFirst: continuedPrefix,
+      prefixRest,
+      variant: "math"
+    }));
+    blockIndex += 1;
+  }
+
+  flushInlineBlock();
+
+  if (blocks.length === 0) {
+    blocks.push(createWrappedSpanBlock([{ text: " " }], width, {
+      key: `${key}-empty`,
+      indent,
+      prefixFirst,
+      prefixRest,
+      variant
+    }));
+  }
+
+  return blocks;
+}
+
+function extractInlinePlainText(tokens: MarkdownToken[]): string {
+  let text = "";
+
+  for (const token of tokens) {
+    switch (token.type) {
+      case "text": {
+        const nestedTokens = getNestedTokens(token);
+        text += nestedTokens.length > 0
+          ? extractInlinePlainText(nestedTokens)
+          : decodeHtmlEntities(asString(token.text) ?? asString(token.raw) ?? "");
+        break;
+      }
+      case "strong":
+      case "em":
+      case "del":
+      case "link":
+      case "heading":
+        text += extractInlinePlainText(getInlineTokenSource(token));
+        break;
+      case "codespan":
+        text += decodeCodeLiteral(asString(token.text) ?? asString(token.raw) ?? "");
+        break;
+      case "br":
+        text += "\n";
+        break;
+      case "image":
+        text += `[image: ${decodeHtmlEntities(asString(token.text) ?? asString(token.href) ?? "asset")}]`;
+        break;
+      case "html":
+        text += decodeHtmlEntities(asString(token.raw) ?? asString(token.text) ?? "");
+        break;
+      default:
+        text += decodeHtmlEntities(asString(token.text) ?? asString(token.raw) ?? "");
+        break;
+    }
+  }
+
+  return text;
 }
 
 function applySpanStyle(spans: MarkdownSpan[], style: MarkdownSpanStyle): MarkdownSpan[] {

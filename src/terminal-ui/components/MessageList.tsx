@@ -18,6 +18,11 @@ import type {
   TerminalUiToolData
 } from "../state/types.js";
 import { terminalUiTheme } from "../theme/theme.js";
+import {
+  getRenderableToolBlocks,
+  isContextPreviewMessage,
+  isDiffPatchBlock
+} from "../utils/messageBlocks.js";
 import { wrapText, wrapTextClamped } from "../utils/text.js";
 
 const SCROLL_HEADROOM_ROWS = 2;
@@ -243,10 +248,6 @@ function renderBlockLines(block: TerminalUiMessageBlock, width: number): Rendere
   return wrapText(block.content, width).map((content) => ({ content }));
 }
 
-function isDiffPatchBlock(block: TerminalUiMessageBlock) {
-  return block.style === "code" && block.label === "Patch";
-}
-
 function wrapDiffPatchLines(content: string, width: number): RenderedSectionLine[] {
   return content
     .split(/\r?\n/)
@@ -331,17 +332,6 @@ function getRenderedLineColors(
   }
 }
 
-function getRenderableToolBlocks(
-  blocks: TerminalUiMessageBlock[],
-  toolData: TerminalUiToolData
-) {
-  if (toolData.resultKind !== "edit") {
-    return blocks;
-  }
-
-  return blocks.filter((block) => block.label !== "Edit");
-}
-
 function buildCollapsedRenderedSections(
   blocks: TerminalUiMessageBlock[],
   width: number,
@@ -401,7 +391,7 @@ function isDefaultExpandedToolMessage(message: TerminalUiMessage) {
   return (
     message.kind === "tool" &&
     message.toolData?.phase === "result" &&
-    message.toolData.resultKind === "edit" &&
+    (message.toolData.resultKind === "edit" || message.toolData.resultKind === "write") &&
     message.toolData.ok === true
   );
 }
@@ -426,23 +416,23 @@ function renderToolMessageState(
     return renderLegacyToolMessageState(message, width, expanded);
   }
 
-  if (toolData.phase === "start") {
-    return {
-      sections: [],
-      metadataLine: baseMetadata.length > 0 ? baseMetadata.join(" | ") : undefined,
-      expandable: false
-    };
-  }
-
   if (toolData.ok === false) {
+    const collapsedPreview = buildCollapsedMessageBlocks(message.blocks, width, 12);
+    const sections = renderSections(expanded ? message.blocks : collapsedPreview.blocks, width);
+    const toggleHint = collapsedPreview.truncated
+      ? expanded
+        ? "Click to collapse"
+        : "Click to expand"
+      : undefined;
+
     return {
-      sections: renderSections(getRenderableToolBlocks(message.blocks, toolData), width),
-      metadataLine: baseMetadata.length > 0 ? baseMetadata.join(" | ") : undefined,
-      expandable: false
+      sections,
+      metadataLine: buildExpandableMetadataLine(baseMetadata, toggleHint),
+      expandable: Boolean(toggleHint)
     };
   }
 
-  if (toolData.resultKind === "edit") {
+  if (toolData.resultKind === "edit" || toolData.resultKind === "write") {
     const renderableBlocks = getRenderableToolBlocks(message.blocks, toolData);
     const collapsedPreview = buildCollapsedRenderedSections(renderableBlocks, width, 12);
     const sections = expanded
@@ -484,14 +474,6 @@ function renderLegacyToolMessageState(
 ): ExpandableRenderState {
   const baseMetadata = message.metadata;
 
-  if (baseMetadata.includes("Tool call")) {
-    return {
-      sections: [],
-      metadataLine: baseMetadata.length > 0 ? baseMetadata.join(" | ") : undefined,
-      expandable: false
-    };
-  }
-
   const collapsedPreview = buildCollapsedLegacyToolBlocks(message, width);
   const sections = renderSections(expanded ? message.blocks : collapsedPreview.blocks, width);
   const toggleHint = collapsedPreview.truncated
@@ -505,10 +487,6 @@ function renderLegacyToolMessageState(
     metadataLine: buildExpandableMetadataLine(baseMetadata, toggleHint),
     expandable: Boolean(toggleHint)
   };
-}
-
-function isContextPreviewMessage(message: TerminalUiMessage) {
-  return message.kind === "system" && message.title === "Context Preview";
 }
 
 function renderContextPreviewMessageState(

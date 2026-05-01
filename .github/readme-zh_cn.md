@@ -33,6 +33,22 @@ Alyce-Agent 目前是一套本地优先的编码助手框架，包含：
 
 ## 快速开始
 
+### 全局安装（推荐）
+
+你可以通过 npm 全局安装 Alyce-Agent：
+
+```bash
+npm install -g alyce-agent
+```
+
+然后在任何地方启动它：
+
+```bash
+alyce-agent
+```
+
+### 本地开发
+
 1. 安装依赖
 
 ```bash

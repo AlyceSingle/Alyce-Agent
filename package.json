@@ -1,7 +1,9 @@
 {
-  "name": "ts-code-agent",
+  "name": "alyce-agent",
   "version": "0.1.0",
-  "private": true,
+  "bin": {
+    "alyce-agent": "./dist/index.js"
+  },
   "type": "module",
   "scripts": {
     "dev": "npm run build && node --disable-warning=DEP0040 dist/index.js",

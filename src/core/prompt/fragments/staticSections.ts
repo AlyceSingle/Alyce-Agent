@@ -1,16 +1,14 @@
 import { sessionPromptSection } from "../sectionFactory.js";
 import type { PromptBuildOptions, PromptRuntimeContext, PromptSection } from "../types.js";
 import { promptFormatting } from "./formatting.js";
-import { buildBuiltinPersonaSection } from "./personaPresets.js";
+import { buildBuiltinPersonaSection, getBuiltinPersonaPresetTitle } from "./personaPresets.js";
 
 function hasTool(runtimeContext: PromptRuntimeContext, toolName: string) {
   return runtimeContext.availableTools.includes(toolName);
 }
 
 function getIdentitySection(options: PromptBuildOptions) {
-  let name = "Alyce";
-  if (options.personaPreset === "lilith") name = "Lilith";
-  else if (options.personaPreset === "corin") name = "Corin";
+  const name = getBuiltinPersonaPresetTitle(options.personaPreset) ?? "Alyce";
 
   return [
     `# Identity`,

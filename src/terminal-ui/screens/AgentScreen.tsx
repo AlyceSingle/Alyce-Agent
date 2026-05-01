@@ -11,6 +11,7 @@ import { SettingsDialog } from "../components/SettingsDialog.js";
 import { SessionPickerDialog } from "../components/SessionPickerDialog.js";
 import { RewindPickerDialog } from "../components/RewindPickerDialog.js";
 import type { SessionController } from "../adapters/sessionController.js";
+import { getBuiltinPersonaPresetTitle } from "../../core/prompt/fragments/personaPresets.js";
 import { useIsOverlayActive } from "../context/overlayContext.js";
 import { useKeybindings } from "../keybindings/useKeybindings.js";
 import { getBindingDisplayText } from "../keybindings/shortcutDisplay.js";
@@ -21,6 +22,7 @@ import { invalidateInkPrevFrame } from "../runtime/instances.js";
 import { getActiveDialog, selectRelativeMessage, setTranscriptSticky } from "../state/actions.js";
 import { useTerminalUiSelector, useTerminalUiStore } from "../state/store.js";
 import { terminalUiTheme } from "../theme/theme.js";
+import { getCopyableMessageContent } from "../utils/messageBlocks.js";
 
 const EXIT_CONFIRMATION_STATUS = "Press Ctrl+C again to quit";
 const COPY_STATUS_DURATION_MS = 1800;
@@ -30,16 +32,7 @@ const LAST_MESSAGE_SHORTCUT = getBindingDisplayText("scroll:bottom", "Scroll") ?
 const LINE_SCROLL_ROWS = 2;
 
 function resolveAssistantLabel(personaPreset?: string) {
-  switch (personaPreset?.trim().toLowerCase()) {
-    case "lilith":
-      return "LILITH";
-    case "corin":
-      return "CORIN";
-    case "alyce":
-      return "ALYCE";
-    default:
-      return "ASSISTANT";
-  }
+  return getBuiltinPersonaPresetTitle(personaPreset)?.toUpperCase() ?? "ALYCE";
 }
 
 const ConversationPane = React.memo(React.forwardRef<MessageListHandle, {
@@ -227,9 +220,7 @@ export function AgentScreen(props: { controller: SessionController }) {
     connection.apiKey,
     draftInput,
     isLoading,
-    messages,
     props.controller,
-    selectedMessageId,
     store
   ]);
 
@@ -261,8 +252,8 @@ export function AgentScreen(props: { controller: SessionController }) {
 
       if (!transcriptSticky) {
         const targetMessageId =
-          transcriptRef.current?.getVisibleMessageId() ??
           selectedMessageId ??
+          transcriptRef.current?.getVisibleMessageId() ??
           messages.at(-1)?.id ??
           null;
         const targetMessage =
@@ -270,9 +261,12 @@ export function AgentScreen(props: { controller: SessionController }) {
             ? messages.find((message) => message.id === targetMessageId)
             : undefined;
 
-        if (targetMessage?.content) {
+        if (targetMessage) {
           resetExitConfirmation();
-          void copyTextToClipboard(targetMessage.content, "Copied selected message.");
+          void copyTextToClipboard(
+            getCopyableMessageContent(targetMessage),
+            "Copied selected message."
+          );
           return;
         }
       }

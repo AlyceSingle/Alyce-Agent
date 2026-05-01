@@ -1,3 +1,4 @@
+#!/usr/bin/env node
 import "dotenv/config";
 import process from "node:process";
 import { startReactUiMode } from "./cli/startReactUiMode.js";
