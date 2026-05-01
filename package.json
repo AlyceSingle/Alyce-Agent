@@ -1,8 +1,8 @@
 {
-  "name": "alyce-agent",
+  "name": "alyce",
   "version": "0.1.0",
   "bin": {
-    "alyce-agent": "./dist/index.js"
+    "alyce": "./dist/index.js"
   },
   "type": "module",
   "scripts": {

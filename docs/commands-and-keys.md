@@ -21,7 +21,7 @@ Type these into the main input. They start with `/` and execute immediately.
 | `/setup` | First-run configuration wizard. |
 | `/clear` | Wipes the current conversation and starts fresh. |
 | `/rewind` | Opens the rewind selector so you can restore to an earlier prompt. |
-| `/exit` | Closes Alyce-Agent. |
+| `/exit` | Closes Alyce. |
 
 ### Memory
 
@@ -50,7 +50,7 @@ Type these into the main input. They start with `/` and execute immediately.
 | `/add-dir <path>` | Adds a directory to the agent's allowed file scope for this session. |
 | `/add-dir --save <path>` | Same, but persists the directory across sessions. |
 
-*By default, Alyce-Agent can only access files within the workspace. Use `/add-dir` when you need it to reach outside — say, for a shared library in another project.*
+*By default, Alyce can only access files within the workspace. Use `/add-dir` when you need it to reach outside — say, for a shared library in another project.*
 
 ### Session History
 

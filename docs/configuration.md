@@ -6,7 +6,7 @@
 
 Alyce speaking. *Configuration systems are the kind of thing that seem simple until you realize there are four places a setting could come from and you don't know which one wins. So let me be boring but clear.*
 
-Alyce-Agent's configuration is layered. Multiple sources can set the same value, and there's a specific order that decides who wins. Once you know the order, it's painless.
+Alyce's configuration is layered. Multiple sources can set the same value, and there's a specific order that decides who wins. Once you know the order, it's painless.
 
 ## Where Settings Come From
 

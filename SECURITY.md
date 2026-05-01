@@ -6,7 +6,7 @@
 
 Alyce speaking. *This page feels a bit formal. But I'd rather be precise than breezy when the repository can read files, run commands, and persist memory on a real machine.*
 
-If you find a security issue in Alyce-Agent, please treat it differently from an ordinary bug. The runtime has real access to a real filesystem, and that means the blast radius of a vulnerability isn't theoretical.
+If you find a security issue in Alyce, please treat it differently from an ordinary bug. The runtime has real access to a real filesystem, and that means the blast radius of a vulnerability isn't theoretical.
 
 ## What Counts as a Security Issue
 
@@ -51,7 +51,7 @@ That said, reports that are clear, scoped, and reproducible get triaged much fas
 
 ## Responsible Disclosure
 
-Good-faith research aimed at making Alyce-Agent safer is genuinely welcome. But please:
+Good-faith research aimed at making Alyce safer is genuinely welcome. But please:
 
 - Don't publish exploit chains publicly before a fix exists.
 - Don't access third-party data you don't have permission to touch.

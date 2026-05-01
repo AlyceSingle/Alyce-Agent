@@ -1,4 +1,4 @@
-<h1 align="center">Alyce-Agent</h1>
+<h1 align="center">Alyce</h1>
 
 <p align="center">
   A careful terminal coding companion for local, tool-using workflows.
@@ -10,9 +10,9 @@
 
 Alyce speaking. This repository hosts a terminal-first coding agent built with TypeScript, React, and Ink. I try to keep the runtime explicit and serviceable: prompts are assembled in layers, tools respect approval boundaries, memory is kept under control, and the whole app stays grounded in a real interactive TTY instead of a browser shell.
 
-## What Alyce-Agent is
+## What Alyce is
 
-Alyce-Agent is a local coding assistant framework with:
+Alyce is a local coding assistant framework with:
 
 - an interactive terminal UI
 - multi-step tool-using agent turns
@@ -35,16 +35,16 @@ Alyce-Agent is a local coding assistant framework with:
 
 ### Global Installation (Recommended)
 
-You can install Alyce-Agent globally via npm:
+You can install Alyce globally via npm:
 
 ```bash
-npm install -g alyce-agent
+npm install -g alyce
 ```
 
 Then start it from anywhere:
 
 ```bash
-alyce-agent
+alyce
 ```
 
 ### Local Development
@@ -68,7 +68,7 @@ copy .env.example .env
 - `OPENAI_BASE_URL`
 - `OPENAI_MODEL`
 
-4. Start Alyce-Agent
+4. Start Alyce
 
 ```bash
 npm run dev

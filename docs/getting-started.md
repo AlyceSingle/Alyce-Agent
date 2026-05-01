@@ -6,7 +6,7 @@
 
 Alyce speaking. *Alright, let me try to keep this practical and not let my nerves make it five pages long.*
 
-The only goal here is to get Alyce-Agent running on your machine. No reverse-engineering the repository, no guessing games — just the steps that actually matter.
+The only goal here is to get Alyce running on your machine. No reverse-engineering the repository, no guessing games — just the steps that actually matter.
 
 ## What You'll Need
 
@@ -18,16 +18,16 @@ If any of those is missing, you'll know pretty quickly because the app will tell
 
 ## Global Installation (Recommended)
 
-The easiest way to use Alyce-Agent is to install it globally via npm:
+The easiest way to use Alyce is to install it globally via npm:
 
 ```bash
-npm install -g alyce-agent
+npm install -g alyce
 ```
 
 Then you can start it from any directory by simply typing:
 
 ```bash
-alyce-agent
+alyce
 ```
 
 ## Local Development (Install Dependencies)
@@ -76,7 +76,7 @@ The app will validate the TTY environment on startup. If something is wrong — 
 
 ## First-Run Checklist
 
-Once Alyce-Agent is running, here's what I'd do before anything else:
+Once Alyce is running, here's what I'd do before anything else:
 
 1. **Press `Ctrl+X`** to open settings. It's the first command worth memorizing.
 2. **Verify your connection**: API key, base URL, and model should show what you put in `.env`. If something looks wrong, you can fix it right in the settings dialog.

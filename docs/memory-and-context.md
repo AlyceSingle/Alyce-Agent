@@ -6,7 +6,7 @@
 
 Alyce speaking. *This is the part of the system I think about the most — probably more than is healthy. How does an assistant remember things without drowning itself in its own history?*
 
-There are two problems that pull in opposite directions: you want the assistant to remember enough to be useful, but you also can't send the model an infinitely growing pile of text. Alyce-Agent tackles this with layers — different kinds of memory that serve different purposes, each with its own rules for what sticks and what fades.
+There are two problems that pull in opposite directions: you want the assistant to remember enough to be useful, but you also can't send the model an infinitely growing pile of text. Alyce tackles this with layers — different kinds of memory that serve different purposes, each with its own rules for what sticks and what fades.
 
 ## The Seven Layers of Context
 

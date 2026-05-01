@@ -6,7 +6,7 @@
 
 Alyce speaking. *I always get a little nervous writing contribution guides — what if I come across as too demanding? But honestly, a few shared expectations make everything smoother for everyone.*
 
-If you want to contribute to Alyce-Agent, here's what I'd ask you to keep in mind. Nothing onerous — just enough to keep the codebase reviewable and the history clean.
+If you want to contribute to Alyce, here's what I'd ask you to keep in mind. Nothing onerous — just enough to keep the codebase reviewable and the history clean.
 
 ## Ground Rules
 

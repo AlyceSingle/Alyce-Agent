@@ -153,7 +153,7 @@ src/tools/executeToolCall.ts
 
 ### 终端 UI
 
-Alyce-Agent 面向世界的脸。React + Ink，跑在真终端里。
+Alyce 面向世界的脸。React + Ink，跑在真终端里。
 
 #### `src/terminal-ui/adapters/`
 

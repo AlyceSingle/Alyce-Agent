@@ -153,7 +153,7 @@ Everything the agent can *do* — read files, search code, edit, write, run comm
 
 ### Terminal UI
 
-The face Alyce-Agent shows to the world. Built with React + Ink, rendered in an actual terminal.
+The face Alyce shows to the world. Built with React + Ink, rendered in an actual terminal.
 
 #### `src/terminal-ui/adapters/`
 
