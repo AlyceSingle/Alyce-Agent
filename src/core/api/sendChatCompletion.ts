@@ -79,7 +79,9 @@ function normalizeMessagesForApi(
     role: "system",
     content: [
       "# Current System Time",
-      `Current local system date and time: ${currentRequestTimestamp}`
+      `Authoritative local time for this request: ${currentRequestTimestamp}`,
+      "Resolve words like today, yesterday, tomorrow, now, latest, currently, and recently against this timestamp.",
+      "If timing is ambiguous or the user may be mistaken, state the exact date explicitly."
     ].join("\n")
   };
 

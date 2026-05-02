@@ -1,3 +1,7 @@
+export function getSystemTimeZone(): string {
+  return Intl.DateTimeFormat().resolvedOptions().timeZone || "local";
+}
+
 export function formatSystemDateTime(now = new Date()): string {
   const year = now.getFullYear();
   const month = String(now.getMonth() + 1).padStart(2, "0");
@@ -9,8 +13,9 @@ export function formatSystemDateTime(now = new Date()): string {
   const absoluteOffsetMinutes = Math.abs(offsetMinutes);
   const offsetHours = String(Math.floor(absoluteOffsetMinutes / 60)).padStart(2, "0");
   const offsetRemainder = String(absoluteOffsetMinutes % 60).padStart(2, "0");
+  const timeZone = getSystemTimeZone();
 
-  return `${year}-${month}-${day} ${hours}:${minutes} UTC${sign}${offsetHours}:${offsetRemainder}`;
+  return `${year}-${month}-${day} ${hours}:${minutes} UTC${sign}${offsetHours}:${offsetRemainder} (${timeZone})`;
 }
 
 export function formatCurrentDateLabel(now = new Date()): string {

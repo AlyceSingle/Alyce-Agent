@@ -110,7 +110,7 @@ export function RewindPickerDialog(props: {
     }
 
     if (key.escape) {
-      setSelectedIndex((current) => Math.min(props.points.length - 1, current + 1));
+      props.onCancel();
       return;
     }
 
@@ -142,7 +142,7 @@ export function RewindPickerDialog(props: {
 
   const footer = confirmingPoint
     ? "↑/↓ choose | Enter restore | Esc back | q cancel"
-    : "Esc older | ↑/↓ choose | Enter options | q cancel";
+    : "↑/↓ choose | Enter options | Esc cancel | q cancel";
 
   return (
     <Pane

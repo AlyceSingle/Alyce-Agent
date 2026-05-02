@@ -31,7 +31,7 @@ import type {
   SessionId,
   SessionResumePayload
 } from "../core/session-history/types.js";
-import { formatCurrentDateLabel, formatSystemDateTime } from "../core/time/systemTime.js";
+import { formatCurrentDateLabel, formatSystemDateTime, getSystemTimeZone } from "../core/time/systemTime.js";
 import { getRegisteredToolNames } from "../tools/registry.js";
 import type {
   AskUserQuestionRequest,
@@ -223,23 +223,28 @@ export async function createSessionRuntime(
 
   // system prompt 始终由当前模型、环境、工具能力和记忆视图重新生成。
   const buildSystemPrompt = async () =>
-    buildEffectiveSystemPrompt(
-      {
-        model: connection.model,
-        workspaceRoot: config.paths.workspaceRoot,
-        allowedRoots: resolveAllowedRoots(
-          config.paths.workspaceRoot,
-          settings,
-          sessionAdditionalDirectories
-        ),
-        currentDate: getCurrentDateLabel(),
-        platform: process.platform,
-        availableTools: getRegisteredToolNames(),
-        memory: await memoryService.getPromptContext()
-      },
-      settings,
-      promptResolver
-    );
+    {
+      const now = new Date();
+      return buildEffectiveSystemPrompt(
+        {
+          model: connection.model,
+          workspaceRoot: config.paths.workspaceRoot,
+          allowedRoots: resolveAllowedRoots(
+            config.paths.workspaceRoot,
+            settings,
+            sessionAdditionalDirectories
+          ),
+          currentDate: getCurrentDateLabel(now),
+          currentDateTime: formatSystemDateTime(now),
+          timeZone: getSystemTimeZone(),
+          platform: process.platform,
+          availableTools: getRegisteredToolNames(),
+          memory: await memoryService.getPromptContext()
+        },
+        settings,
+        promptResolver
+      );
+    };
 
   const messages: SessionMessage[] = [
     {

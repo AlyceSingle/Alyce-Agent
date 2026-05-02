@@ -22,6 +22,7 @@ import { invalidateInkPrevFrame } from "../runtime/instances.js";
 import { getActiveDialog, selectRelativeMessage, setTranscriptSticky } from "../state/actions.js";
 import { useTerminalUiSelector, useTerminalUiStore } from "../state/store.js";
 import { terminalUiTheme } from "../theme/theme.js";
+import { useDoublePress } from "../hooks/useDoublePress.js";
 import { getCopyableMessageContent } from "../utils/messageBlocks.js";
 
 const EXIT_CONFIRMATION_STATUS = "Press Ctrl+C again to quit";
@@ -93,6 +94,7 @@ export function AgentScreen(props: { controller: SessionController }) {
   const copyStatusTimerRef = useRef<NodeJS.Timeout | null>(null);
   const [copyStatusText, setCopyStatusText] = useState<string | null>(null);
   const [exitConfirmationPending, setExitConfirmationPending] = useState(false);
+  const [historyEscPending, setHistoryEscPending] = useState(false);
   const terminalWidth = stdout.columns || 120;
   const terminalHeight = stdout.rows || 36;
   const activeDialog = dialogQueue[0] ?? null;
@@ -171,6 +173,21 @@ export function AgentScreen(props: { controller: SessionController }) {
     store.updateState((state) => setTranscriptSticky(state, sticky));
   }, [store]);
 
+  const { trigger: triggerHistoryEscape, reset: resetHistoryEscape } = useDoublePress(
+    setHistoryEscPending,
+    () => {
+      if (!isLoading && draftInput.length === 0) {
+        props.controller.openRewindSelector();
+      }
+    }
+  );
+
+  useEffect(() => {
+    if (isLoading || hasDialog || hasActiveOverlay || draftInput.length > 0) {
+      resetHistoryEscape();
+    }
+  }, [draftInput.length, hasActiveOverlay, hasDialog, isLoading, resetHistoryEscape]);
+
   const keybindingHandlers = useMemo(() => ({
     "app:quit": () => {
       props.controller.requestExit();
@@ -180,13 +197,17 @@ export function AgentScreen(props: { controller: SessionController }) {
     },
     "app:escape": () => {
       if (isLoading) {
+        resetHistoryEscape();
         props.controller.interrupt();
         return;
       }
 
-      if (draftInput.trim().length === 0) {
-        props.controller.openRewindSelector();
+      if (draftInput.length > 0) {
+        resetHistoryEscape();
+        return;
       }
+
+      triggerHistoryEscape();
     },
     "conversation:previousMessage": () => {
       store.updateState((state) =>
@@ -221,6 +242,8 @@ export function AgentScreen(props: { controller: SessionController }) {
     draftInput,
     isLoading,
     props.controller,
+    resetHistoryEscape,
+    triggerHistoryEscape,
     store
   ]);
 
@@ -314,7 +337,7 @@ export function AgentScreen(props: { controller: SessionController }) {
 
   const displayedStatusText = exitConfirmationPending
     ? EXIT_CONFIRMATION_STATUS
-    : copyStatusText ?? statusText;
+    : copyStatusText ?? (historyEscPending ? "Press ESC again to open input history." : statusText);
   const completedTodoCount = todos.filter((todo) => todo.status === "completed").length;
   const todoSummary = todos.length > 0 ? `${completedTodoCount}/${todos.length}` : undefined;
 
@@ -423,7 +446,7 @@ export function AgentScreen(props: { controller: SessionController }) {
                       : "Resolve the active panel above"
                 } before typing.`
               : isLoading
-                ? "Input locked while Alyce is working. Press ESC to interrupt."
+                ? "Input locked while Alyce is working. Press ESC to interrupt. Then press ESC twice from empty input to open history."
                 : undefined
           }
           sublineText={`${connection.model} | ${workspaceRoot}`}

@@ -89,9 +89,20 @@ function getMemorySection(runtimeContext: PromptRuntimeContext) {
   return lines.join("\n");
 }
 
+function getCurrentTimeSection(runtimeContext: PromptRuntimeContext) {
+  return promptFormatting.buildSection("Current time", [
+    `Authoritative local time for this turn: ${runtimeContext.currentDateTime}`,
+    `Local time zone: ${runtimeContext.timeZone}`,
+    "Resolve words like today, yesterday, tomorrow, now, latest, currently, and recently against this timestamp.",
+    "If time wording is ambiguous or the user may be mistaken, state the exact date explicitly."
+  ]);
+}
+
 function getRuntimeEnvironmentSection(runtimeContext: PromptRuntimeContext) {
   return promptFormatting.buildSection("Environment", [
-    `Date: ${runtimeContext.currentDate}`,
+    `Local date: ${runtimeContext.currentDate}`,
+    `Local date and time: ${runtimeContext.currentDateTime}`,
+    `Time zone: ${runtimeContext.timeZone}`,
     `Platform: ${runtimeContext.platform}`,
     `Workspace root: ${runtimeContext.workspaceRoot}`,
     "Path notation: absolute paths are preferred; ~ and ~/... resolve to the user's home directory.",
@@ -119,6 +130,7 @@ function getToolResultSummaryReminderSection() {
 }
 
 export const DYNAMIC_PROMPT_SECTIONS: PromptSection[] = [
+  turnPromptSection("current_time", (runtimeContext) => getCurrentTimeSection(runtimeContext)),
   turnPromptSection("session_guidance", (runtimeContext) =>
     getSessionSpecificGuidanceSection(runtimeContext)
   ),

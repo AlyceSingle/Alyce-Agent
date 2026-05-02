@@ -195,31 +195,6 @@ export function createSessionController(
     store.updateState((state) => closeDialog(state));
   };
 
-  const canFullyRestoreTurn = (turn: TurnCheckpoint) => !turn.hasNonRestorableToolActivity;
-
-  const restoreTurn = async (turn: TurnCheckpoint) => {
-    // 文件回滚和消息截断必须一起做，避免 UI 与真实工作区状态脱节。
-    if (runtime.hasTrackedFileChanges(turn.turnId)) {
-      await runtime.restoreFilesForTurn(turn.turnId);
-    }
-
-    runtime.messages.splice(turn.runtimeMessageCount);
-    store.updateState((state) =>
-      setDraftInput(
-        setTranscriptSticky(
-          replaceMessages(setStatusText(state, "Idle"), state.messages.slice(0, turn.uiMessageCount)),
-          true
-        ),
-        turn.input
-      )
-    );
-
-    runtime.discardTurn(turn.turnId);
-    if (activeTurn?.turnId === turn.turnId) {
-      activeTurn = null;
-    }
-  };
-
   const getAffectedRewindPoints = (target: RewindPoint) =>
     rewindPoints.filter((point) => point.uiMessageCount >= target.uiMessageCount);
 
@@ -1186,45 +1161,7 @@ export function createSessionController(
         if (isTurnInterruptedError(error, controller.signal)) {
           activeTurn = null;
 
-          if (checkpoint.userCancelled && !checkpoint.hasAssistantOutput) {
-            try {
-              if (canFullyRestoreTurn(checkpoint)) {
-                await restoreTurn(checkpoint);
-              } else {
-                runtime.messages.splice(checkpoint.runtimeMessageCount);
-                runtime.discardTurn(turnId);
-                store.updateState((state) =>
-                  setDraftInput(
-                    setTranscriptSticky(
-                      replaceMessages(
-                        setStatusText(state, "Interrupted"),
-                        [
-                          ...state.messages.slice(0, checkpoint.uiMessageCount),
-                          createSystemMessage(
-                            [
-                              "Request interrupted by user.",
-                              "Conversation was rewound because the turn did not finish.",
-                              "Some non-rewindable tool side effects may remain on disk."
-                            ].join("\n"),
-                            "Session"
-                          )
-                        ]
-                      ),
-                      true
-                    ),
-                    checkpoint.input
-                  )
-                );
-              }
-            } catch (restoreError) {
-              const restoreMessage = getErrorMessage(restoreError);
-              appendUiMessage(
-                createErrorMessage(`Interrupted, but failed to restore the previous turn: ${restoreMessage}`)
-              );
-              runtime.discardTurn(turnId);
-              store.updateState((state) => setStatusText(state, "Error"));
-            }
-          } else if (checkpoint.userCancelled) {
+          if (checkpoint.userCancelled) {
             const interruptedApiMessages = runtime.messages.slice(checkpoint.runtimeMessageCount);
             const interruptedUiMessages = store.getState().messages.slice(checkpoint.uiMessageCount);
             try {
@@ -1240,7 +1177,16 @@ export function createSessionController(
             rememberRewindPoint(checkpoint);
             appendUiMessage(
               createSystemMessage(
-                "Request interrupted by user. Press ESC from empty input to choose where to rewind.",
+                [
+                  "Request interrupted by user.",
+                  "You can continue typing to refine the request.",
+                  "Press ESC twice from empty input to choose where to rewind.",
+                  checkpoint.hasNonRestorableToolActivity
+                    ? "Some non-rewindable tool side effects may remain on disk."
+                    : null
+                ]
+                  .filter((line): line is string => line !== null)
+                  .join("\n"),
                 "Session"
               )
             );

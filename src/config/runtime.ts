@@ -6,7 +6,10 @@ import {
   parseRequestPatchOperations,
   type RequestPatchOperation
 } from "../core/api/requestPatch.js";
-import { getBuiltinPersonaPresetNames } from "../core/prompt/fragments/personaPresets.js";
+import {
+  getBuiltinPersonaPresetNames,
+  resolveBuiltinPersonaPreset
+} from "../core/prompt/fragments/personaPresets.js";
 
 export interface PromptOverrideConfig {
   languagePreference?: string;
@@ -419,14 +422,15 @@ function resolvePersonaPreset(value: string | undefined): string | undefined {
     return undefined;
   }
 
-  const builtinPresets = getBuiltinPersonaPresetNames();
-  if (!builtinPresets.includes(normalized as (typeof builtinPresets)[number])) {
-    throw new Error(
-      `Unknown persona preset: ${normalized}. Available presets: ${builtinPresets.join(", ")}`
-    );
+  const resolvedPreset = resolveBuiltinPersonaPreset(normalized);
+  if (resolvedPreset) {
+    return resolvedPreset;
   }
 
-  return normalized;
+  const builtinPresets = getBuiltinPersonaPresetNames();
+  throw new Error(
+    `Unknown persona preset: ${normalized}. Available presets: ${builtinPresets.join(", ")}`
+  );
 }
 
 function parsePositiveInt(value: string | undefined, fallback: number): number {

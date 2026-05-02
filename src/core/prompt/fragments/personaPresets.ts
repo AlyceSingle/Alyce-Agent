@@ -39,31 +39,47 @@ export const BUILTIN_PERSONA_PRESETS = {
 
 export type BuiltinPersonaPreset = keyof typeof BUILTIN_PERSONA_PRESETS;
 
+const BUILTIN_PERSONA_PRESET_ALIASES = {
+  "alyce-original": "alyce"
+} as const satisfies Record<string, BuiltinPersonaPreset>;
+
 export function getBuiltinPersonaPresetNames(): BuiltinPersonaPreset[] {
   return Object.keys(BUILTIN_PERSONA_PRESETS) as BuiltinPersonaPreset[];
 }
 
+export function resolveBuiltinPersonaPreset(preset?: string): BuiltinPersonaPreset | undefined {
+  const normalized = preset?.trim();
+  if (!normalized) {
+    return undefined;
+  }
+
+  if (normalized in BUILTIN_PERSONA_PRESETS) {
+    return normalized as BuiltinPersonaPreset;
+  }
+
+  return BUILTIN_PERSONA_PRESET_ALIASES[normalized as keyof typeof BUILTIN_PERSONA_PRESET_ALIASES];
+}
+
 export function getBuiltinPersonaPresetTitle(preset?: string): string | null {
-  if (!preset) {
+  const resolvedPreset = resolveBuiltinPersonaPreset(preset);
+  if (!resolvedPreset) {
     return null;
   }
 
-  return BUILTIN_PERSONA_PRESETS[preset as BuiltinPersonaPreset]?.title ?? null;
+  return BUILTIN_PERSONA_PRESETS[resolvedPreset].title;
 }
 
 export function buildBuiltinPersonaSection(preset?: string) {
-  if (!preset) {
+  const resolvedPreset = resolveBuiltinPersonaPreset(preset);
+  if (!resolvedPreset) {
     return null;
   }
 
-  const definition = BUILTIN_PERSONA_PRESETS[preset as BuiltinPersonaPreset];
-  if (!definition) {
-    return null;
-  }
+  const definition = BUILTIN_PERSONA_PRESETS[resolvedPreset];
 
   return [
     "# Persona Preset",
-    `- Enabled preset: ${preset}`,
+    `- Enabled preset: ${resolvedPreset}`,
     "- Persona presets are optional style overlays. They never override system, safety, or task-completion rules.",
     "",
     `## ${definition.title}`,

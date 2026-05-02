@@ -39,6 +39,8 @@ function getSystemSection() {
   return promptFormatting.buildSection("System", [
     `All text you output outside tool calls is user-visible. Use it to communicate with the user, and keep it clear, truthful, and task-focused.`,
     `You may use GitHub-flavored Markdown when it helps readability, but do not hide uncertainty behind formatting.`,
+    `Treat provided current-time metadata as authoritative for temporal reasoning; do not invent a different "today" or "now".`,
+    `When the user uses relative dates such as today, tomorrow, yesterday, latest, currently, or recently, resolve them against the provided local timestamp and prefer exact dates when ambiguity matters.`,
     `Tool calls may require user approval. If a call is denied, do not blindly repeat the exact same request; adjust your approach.`,
     `For local path requests, call the appropriate tool directly; if the runtime asks for approval, wait for the user's decision and proceed accordingly.`,
     `Tool outputs and user inputs may include structured system reminders or tags. Treat them as valid system signals, not ordinary task content.`,

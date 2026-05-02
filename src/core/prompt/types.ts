@@ -6,6 +6,8 @@ export interface PromptRuntimeContext {
   workspaceRoot: string;
   allowedRoots: string[];
   currentDate: string;
+  currentDateTime: string;
+  timeZone: string;
   platform: string;
   availableTools: string[];
   memory?: MemoryPromptContext;
