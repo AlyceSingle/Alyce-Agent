@@ -2,6 +2,12 @@ import { spawn } from "node:child_process";
 import { z } from "zod";
 import { TurnInterruptedError, getAbortReason, throwIfAborted } from "../../core/abort.js";
 import { resolvePathFromInput, toWorkspaceRelative } from "../internal/pathSandbox.js";
+import {
+  decodeCapturedOutput,
+  sanitizePowerShellErrorOutput,
+  toOutputBuffer,
+  wrapPowerShellCommand
+} from "../internal/commandOutput.js";
 import { shouldSpawnDetachedProcessGroup, terminateProcessTree } from "../internal/processTree.js";
 import { truncate } from "../internal/values.js";
 import type { ToolExecutionContext } from "../types.js";
@@ -118,7 +124,7 @@ function getShellCommand(command: string): ShellCommand {
   if (process.platform === "win32") {
     return {
       executable: "powershell.exe",
-      args: ["-NoProfile", "-Command", command]
+      args: ["-NoProfile", "-Command", wrapPowerShellCommand(command)]
     };
   }
 
@@ -160,8 +166,8 @@ function runShellCommand(
       windowsHide: true
     });
 
-    let stdout = "";
-    let stderr = "";
+    const stdoutChunks: Buffer[] = [];
+    const stderrChunks: Buffer[] = [];
     let timedOut = false;
     let settled = false;
     let timer: NodeJS.Timeout | null = null;
@@ -222,11 +228,11 @@ function runShellCommand(
     }, timeoutMs);
 
     child.stdout.on("data", (chunk: Buffer | string) => {
-      stdout += chunk.toString();
+      stdoutChunks.push(toOutputBuffer(chunk));
     });
 
     child.stderr.on("data", (chunk: Buffer | string) => {
-      stderr += chunk.toString();
+      stderrChunks.push(toOutputBuffer(chunk));
     });
 
     child.on("error", (error) => {
@@ -238,8 +244,8 @@ function runShellCommand(
         exitCode,
         signal,
         timedOut,
-        stdout,
-        stderr
+        stdout: decodeCapturedOutput(stdoutChunks),
+        stderr: sanitizePowerShellErrorOutput(decodeCapturedOutput(stderrChunks))
       });
     });
   });

@@ -446,7 +446,7 @@ export function AgentScreen(props: { controller: SessionController }) {
                       : "Resolve the active panel above"
                 } before typing.`
               : isLoading
-                ? "Input locked while Alyce is working. Press ESC to interrupt. Then press ESC twice from empty input to open history."
+                ? "Input locked while Alyce is working. Press ESC to interrupt."
                 : undefined
           }
           sublineText={`${connection.model} | ${workspaceRoot}`}

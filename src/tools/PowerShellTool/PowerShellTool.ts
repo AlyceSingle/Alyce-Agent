@@ -2,6 +2,12 @@ import { spawn } from "node:child_process";
 import { z } from "zod";
 import { TurnInterruptedError, getAbortReason, throwIfAborted } from "../../core/abort.js";
 import { resolvePathFromInput, toWorkspaceRelative } from "../internal/pathSandbox.js";
+import {
+  decodeCapturedOutput,
+  sanitizePowerShellErrorOutput,
+  toOutputBuffer,
+  wrapPowerShellCommand
+} from "../internal/commandOutput.js";
 import { shouldSpawnDetachedProcessGroup, terminateProcessTree } from "../internal/processTree.js";
 import { truncate } from "../internal/values.js";
 import type { ToolExecutionContext } from "../types.js";
@@ -142,16 +148,17 @@ function runPowerShellCommand(
 }> {
   return new Promise((resolve, reject) => {
     const executable = resolvePowerShellExecutable();
+    const wrappedCommand = wrapPowerShellCommand(command);
 
-    const child = spawn(executable, ["-NoProfile", "-Command", command], {
+    const child = spawn(executable, ["-NoProfile", "-Command", wrappedCommand], {
       cwd,
       env: process.env,
       detached: shouldSpawnDetachedProcessGroup(),
       windowsHide: true
     });
 
-    let stdout = "";
-    let stderr = "";
+    const stdoutChunks: Buffer[] = [];
+    const stderrChunks: Buffer[] = [];
     let timedOut = false;
     let settled = false;
     let timer: NodeJS.Timeout | null = null;
@@ -212,11 +219,11 @@ function runPowerShellCommand(
     }, timeoutMs);
 
     child.stdout.on("data", (chunk: Buffer | string) => {
-      stdout += chunk.toString();
+      stdoutChunks.push(toOutputBuffer(chunk));
     });
 
     child.stderr.on("data", (chunk: Buffer | string) => {
-      stderr += chunk.toString();
+      stderrChunks.push(toOutputBuffer(chunk));
     });
 
     child.on("error", (error) => {
@@ -228,8 +235,8 @@ function runPowerShellCommand(
         exitCode,
         signal,
         timedOut,
-        stdout,
-        stderr
+        stdout: decodeCapturedOutput(stdoutChunks),
+        stderr: sanitizePowerShellErrorOutput(decodeCapturedOutput(stderrChunks))
       });
     });
   });
