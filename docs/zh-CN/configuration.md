@@ -63,6 +63,32 @@ Alyce 的配置是分层的。多个来源可以设同一个值，有一个明�
 
 *绝大多数人不会碰可选变量。它们是为了那些对记忆行为有强烈个人偏好、或者跑在非常规环境里的人准备的。*
 
+### 可选 Web Search 设置
+
+- `ALYCE_WEB_SEARCH_PROVIDER` — `auto`、`brave`、`exa` 或 `duckduckgo`。`auto` 会在配置 key 时优先尝试 Brave Search，然后尝试 Exa MCP，最后回退到 DuckDuckGo HTML。
+- `WEB_SEARCH_PROVIDER` — `ALYCE_WEB_SEARCH_PROVIDER` 的兼容别名。
+- `ALYCE_BRAVE_SEARCH_API_KEY` — 可选 Brave Search API key。
+- `BRAVE_SEARCH_API_KEY` — `ALYCE_BRAVE_SEARCH_API_KEY` 的兼容别名。
+- `ALYCE_WEB_SEARCH_CACHE_TTL_MS` — Web search provider 结果的内存缓存 TTL，单位毫秒。设为 `0` 可关闭。
+- `WEB_SEARCH_CACHE_TTL_MS` — `ALYCE_WEB_SEARCH_CACHE_TTL_MS` 的兼容别名。
+- `ALYCE_WEB_SEARCH_USER_AGENT` — DuckDuckGo fallback 请求使用的可选浏览器兼容 User-Agent 覆盖值。
+- `ALYCE_WEB_SEARCH_HONEST_USER_AGENT` — Exa MCP 和 DuckDuckGo challenge fallback 使用的可选透明 User-Agent 覆盖值。
+- `ALYCE_WEB_SEARCH_ACCEPT_LANGUAGE` — Web search 请求使用的可选 `Accept-Language` header。
+
+DuckDuckGo HTML 保留为不需要 key 的 fallback，但它仍然可能被搜索引擎反爬或限流。能用默认 `auto` provider 时优先用 `auto`。
+
+### 可选 Web Fetch 设置
+
+- `ALYCE_WEB_FETCH_MAX_BYTES` — `WebFetch` 单次响应最多下载的字节数。默认 `5242880`。
+- `WEB_FETCH_MAX_BYTES` — `ALYCE_WEB_FETCH_MAX_BYTES` 的兼容别名。
+- `ALYCE_WEB_FETCH_CACHE_TTL_MS` — 成功 fetch 结果的内存缓存 TTL，单位毫秒。设为 `0` 可关闭。
+- `WEB_FETCH_CACHE_TTL_MS` — `ALYCE_WEB_FETCH_CACHE_TTL_MS` 的兼容别名。
+- `ALYCE_WEB_FETCH_CACHE_MAX_BYTES` — 成功 fetch 结果的内存缓存总字节预算。默认 `33554432`；设为 `0` 可关闭 fetch 缓存。
+- `WEB_FETCH_CACHE_MAX_BYTES` — `ALYCE_WEB_FETCH_CACHE_MAX_BYTES` 的兼容别名。
+- `ALYCE_WEB_FETCH_USER_AGENT` — `WebFetch` 使用的可选浏览器兼容 User-Agent 覆盖值。
+- `ALYCE_WEB_FETCH_HONEST_USER_AGENT` — Wikimedia 这类站点和 challenge fallback 使用的可选透明 User-Agent 覆盖值。对要求联系信息的网站，应包含 contact URL。
+- `ALYCE_WEB_FETCH_ACCEPT_LANGUAGE` — `WebFetch` 使用的可选 `Accept-Language` header。
+
 ## 连接字段
 
 在设置的**连接**标签页里出现：

@@ -69,6 +69,8 @@ copy .env.example .env
 - `OPENAI_BASE_URL`
 - `OPENAI_MODEL`
 
+Optional web tuning includes `ALYCE_WEB_FETCH_CACHE_MAX_BYTES` for the total in-memory WebFetch cache budget; see [Configuration](docs/configuration.md) for the full list.
+
 4. Start Alyce
 
 ```bash

@@ -63,6 +63,32 @@ Loaded in this priority order — **again, earlier wins**:
 
 *Most users never touch the optional ones. They're there for when you have a strong opinion about memory behavior or you're running in an unusual environment.*
 
+### Optional Web Search Settings
+
+- `ALYCE_WEB_SEARCH_PROVIDER` — `auto`, `brave`, `exa`, or `duckduckgo`. `auto` tries Brave Search first when a key is set, then Exa MCP, then DuckDuckGo HTML.
+- `WEB_SEARCH_PROVIDER` — legacy alias for `ALYCE_WEB_SEARCH_PROVIDER`.
+- `ALYCE_BRAVE_SEARCH_API_KEY` — optional Brave Search API key.
+- `BRAVE_SEARCH_API_KEY` — legacy alias for `ALYCE_BRAVE_SEARCH_API_KEY`.
+- `ALYCE_WEB_SEARCH_CACHE_TTL_MS` — in-memory web search provider-result cache TTL in milliseconds. Set `0` to disable.
+- `WEB_SEARCH_CACHE_TTL_MS` — legacy alias for `ALYCE_WEB_SEARCH_CACHE_TTL_MS`.
+- `ALYCE_WEB_SEARCH_USER_AGENT` — optional browser-compatible user agent override for DuckDuckGo fallback requests.
+- `ALYCE_WEB_SEARCH_HONEST_USER_AGENT` — optional transparent user agent override used for Exa MCP and DuckDuckGo challenge fallback.
+- `ALYCE_WEB_SEARCH_ACCEPT_LANGUAGE` — optional `Accept-Language` header for web search requests.
+
+DuckDuckGo HTML is kept as a no-key fallback, but it can still be blocked or rate-limited by search-engine anti-bot systems. Use the default `auto` provider when possible.
+
+### Optional Web Fetch Settings
+
+- `ALYCE_WEB_FETCH_MAX_BYTES` — maximum bytes `WebFetch` will download from a single response. Defaults to `5242880`.
+- `WEB_FETCH_MAX_BYTES` — legacy alias for `ALYCE_WEB_FETCH_MAX_BYTES`.
+- `ALYCE_WEB_FETCH_CACHE_TTL_MS` — in-memory successful fetch cache TTL in milliseconds. Set `0` to disable.
+- `WEB_FETCH_CACHE_TTL_MS` — legacy alias for `ALYCE_WEB_FETCH_CACHE_TTL_MS`.
+- `ALYCE_WEB_FETCH_CACHE_MAX_BYTES` — total in-memory successful fetch cache budget in bytes. Defaults to `33554432`; set `0` to disable fetch caching.
+- `WEB_FETCH_CACHE_MAX_BYTES` — legacy alias for `ALYCE_WEB_FETCH_CACHE_MAX_BYTES`.
+- `ALYCE_WEB_FETCH_USER_AGENT` — optional browser-compatible user agent override for `WebFetch`.
+- `ALYCE_WEB_FETCH_HONEST_USER_AGENT` — optional transparent user agent override used for Wikimedia-like sites and challenge fallback. Include a contact URL for sites that require one.
+- `ALYCE_WEB_FETCH_ACCEPT_LANGUAGE` — optional `Accept-Language` header for `WebFetch`.
+
 ## Connection Fields
 
 These appear in the **Connection** tab of settings:
