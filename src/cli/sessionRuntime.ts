@@ -149,7 +149,7 @@ export function getHelpText(currentModel: string) {
     "Shortcuts:",
     "  Ctrl+X  Open settings",
     "  Esc     Interrupt while running; when idle, open rewind from empty input",
-    "  Ctrl+C  Clear current input or quit when empty",
+    "  Ctrl+C  Copy selection, otherwise clear input, otherwise quit",
     "  Ctrl+Q  Quit"
   ].join("\n");
 }

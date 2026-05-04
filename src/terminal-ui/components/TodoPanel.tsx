@@ -17,7 +17,7 @@ export function TodoPanel(props: { todos: TodoItem[] }) {
       </Text>
       {visibleTodos.map((todo) => (
         <Text
-          key={`${todo.content}:${todo.status}`}
+          key={todo.content}
           color={getTodoColor(todo.status)}
           wrap="truncate-end"
         >

@@ -151,6 +151,7 @@ export function createSessionController(
   store: TerminalUiStore
 ): SessionController {
   let exitHandler: (() => void) | null = null;
+  let exitRequestedAfterTurn = false;
   let pendingApprovalResolver: ((decision: PermissionDecision) => void) | null = null;
   let pendingQuestionResolver: ((response: AskUserQuestionResponse | null) => void) | null = null;
   let sessionApprovalMode = runtime.getSettings().approvalMode;
@@ -168,8 +169,30 @@ export function createSessionController(
 
   const filterUiMessages = (messages: TerminalUiMessage[]) => messages.filter(shouldKeepUiMessage);
 
-  const requestExit = () => {
+  const finishExit = () => {
     void runtime.flushSessionHistory().finally(() => exitHandler?.());
+  };
+
+  const requestExit = () => {
+    if (activeTurn || store.getState().isLoading) {
+      exitRequestedAfterTurn = true;
+
+      if (activeTurn && !activeTurn.controller.signal.aborted) {
+        activeTurn.userCancelled = true;
+        activeTurn.controller.abort("user-exit");
+      }
+
+      // 运行中的 turn 必须先完成中断清理和历史落盘，再真正退出，不能直接收掉 UI。
+      store.updateState((state) =>
+        setStatusText(
+          state,
+          activeTurn ? "Interrupting and exiting..." : "Waiting for current turn to finish before exiting..."
+        )
+      );
+      return;
+    }
+
+    finishExit();
   };
 
   const setDraftInputValue = (value: string) => {
@@ -193,6 +216,10 @@ export function createSessionController(
 
   const setDialogClosed = () => {
     store.updateState((state) => closeDialog(state));
+  };
+
+  const rollbackRuntimeConversationToCheckpoint = (checkpoint: TurnCheckpoint) => {
+    runtime.messages.splice(checkpoint.runtimeMessageCount);
   };
 
   const getAffectedRewindPoints = (target: RewindPoint) =>
@@ -1192,10 +1219,20 @@ export function createSessionController(
             );
             store.updateState((state) => setStatusText(state, "Interrupted"));
           } else {
+            // 兜底处理中断但未进入“用户主动取消”路径的情况，避免半截 turn 残留在真实会话上下文里。
+            rollbackRuntimeConversationToCheckpoint(checkpoint);
             runtime.discardTurn(turnId);
             appendUiMessage(
               createSystemMessage(
-                "Request interrupted by user. This turn cannot be fully restored because non-rewindable tools already ran.",
+                [
+                  "Request was interrupted before the assistant finished.",
+                  "Partial model/tool activity was discarded from the conversation state.",
+                  checkpoint.hasNonRestorableToolActivity
+                    ? "Some non-rewindable tool side effects may remain on disk."
+                    : null
+                ]
+                  .filter((line): line is string => line !== null)
+                  .join("\n"),
                 "Session"
               )
             );
@@ -1203,7 +1240,7 @@ export function createSessionController(
           }
         } else {
           activeTurn = null;
-          runtime.messages.splice(checkpoint.runtimeMessageCount);
+          rollbackRuntimeConversationToCheckpoint(checkpoint);
           runtime.discardTurn(turnId);
           const message = getErrorMessage(error);
           appendUiMessage(createErrorMessage(message));
@@ -1213,6 +1250,11 @@ export function createSessionController(
         }
       } finally {
         store.updateState((state) => setLoading(state, false));
+
+        if (exitRequestedAfterTurn && activeTurn === null && !store.getState().isLoading) {
+          exitRequestedAfterTurn = false;
+          finishExit();
+        }
       }
     },
     setDraftInput: (value) => {

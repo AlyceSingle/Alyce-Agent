@@ -1,5 +1,9 @@
 import OpenAI from "openai";
 import { formatSystemDateTime } from "../time/systemTime.js";
+import {
+  ASSISTANT_TOOL_CALL_PLACEHOLDER,
+  extractAssistantTextContent
+} from "./assistantContent.js";
 import { applyRequestPatchOperations, type RequestPatchOperation } from "./requestPatch.js";
 
 type MessageParam = OpenAI.Chat.Completions.ChatCompletionMessageParam;
@@ -7,6 +11,9 @@ type MessageParam = OpenAI.Chat.Completions.ChatCompletionMessageParam;
 type ChatCreateParams = OpenAI.Chat.Completions.ChatCompletionCreateParamsNonStreaming;
 const RECONNECT_DELAY_MS = 10_000;
 const MAX_RECONNECT_RETRIES = 5;
+const ASSISTANT_EMPTY_RESPONSE_PLACEHOLDER = "(assistant response had no text output)";
+const EMPTY_MODEL_RESPONSE_ERROR_CODE = "EMPTY_MODEL_RESPONSE";
+const NO_TEXT_OUTPUT_ERROR_CODE = "NO_TEXT_OUTPUT";
 
 export type ChatCompletionReconnectEvent =
   | {
@@ -56,14 +63,29 @@ function normalizeMessagesForApi(
       };
     }
 
-    if (
-      message.role === "assistant" &&
-      message.tool_calls &&
-      isNullishOrEmptyString(message.content)
-    ) {
+    if (message.role === "assistant") {
+      const normalizedContent = extractAssistantTextContent(message.content);
+      if (hasAssistantToolRequest(message)) {
+        return {
+          ...message,
+          content: normalizedContent ?? (options.gcliGeminiCompat ? ASSISTANT_TOOL_CALL_PLACEHOLDER : "")
+        };
+      }
+
+      if (normalizedContent !== undefined) {
+        if (typeof message.content === "string" && message.content === normalizedContent) {
+          return message;
+        }
+
+        return {
+          ...message,
+          content: normalizedContent
+        };
+      }
+
       return {
         ...message,
-        content: options.gcliGeminiCompat ? "(assistant requested a tool call)" : ""
+        content: ASSISTANT_EMPTY_RESPONSE_PLACEHOLDER
       };
     }
 
@@ -127,6 +149,7 @@ export async function sendChatCompletion(
       const response = await client.chat.completions.create(patchedRequest, {
         signal: options.abortSignal
       });
+      ensureResponseHasUsableAssistantOutput(response);
 
       if (retriesUsed > 0) {
         options.onReconnect?.({
@@ -163,12 +186,38 @@ export async function sendChatCompletion(
   }
 }
 
-function isNullishOrEmptyString(value: unknown): boolean {
-  if (value == null) {
-    return true;
+function ensureResponseHasUsableAssistantOutput(response: OpenAI.Chat.Completions.ChatCompletion) {
+  const message = response.choices[0]?.message;
+  if (!message) {
+    throw createSyntheticRetryableError(
+      "Model returned an empty response",
+      EMPTY_MODEL_RESPONSE_ERROR_CODE
+    );
   }
 
-  return typeof value === "string" && value.trim().length === 0;
+  if (hasAssistantToolRequest(message)) {
+    return;
+  }
+
+  // 某些上游会返回 200，但 assistant 文本实际为空；这里把它提升为“可重试失败”。
+  if (extractAssistantTextContent((message as unknown as { content?: unknown }).content)) {
+    return;
+  }
+
+  throw createSyntheticRetryableError(
+    "Model returned no text output",
+    NO_TEXT_OUTPUT_ERROR_CODE
+  );
+}
+
+function hasAssistantToolRequest(message: {
+  tool_calls?: unknown;
+  function_call?: unknown;
+}): boolean {
+  return (
+    (Array.isArray(message.tool_calls) && message.tool_calls.length > 0) ||
+    message.function_call !== undefined
+  );
 }
 
 function isAbortLikeError(error: unknown, signal: AbortSignal | undefined): boolean {
@@ -245,6 +294,8 @@ function getErrorCode(error: Error): string | undefined {
 }
 
 const RETRIABLE_ERROR_CODES = new Set([
+  EMPTY_MODEL_RESPONSE_ERROR_CODE,
+  NO_TEXT_OUTPUT_ERROR_CODE,
   "ECONNABORTED",
   "ECONNREFUSED",
   "ECONNRESET",
@@ -298,4 +349,10 @@ function toAbortError(reason: unknown): Error {
   }
 
   return new Error("Request aborted");
+}
+
+function createSyntheticRetryableError(message: string, code: string): Error & { code: string } {
+  const error = new Error(message) as Error & { code: string };
+  error.code = code;
+  return error;
 }

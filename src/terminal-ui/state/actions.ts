@@ -34,7 +34,8 @@ export function createInitialTerminalUiState(options: {
     requestPatchCount: options.requestPatchCount,
     draftInput: "",
     isLoading: false,
-    statusText: options.connectionState.effective.apiKey ? "Idle" : "Setup required",
+    // 连接是否可用要和运行时校验保持一致，避免把纯空白 API key 误判成已配置。
+    statusText: options.connectionState.effective.apiKey.trim().length > 0 ? "Idle" : "Setup required",
     dialogQueue: [],
     activeOverlays: [],
     messages: [],
@@ -214,8 +215,8 @@ export function closeDialog(state: TerminalUiState): TerminalUiState {
 
   return {
     ...state,
-    dialogQueue: state.dialogQueue.slice(1),
-    activeOverlays: []
+    // overlay 的激活/释放由组件挂载生命周期自己维护；这里直接清空会让下一层遮罩短暂失联。
+    dialogQueue: state.dialogQueue.slice(1)
   };
 }
 
@@ -310,20 +311,6 @@ export function setSessionAllowedKinds(
   return {
     ...state,
     sessionAllowedKinds
-  };
-}
-
-export function allowSessionKind(
-  state: TerminalUiState,
-  kind: ToolPermissionKind
-): TerminalUiState {
-  if (state.sessionAllowedKinds.includes(kind)) {
-    return state;
-  }
-
-  return {
-    ...state,
-    sessionAllowedKinds: [...state.sessionAllowedKinds, kind]
   };
 }
 

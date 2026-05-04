@@ -16,16 +16,13 @@ import { useIsOverlayActive } from "../context/overlayContext.js";
 import { useKeybindings } from "../keybindings/useKeybindings.js";
 import { getBindingDisplayText } from "../keybindings/shortcutDisplay.js";
 import { useSelection } from "../runtime/ink-runtime/hooks/use-selection.js";
-import { setClipboard } from "../runtime/ink-runtime/termio/osc.js";
 import { useTerminalInput } from "../runtime/input.js";
 import { invalidateInkPrevFrame } from "../runtime/instances.js";
-import { getActiveDialog, selectRelativeMessage, setTranscriptSticky } from "../state/actions.js";
+import { selectRelativeMessage, setTranscriptSticky } from "../state/actions.js";
 import { useTerminalUiSelector, useTerminalUiStore } from "../state/store.js";
 import { terminalUiTheme } from "../theme/theme.js";
 import { useDoublePress } from "../hooks/useDoublePress.js";
-import { getCopyableMessageContent } from "../utils/messageBlocks.js";
 
-const EXIT_CONFIRMATION_STATUS = "Press Ctrl+C again to quit";
 const COPY_STATUS_DURATION_MS = 1800;
 const PAGE_UP_SHORTCUT = getBindingDisplayText("scroll:pageUp", "Scroll") ?? "PgUp";
 const PAGE_DOWN_SHORTCUT = getBindingDisplayText("scroll:pageDown", "Scroll") ?? "PgDn";
@@ -84,7 +81,6 @@ export function AgentScreen(props: { controller: SessionController }) {
   const isLoading = useTerminalUiSelector((value) => value.isLoading);
   const draftInput = useTerminalUiSelector((value) => value.draftInput);
   const todos = useTerminalUiSelector((value) => value.todos);
-  const selectedMessageId = useTerminalUiSelector((value) => value.selectedMessageId);
   const transcriptSticky = useTerminalUiSelector((value) => value.transcriptSticky);
   const unseenDividerMessageId = useTerminalUiSelector((value) => value.unseenDividerMessageId);
   const unseenMessageCount = useTerminalUiSelector((value) => value.unseenMessageCount);
@@ -93,13 +89,13 @@ export function AgentScreen(props: { controller: SessionController }) {
   const transcriptRef = useRef<MessageListHandle | null>(null);
   const copyStatusTimerRef = useRef<NodeJS.Timeout | null>(null);
   const [copyStatusText, setCopyStatusText] = useState<string | null>(null);
-  const [exitConfirmationPending, setExitConfirmationPending] = useState(false);
   const [historyEscPending, setHistoryEscPending] = useState(false);
   const terminalWidth = stdout.columns || 120;
   const terminalHeight = stdout.rows || 36;
   const activeDialog = dialogQueue[0] ?? null;
   const hasDialog = activeDialog !== null;
   const hasActiveOverlay = useIsOverlayActive();
+  const hasConnectionConfig = connection.apiKey.trim().length > 0;
   const layoutSurfaceKey =
     activeDialog === null
       ? "conversation"
@@ -124,10 +120,6 @@ export function AgentScreen(props: { controller: SessionController }) {
     clearOnCtrlCRef.current = capture;
   }, []);
 
-  const resetExitConfirmation = useCallback(() => {
-    setExitConfirmationPending(false);
-  }, []);
-
   const showCopyStatus = useCallback((status: string) => {
     if (copyStatusTimerRef.current) {
       clearTimeout(copyStatusTimerRef.current);
@@ -150,25 +142,6 @@ export function AgentScreen(props: { controller: SessionController }) {
     };
   }, []);
 
-  const copyTextToClipboard = useCallback(async (text: string, successStatus: string) => {
-    if (!text) {
-      return false;
-    }
-
-    try {
-      const sequence = await setClipboard(text);
-      if (sequence) {
-        stdout.write(sequence);
-      }
-
-      showCopyStatus(successStatus);
-      return true;
-    } catch {
-      showCopyStatus("Copy failed.");
-      return false;
-    }
-  }, [showCopyStatus, stdout]);
-
   const syncTranscriptSticky = useCallback((sticky: boolean) => {
     store.updateState((state) => setTranscriptSticky(state, sticky));
   }, [store]);
@@ -190,10 +163,15 @@ export function AgentScreen(props: { controller: SessionController }) {
 
   const keybindingHandlers = useMemo(() => ({
     "app:quit": () => {
+      if (isLoading) {
+        props.controller.interrupt();
+        return;
+      }
+
       props.controller.requestExit();
     },
     "app:openSettings": () => {
-      props.controller.openSettings(connection.apiKey ? "session" : "connection");
+      props.controller.openSettings(hasConnectionConfig ? "session" : "connection");
     },
     "app:escape": () => {
       if (isLoading) {
@@ -238,8 +216,8 @@ export function AgentScreen(props: { controller: SessionController }) {
       transcriptRef.current?.scrollToBottom();
     }
   }), [
-    connection.apiKey,
     draftInput,
+    hasConnectionConfig,
     isLoading,
     props.controller,
     resetHistoryEscape,
@@ -256,76 +234,34 @@ export function AgentScreen(props: { controller: SessionController }) {
     const normalizedInput = input.toLowerCase();
     const isCtrlC = key.ctrl && normalizedInput === "c";
 
-    if (!isCtrlC && exitConfirmationPending) {
-      resetExitConfirmation();
-    }
-
     if (key.escape && activeDialog?.type === "permission") {
       props.controller.respondToApproval("reject-once");
       return;
     }
 
-    if (isCtrlC) {
-      const copiedSelectionText = selection.copySelection();
-      if (copiedSelectionText) {
-        resetExitConfirmation();
-        showCopyStatus(`Copied ${copiedSelectionText.length} chars from selection.`);
-        return;
-      }
-
-      if (!transcriptSticky) {
-        const targetMessageId =
-          selectedMessageId ??
-          transcriptRef.current?.getVisibleMessageId() ??
-          messages.at(-1)?.id ??
-          null;
-        const targetMessage =
-          targetMessageId
-            ? messages.find((message) => message.id === targetMessageId)
-            : undefined;
-
-        if (targetMessage) {
-          resetExitConfirmation();
-          void copyTextToClipboard(
-            getCopyableMessageContent(targetMessage),
-            "Copied selected message."
-          );
-          return;
-        }
-      }
-    }
-
-    if (isCtrlC && !clearOnCtrlCRef.current) {
-      if (exitConfirmationPending) {
-        resetExitConfirmation();
-        props.controller.requestExit();
-        return;
-      }
-
-      setExitConfirmationPending(true);
-    }
-  }, { isActive: !hasDialog });
-
-  useEffect(() => {
-    if (!exitConfirmationPending) {
+    if (!isCtrlC) {
       return;
     }
 
-    if (clearOnCtrlCRef.current || hasDialog || hasActiveOverlay) {
-      resetExitConfirmation();
+    const copiedSelectionText = selection.copySelection();
+    if (copiedSelectionText) {
+      showCopyStatus(`Copied ${copiedSelectionText.length} chars from selection.`);
+      return;
     }
-  }, [
-    exitConfirmationPending,
-    hasActiveOverlay,
-    hasDialog,
-    resetExitConfirmation
-  ]);
 
-  useEffect(() => {
-    if (exitConfirmationPending && draftInput.length > 0) {
-      resetExitConfirmation();
+    if (clearOnCtrlCRef.current || draftInput.length > 0) {
+      props.controller.setDraftInput("");
+      return;
     }
-  }, [draftInput.length, exitConfirmationPending, resetExitConfirmation]);
+
+    // 运行中按“退出类”快捷键时，优先做安全中断，避免当前轮次还没清理完就离开 UI。
+    if (isLoading) {
+      props.controller.interrupt();
+      return;
+    }
+
+    props.controller.requestExit();
+  }, { isActive: !hasDialog });
 
   useEffect(() => {
     if (!transcriptSticky || hasDialog) {
@@ -335,11 +271,22 @@ export function AgentScreen(props: { controller: SessionController }) {
     transcriptRef.current?.scrollToBottom();
   }, [hasDialog, messages.length, terminalHeight, terminalWidth, transcriptSticky]);
 
-  const displayedStatusText = exitConfirmationPending
-    ? EXIT_CONFIRMATION_STATUS
-    : copyStatusText ?? (historyEscPending ? "Press ESC again to open input history." : statusText);
+  const displayedStatusText =
+    copyStatusText ?? (historyEscPending ? "Press ESC again to open input history." : statusText);
   const completedTodoCount = todos.filter((todo) => todo.status === "completed").length;
   const todoSummary = todos.length > 0 ? `${completedTodoCount}/${todos.length}` : undefined;
+  const promptDisabledReason =
+    hasDialog
+      ? `${
+          activeDialog?.type === "permission"
+            ? "Resolve the permission request above"
+            : activeDialog?.type === "question"
+              ? "Resolve the question dialog above"
+              : "Resolve the active panel above"
+        } before typing.`
+      : isLoading
+        ? "Input locked while Alyce is working. Press ESC to interrupt."
+        : undefined;
 
   const overlay =
     activeDialog?.type === "permission" ? (
@@ -436,24 +383,11 @@ export function AgentScreen(props: { controller: SessionController }) {
           value={draftInput}
           viewportWidth={terminalWidth}
           disabled={isLoading || hasDialog}
-          disabledReason={
-            hasDialog
-              ? `${
-                  getActiveDialog(store.getState())?.type === "permission"
-                    ? "Resolve the permission request above"
-                    : getActiveDialog(store.getState())?.type === "question"
-                      ? "Resolve the question dialog above"
-                      : "Resolve the active panel above"
-                } before typing.`
-              : isLoading
-                ? "Input locked while Alyce is working. Press ESC to interrupt."
-                : undefined
-          }
+          disabledReason={promptDisabledReason}
           sublineText={`${connection.model} | ${workspaceRoot}`}
           onChange={(value) => props.controller.setDraftInput(value)}
           onCtrlCCaptureChange={setCtrlCCapture}
           onSubmit={async (value) => {
-            resetExitConfirmation();
             await props.controller.submit(value);
           }}
         />

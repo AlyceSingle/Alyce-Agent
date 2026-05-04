@@ -130,7 +130,7 @@ export function RewindPickerDialog(props: {
       }
 
       setConfirmingPointId(selectedPoint.id);
-      setConfirmIndex(selectedPoint.canRestoreCode ? 0 : 0);
+      setConfirmIndex(0);
     }
   }, { isActive: props.points.length > 0 });
 

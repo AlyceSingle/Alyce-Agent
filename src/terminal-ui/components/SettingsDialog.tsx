@@ -191,7 +191,8 @@ export function SettingsDialog(props: {
 
   useRegisterOverlay("settings", props.visible);
 
-  const sectionFields = FIELD_DEFINITIONS.filter((field) => field.section === section);
+  // 连接/会话字段是静态集合，直接复用常量可避免每次渲染重复筛选。
+  const sectionFields = section === "connection" ? CONNECTION_FIELDS : SESSION_FIELDS;
   const currentField = sectionFields[selectedIndex] ?? sectionFields[0];
   const sourceInfo =
     currentField?.section === "connection"

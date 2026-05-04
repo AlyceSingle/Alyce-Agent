@@ -1,6 +1,7 @@
 import OpenAI from "openai";
 import { executeToolCall, TOOL_SCHEMAS, type ToolExecutionContext } from "../../tools.js";
 import { isTurnInterruptedError, throwIfAborted, toTurnInterruptedError } from "../abort.js";
+import { extractAssistantTextContent } from "../api/assistantContent.js";
 import {
   sendChatCompletion,
   type ChatCompletionReconnectEvent
@@ -72,13 +73,18 @@ export async function runAgentTurn(
       options.onThinking?.(chunk);
     }
 
-    // 无论下一步是直接结束还是继续调工具，都先把 assistant 原始输出写回上下文。
-    // 这样工具结果会挂在正确的 assistant 消息之后，消息链不会断层。
-    messages.push(buildAssistantHistoryMessage(next));
-
     if (toolCalls.length === 0) {
-      return (next.content ?? "").trim() || "(No text output from model)";
+      const reply = extractAssistantReplyText(next);
+      if (!reply) {
+        throw new Error("Model returned no text output");
+      }
+
+      messages.push(buildAssistantHistoryMessage(next));
+      return reply;
     }
+
+    // 工具调用回复要先写回上下文，这样后续 tool message 才会挂在正确的 assistant turn 之后。
+    messages.push(buildAssistantHistoryMessage(next));
 
     for (const toolCall of toolCalls) {
       throwIfAborted(options.abortSignal);
@@ -119,9 +125,11 @@ function buildAssistantHistoryMessage(
   message: OpenAI.Chat.Completions.ChatCompletionMessage
 ): MessageParam {
   const source = message as unknown as UnknownRecord;
+  // 历史里只保留干净的 assistant 文本，避免把占位符或结构化噪声继续喂回下一轮请求。
+  const normalizedContent = extractAssistantTextContent(source.content);
   const historyMessage: UnknownRecord = {
     role: "assistant",
-    content: source.content
+    content: normalizedContent ?? ""
   };
 
   if (message.tool_calls !== undefined) {
@@ -139,6 +147,12 @@ function buildAssistantHistoryMessage(
   }
 
   return historyMessage as unknown as MessageParam;
+}
+
+function extractAssistantReplyText(
+  message: OpenAI.Chat.Completions.ChatCompletionMessage
+): string | undefined {
+  return extractAssistantTextContent((message as unknown as { content?: unknown }).content)?.trim();
 }
 
 function extractThinkingChunks(

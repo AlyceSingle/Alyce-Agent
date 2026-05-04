@@ -136,7 +136,7 @@ export function createErrorMessage(content: string) {
 }
 
 export function shouldSkipThinkingContent(content: string) {
-  return content.trim() === ASSISTANT_TOOL_CALL_PLACEHOLDER;
+  return stripAssistantToolCallPlaceholderLines(content).length === 0;
 }
 
 export function shouldKeepUiMessage(message: TerminalUiMessage) {
@@ -570,6 +570,16 @@ function truncateInline(value: string, maxChars: number) {
   return value.length <= safeMaxChars
     ? value
     : `${value.slice(0, Math.max(0, safeMaxChars - 3)).trimEnd()}...`;
+}
+
+// 某些模型会把内部 tool-call 占位符单独混进 reasoning 文本里，UI 侧再兜底过滤一次。
+function stripAssistantToolCallPlaceholderLines(value: string) {
+  return value
+    .replace(/\r\n/g, "\n")
+    .split("\n")
+    .filter((line) => line.trim() !== ASSISTANT_TOOL_CALL_PLACEHOLDER)
+    .join("\n")
+    .trim();
 }
 
 function normalizeInlineValue(value: string) {
