@@ -9,6 +9,7 @@ Usage:
 - old_string: target text to replace
 - new_string: replacement text
 - replace_all: optional, replace all matches when true
-- Prefer ${FILE_READ_TOOL_NAME} before Edit to get exact context
+- You MUST use ${FILE_READ_TOOL_NAME} to fully read an existing text file before Edit. Partial reads, directory reads, notebook summaries, and binary metadata reads do not satisfy this requirement
+- Edit will also fail if the file changed since that full read
 - If old_string appears multiple times and replace_all is false, the tool will return an error`;
 }

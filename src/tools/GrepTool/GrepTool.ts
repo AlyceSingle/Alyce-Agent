@@ -3,7 +3,7 @@ import path from "node:path";
 import { z } from "zod";
 import { throwIfAborted } from "../../core/abort.js";
 import { truncate } from "../internal/values.js";
-import { resolvePathFromInput } from "../internal/pathSandbox.js";
+import { resolveReadablePathWithExternalApproval } from "../internal/externalDirectoryAccess.js";
 import {
   runRipgrep,
   sortWorkspaceRelativePathsByModifiedTime,
@@ -81,8 +81,7 @@ export async function executeGrepTool(
   throwIfAborted(context.abortSignal);
 
   const searchTarget = await resolveSearchTarget(
-    context.workspaceRoot,
-    context.allowedRoots,
+    context,
     input.path
   );
   const outputMode = input.output_mode ?? "files_with_matches";
@@ -196,7 +195,7 @@ export async function executeGrepTool(
   const sortedMatches = await sortWorkspaceRelativePathsByModifiedTime(
     context.workspaceRoot,
     normalizedMatches,
-    context.allowedRoots
+    searchTarget.allowedRoots
   );
   const pagedMatches = applyHeadLimit(sortedMatches, headLimit, offset);
 
@@ -251,25 +250,31 @@ function applyHeadLimit<T>(items: T[], limit: number | undefined, offset: number
 }
 
 async function resolveSearchTarget(
-  workspaceRoot: string,
-  allowedRoots: readonly string[],
+  context: ToolExecutionContext,
   requestedPath: string | undefined
 ) {
   if (!requestedPath || requestedPath.trim().length === 0) {
     return {
-      absolutePath: workspaceRoot,
+      absolutePath: context.workspaceRoot,
+      allowedRoots: context.allowedRoots,
       ripgrepPath: "."
     };
   }
 
   const normalizedPath = requestedPath.trim();
-  const absolutePath = resolvePathFromInput(workspaceRoot, allowedRoots, normalizedPath);
+  const resolved = await resolveReadablePathWithExternalApproval(context, normalizedPath, {
+    toolName: GREP_TOOL_NAME,
+    title: "Grep external path",
+    kind: "file-or-directory"
+  });
+  const absolutePath = resolved.absolutePath;
   await fs.stat(absolutePath);
 
-  const relativePath = path.relative(workspaceRoot, absolutePath);
+  const relativePath = path.relative(context.workspaceRoot, absolutePath);
   const isInsideWorkspace = !relativePath.startsWith("..") && !path.isAbsolute(relativePath);
   return {
     absolutePath,
+    allowedRoots: resolved.allowedRoots,
     ripgrepPath: isInsideWorkspace ? (relativePath.length > 0 ? relativePath : ".") : absolutePath
   };
 }

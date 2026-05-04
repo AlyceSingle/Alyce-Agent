@@ -445,7 +445,11 @@ export function createSessionController(
       return true;
     }
 
-    if (sessionAllowedKinds.has(request.kind)) {
+    if (request.scope?.type === "external-directory" && isDirectoryAlreadyAllowed(request.scope.directory)) {
+      return true;
+    }
+
+    if (!request.scope && sessionAllowedKinds.has(request.kind)) {
       return true;
     }
 
@@ -463,21 +467,29 @@ export function createSessionController(
         options.signal?.removeEventListener("abort", handleAbort);
       };
 
-      // 审批结果既影响当前请求，也可能提升为“本会话允许该类操作”或“全会话自动批准”。
-      const settle = (decision: PermissionDecision) => {
+      const settleDecision = async (decision: PermissionDecision) => {
         pendingApprovalResolver = null;
         cleanup();
         setDialogClosed();
 
         let approved = false;
-        if (decision === "allow-once") {
-          approved = true;
-        } else if (decision === "allow-kind-session") {
-          approved = true;
-          sessionAllowedKinds.add(request.kind);
-        } else if (decision === "auto-approve-session") {
-          approved = true;
-          sessionApprovalMode = "auto";
+        let permissionError: string | null = null;
+        try {
+          if (decision === "allow-once") {
+            approved = true;
+          } else if (decision === "allow-kind-session") {
+            approved = true;
+            sessionAllowedKinds.add(request.kind);
+          } else if (decision === "allow-scope-session") {
+            approved = true;
+            await allowRequestScopeForSession(request);
+          } else if (decision === "auto-approve-session") {
+            approved = true;
+            sessionApprovalMode = "auto";
+          }
+        } catch (error) {
+          approved = false;
+          permissionError = getErrorMessage(error);
         }
 
         syncApprovalState();
@@ -486,18 +498,20 @@ export function createSessionController(
             [
               `${approved ? "Approved" : "Denied"} permission request.`,
               `${request.title}: ${request.summary}`,
-              `Mode: ${
-                decision === "allow-kind-session"
-                  ? `allow ${request.kind} for session`
-                  : decision === "auto-approve-session"
-                    ? "auto approve session"
-                    : decision
-              }`
-            ].join("\n"),
+              `Mode: ${formatPermissionDecision(decision, request)}`,
+              permissionError ? `Error: ${permissionError}` : null
+            ]
+              .filter((line): line is string => line !== null)
+              .join("\n"),
             "Permissions"
           )
         );
         resolve(approved);
+      };
+
+      // 审批结果既影响当前请求，也可能提升为“本会话允许该类操作”或“全会话自动批准”。
+      const settle = (decision: PermissionDecision) => {
+        void settleDecision(decision);
       };
 
       const handleAbort = () => {
@@ -520,6 +534,45 @@ export function createSessionController(
       pendingApprovalResolver = settle;
       options.signal?.addEventListener("abort", handleAbort, { once: true });
     });
+  };
+
+  const allowRequestScopeForSession = async (request: ToolApprovalRequest) => {
+    if (request.scope?.type !== "external-directory") {
+      sessionAllowedKinds.add(request.kind);
+      return;
+    }
+
+    const absolutePath = await resolveAdditionalDirectory(request.scope.directory);
+    if (isDirectoryAlreadyAllowed(absolutePath)) {
+      return;
+    }
+
+    await runtime.setSessionAdditionalDirectories(
+      dedupeDirectories([...runtime.getSessionAdditionalDirectories(), absolutePath])
+    );
+  };
+
+  const formatPermissionDecision = (
+    decision: PermissionDecision,
+    request: ToolApprovalRequest
+  ) => {
+    if (decision === "allow-kind-session") {
+      return `allow ${request.kind} for session`;
+    }
+
+    if (decision === "allow-scope-session") {
+      if (request.scope?.type === "external-directory") {
+        return `allow external directory for session (${request.scope.directory})`;
+      }
+
+      return `allow ${request.kind} scope for session`;
+    }
+
+    if (decision === "auto-approve-session") {
+      return "auto approve session";
+    }
+
+    return decision;
   };
 
   const formatSessionList = (sessions: Awaited<ReturnType<SessionRuntime["listSessionHistory"]>>) => {
@@ -715,7 +768,7 @@ export function createSessionController(
   const buildAccessScopeSnapshot = () => {
     return [
       "Workspace: " + runtime.workspaceRoot,
-      "Path scope: local filesystem paths are available to tools.",
+      "Path scope: workspace paths are available by default; read/search tools can request external directory access on demand.",
       "Execution may still require user approval depending on the tool."
     ];
   };

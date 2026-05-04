@@ -100,7 +100,7 @@ These appear in the **Session** tab of settings.
 
 ### Paths
 
-- `additionalDirectories` — extra directories the agent is allowed to access beyond the workspace root.
+- `additionalDirectories` — extra directories the agent is allowed to access beyond the workspace root. Read/search tools can also request external directory access on demand for the current session without saving it here.
 
 ## Two Settings Worth Understanding
 

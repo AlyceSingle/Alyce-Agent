@@ -1,4 +1,11 @@
-export type ToolPermissionKind = "command" | "file-write" | "web";
+export type ToolPermissionKind = "command" | "file-write" | "web" | "external-directory";
+
+export interface ExternalDirectoryApprovalScope {
+  type: "external-directory";
+  directory: string;
+}
+
+export type ToolApprovalScope = ExternalDirectoryApprovalScope;
 
 export interface ToolApprovalRequest {
   kind: ToolPermissionKind;
@@ -6,6 +13,7 @@ export interface ToolApprovalRequest {
   title: string;
   summary: string;
   details: string[];
+  scope?: ToolApprovalScope;
 }
 
 export interface AskUserQuestionOption {
@@ -48,6 +56,30 @@ export interface TodoItem {
   status: TodoStatus;
 }
 
+export type FileReadStateKind =
+  | "text"
+  | "directory"
+  | "notebook"
+  | "image"
+  | "pdf"
+  | "binary";
+
+export type FileReadStateSource = "read" | "write";
+
+export interface FileReadState {
+  kind: FileReadStateKind;
+  source?: FileReadStateSource;
+  displayPath: string;
+  readAt: string;
+  mtimeMs?: number;
+  sizeBytes?: number;
+  offset?: number;
+  limit?: number;
+  totalCount?: number;
+  returnedCount?: number;
+  isPartial: boolean;
+}
+
 export interface ToolExecutionContext {
   workspaceRoot: string;
   allowedRoots: string[];
@@ -64,6 +96,8 @@ export interface ToolExecutionContext {
   turnId: string;
   abortSignal: AbortSignal;
   captureFileBeforeWrite: (absolutePath: string) => Promise<void>;
+  recordFileRead: (absolutePath: string, state: FileReadState) => void;
+  getFileReadState: (absolutePath: string) => FileReadState | undefined;
 }
 
 export type JsonRecord = Record<string, unknown>;

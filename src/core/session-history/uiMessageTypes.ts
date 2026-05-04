@@ -24,7 +24,7 @@ export interface UiMessageBlock {
 }
 
 export type UiToolMessagePhase = "start" | "result";
-export type UiToolResultKind = "generic" | "shell" | "write" | "edit";
+export type UiToolResultKind = "generic" | "shell" | "write" | "edit" | "read";
 
 export interface UiToolShellResult {
   command: string;
@@ -50,6 +50,65 @@ export interface UiToolEditResult {
   matchCount: number;
 }
 
+export type UiToolReadResult =
+  | UiToolReadTextResult
+  | UiToolReadDirectoryResult
+  | UiToolReadNotebookResult
+  | UiToolReadAssetResult
+  | UiToolReadUnchangedResult;
+
+export interface UiToolReadTextResult {
+  type: "text";
+  filePath: string;
+  startLine: number;
+  numLines: number;
+  totalLines: number;
+  truncated: boolean;
+  nextOffset?: number;
+}
+
+export interface UiToolReadDirectoryResult {
+  type: "directory";
+  directoryPath: string;
+  startEntry: number;
+  numEntries: number;
+  totalEntries: number;
+  truncated: boolean;
+  nextOffset?: number;
+}
+
+export interface UiToolReadNotebookResult {
+  type: "notebook";
+  filePath: string;
+  summary: string;
+  startCell: number;
+  numCells: number;
+  totalCells: number;
+  truncated: boolean;
+  nextOffset?: number;
+}
+
+export interface UiToolReadAssetResult {
+  type: "image" | "pdf" | "binary";
+  filePath: string;
+  mediaType: string;
+  sizeBytes: number;
+  visualReadSupported: boolean;
+  dimensions?: {
+    width: number;
+    height: number;
+  };
+}
+
+export interface UiToolReadUnchangedResult {
+  type: "file_unchanged";
+  filePath: string;
+  message: string;
+  previousKind: "text" | "notebook";
+  offset: number;
+  limit?: number;
+}
+
 export interface UiToolData {
   phase: UiToolMessagePhase;
   toolName: string;
@@ -59,4 +118,5 @@ export interface UiToolData {
   shell?: UiToolShellResult;
   write?: UiToolWriteResult;
   edit?: UiToolEditResult;
+  read?: UiToolReadResult;
 }

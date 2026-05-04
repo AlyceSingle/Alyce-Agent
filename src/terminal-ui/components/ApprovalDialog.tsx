@@ -33,11 +33,39 @@ const APPROVAL_OPTIONS: Array<{
   }
 ];
 
+const SCOPED_APPROVAL_OPTIONS: Array<{
+  id: PermissionDecision;
+  label: string;
+  description: string;
+}> = [
+  {
+    id: "allow-once",
+    label: "Allow once",
+    description: "Approve only this request."
+  },
+  {
+    id: "reject-once",
+    label: "Reject once",
+    description: "Deny only this request."
+  },
+  {
+    id: "allow-scope-session",
+    label: "Allow directory for session",
+    description: "Skip prompts for this external directory until restart."
+  },
+  {
+    id: "auto-approve-session",
+    label: "Auto approve this session",
+    description: "Disable further approval prompts for this run."
+  }
+];
+
 export function ApprovalDialog(props: {
   request: ToolApprovalRequest | null;
   onDecision: (decision: PermissionDecision) => void;
 }) {
   const [selectedIndex, setSelectedIndex] = useState(0);
+  const approvalOptions = props.request?.scope ? SCOPED_APPROVAL_OPTIONS : APPROVAL_OPTIONS;
 
   useRegisterOverlay("permission", Boolean(props.request));
 
@@ -56,12 +84,12 @@ export function ApprovalDialog(props: {
     }
 
     if (key.downArrow) {
-      setSelectedIndex((current) => Math.min(APPROVAL_OPTIONS.length - 1, current + 1));
+      setSelectedIndex((current) => Math.min(approvalOptions.length - 1, current + 1));
       return;
     }
 
     if (key.return) {
-      props.onDecision(APPROVAL_OPTIONS[selectedIndex]!.id);
+      props.onDecision(approvalOptions[selectedIndex]!.id);
       return;
     }
 
@@ -71,7 +99,7 @@ export function ApprovalDialog(props: {
     }
 
     if (input === "1" || input === "2" || input === "3" || input === "4") {
-      const option = APPROVAL_OPTIONS[Number(input) - 1];
+      const option = approvalOptions[Number(input) - 1];
       if (option) {
         props.onDecision(option.id);
       }
@@ -98,7 +126,7 @@ export function ApprovalDialog(props: {
         </Text>
       ))}
       <Box flexDirection="column" marginTop={1} width="100%">
-        {APPROVAL_OPTIONS.map((option, index) => {
+        {approvalOptions.map((option, index) => {
           const isSelected = index === selectedIndex;
           return (
             <Box key={option.id} width="100%">

@@ -1,6 +1,7 @@
 // 兼容层导出：集中暴露工具上下文类型、工具注册表与调度入口。
 export type {
   JsonRecord,
+  ToolApprovalScope,
   ToolApprovalRequest,
   ToolExecutionContext,
   ToolPermissionKind

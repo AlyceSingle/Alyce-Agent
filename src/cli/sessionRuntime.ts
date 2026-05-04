@@ -36,6 +36,7 @@ import { getRegisteredToolNames } from "../tools/registry.js";
 import type {
   AskUserQuestionRequest,
   AskUserQuestionResponse,
+  FileReadState,
   TodoItem,
   ToolApprovalRequest,
   ToolExecutionContext
@@ -217,6 +218,7 @@ export async function createSessionRuntime(
   });
   memoryService.setAutoSummaryEnabled(settings.autoSummaryEnabled);
   await memoryService.initialize();
+  const fileReadState = new Map<string, FileReadState>();
 
   const getAllowedRootsSnapshot = () =>
     resolveAllowedRoots(config.paths.workspaceRoot, settings, sessionAdditionalDirectories);
@@ -266,6 +268,7 @@ export async function createSessionRuntime(
     conversationCompactor.clear();
     promptResolver.clearSessionCache();
     fileHistoryManager.clearAll();
+    fileReadState.clear();
     sessionAdditionalDirectories = [];
   };
 
@@ -480,11 +483,13 @@ export async function createSessionRuntime(
     }) => ({
       // 工具在执行前会先登记 turnId，并在写文件前抓取快照，便于中断后回滚。
       workspaceRoot: config.paths.workspaceRoot,
-      allowedRoots: resolveAllowedRoots(
-        config.paths.workspaceRoot,
-        settings,
-        sessionAdditionalDirectories
-      ),
+      get allowedRoots() {
+        return resolveAllowedRoots(
+          config.paths.workspaceRoot,
+          settings,
+          sessionAdditionalDirectories
+        );
+      },
       commandTimeoutMs: settings.commandTimeoutMs,
       turnId,
       abortSignal,
@@ -492,7 +497,14 @@ export async function createSessionRuntime(
       askUserQuestions,
       getTodos,
       setTodos,
-      captureFileBeforeWrite: (absolutePath) => fileHistoryManager.captureBeforeWrite(turnId, absolutePath)
+      captureFileBeforeWrite: (absolutePath) => fileHistoryManager.captureBeforeWrite(turnId, absolutePath),
+      recordFileRead: (absolutePath, state) => {
+        fileReadState.set(path.resolve(absolutePath), { ...state });
+      },
+      getFileReadState: (absolutePath) => {
+        const state = fileReadState.get(path.resolve(absolutePath));
+        return state ? { ...state } : undefined;
+      }
     })
   };
 }

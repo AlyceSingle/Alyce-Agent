@@ -2,7 +2,7 @@ import { promises as fs } from "node:fs";
 import path from "node:path";
 import { z } from "zod";
 import { throwIfAborted } from "../../core/abort.js";
-import { resolvePathFromInput } from "../internal/pathSandbox.js";
+import { resolveReadablePathWithExternalApproval } from "../internal/externalDirectoryAccess.js";
 import {
   runRipgrep,
   sortWorkspaceRelativePathsByModifiedTime,
@@ -42,8 +42,7 @@ export async function executeGlobTool(
   throwIfAborted(context.abortSignal);
 
   const searchRoot = await resolveDirectoryTarget(
-    context.workspaceRoot,
-    context.allowedRoots,
+    context,
     input.path
   );
   const args = ["--files", "--hidden", "--glob", input.pattern];
@@ -73,7 +72,8 @@ export async function executeGlobTool(
   const sortedMatches = await sortWorkspaceRelativePathsByModifiedTime(
     context.workspaceRoot,
     matches,
-    context.allowedRoots
+    searchRoot.allowedRoots,
+    searchRoot.absolutePath
   );
   const truncated = sortedMatches.length > DEFAULT_GLOB_LIMIT;
   const filenames = sortedMatches.slice(0, DEFAULT_GLOB_LIMIT);
@@ -87,19 +87,24 @@ export async function executeGlobTool(
 }
 
 async function resolveDirectoryTarget(
-  workspaceRoot: string,
-  allowedRoots: readonly string[],
+  context: ToolExecutionContext,
   requestedPath: string | undefined
 ) {
   if (!requestedPath || requestedPath.trim().length === 0) {
     return {
-      absolutePath: workspaceRoot,
+      absolutePath: context.workspaceRoot,
+      allowedRoots: context.allowedRoots,
       ripgrepPath: "."
     };
   }
 
   const normalizedPath = requestedPath.trim();
-  const absolutePath = resolvePathFromInput(workspaceRoot, allowedRoots, normalizedPath);
+  const resolved = await resolveReadablePathWithExternalApproval(context, normalizedPath, {
+    toolName: GLOB_TOOL_NAME,
+    title: "Glob external directory",
+    kind: "directory"
+  });
+  const absolutePath = resolved.absolutePath;
   const stats = await fs.stat(absolutePath);
 
   if (!stats.isDirectory()) {
@@ -108,6 +113,7 @@ async function resolveDirectoryTarget(
 
   return {
     absolutePath,
+    allowedRoots: resolved.allowedRoots,
     ripgrepPath: "."
   };
 }

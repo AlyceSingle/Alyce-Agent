@@ -149,6 +149,8 @@ Everything the agent can *do* — read files, search code, edit, write, run comm
 **Built-in tools:**
 `AskUserQuestion` · `Read` · `Glob` · `Grep` · `TodoWrite` · `Edit` · `Write` · `Bash` · `PowerShell` · `WebFetch` · `WebSearch`
 
+`Read` now covers text files, directories, notebook summaries, missing-path suggestions, safer output capping for partial reads, on-demand external directory approval, and true multimodal image/PDF attachment flow for supported formats, while still surfacing asset metadata such as image dimensions. It also records file freshness state so `Edit`/`Write` can reject stale modifications. Binary formats that Alyce cannot inline remain metadata-only.
+
 *If you're adding a new tool: define it, register it, then wire any new approval rules. The patterns are consistent — copy an existing tool and you'll see the shape.*
 
 ### Terminal UI

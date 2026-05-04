@@ -6,6 +6,7 @@ Usage:
 - pattern: required regular expression pattern
 - path: optional file or directory; absolute path is preferred and "~"/"~/" paths are supported
 - workspace-relative paths are also supported and resolve from workspace root
+- paths outside the current workspace can be requested directly; the runtime will ask the user before granting external directory access
 - glob: optional file glob filter such as "*.ts" or "*.{ts,tsx}"
 - output_mode: "files_with_matches" (default), "content", or "count"
 

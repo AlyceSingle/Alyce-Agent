@@ -106,7 +106,7 @@ function getRuntimeEnvironmentSection(runtimeContext: PromptRuntimeContext) {
     `Platform: ${runtimeContext.platform}`,
     `Workspace root: ${runtimeContext.workspaceRoot}`,
     "Path notation: absolute paths are preferred; ~ and ~/... resolve to the user's home directory.",
-    "Path scope: local filesystem paths are allowed; the runtime may require user approval for execution.",
+    "Path scope: local filesystem paths are available to tools; read/search tools may request user approval for external directories on demand.",
     `Model: ${runtimeContext.model}`
   ]);
 }

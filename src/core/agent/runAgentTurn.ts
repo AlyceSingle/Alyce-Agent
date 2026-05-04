@@ -2,6 +2,7 @@ import OpenAI from "openai";
 import { executeToolCall, TOOL_SCHEMAS, type ToolExecutionContext } from "../../tools.js";
 import { isTurnInterruptedError, throwIfAborted, toTurnInterruptedError } from "../abort.js";
 import { extractAssistantTextContent } from "../api/assistantContent.js";
+import { removeReadAttachmentMessages } from "../api/generatedMessages.js";
 import {
   sendChatCompletion,
   type ChatCompletionReconnectEvent
@@ -36,69 +37,25 @@ export async function runAgentTurn(
   messages: MessageParam[],
   options: AgentTurnOptions
 ): Promise<string> {
-  // 工具轮次受 maxSteps 限制，避免模型无限循环调用工具。
-  for (let step = 0; step < options.maxSteps; step += 1) {
-    throwIfAborted(options.abortSignal);
-
-    let response: OpenAI.Chat.Completions.ChatCompletion;
-    try {
-      response = await sendChatCompletion(client, {
-        model: options.model,
-        messages,
-        tools: TOOL_SCHEMAS,
-        toolChoice: "auto",
-        temperature: 0.2,
-        gcliGeminiCompat: options.gcliGeminiCompat,
-        messageTimestampsEnabled: options.messageTimestampsEnabled,
-        requestPatches: options.requestPatches,
-        abortSignal: options.abortSignal,
-        onReconnect: options.onReconnect
-      });
-    } catch (error) {
-      if (isTurnInterruptedError(error, options.abortSignal)) {
-        throw toTurnInterruptedError(error, options.abortSignal);
-      }
-
-      throw error;
-    }
-
-    const next = response.choices[0]?.message;
-    if (!next) {
-      throw new Error("Model returned an empty response");
-    }
-
-    const toolCalls = next.tool_calls ?? [];
-    const thinkingChunks = extractThinkingChunks(next, toolCalls.length > 0);
-    for (const chunk of thinkingChunks) {
-      options.onThinking?.(chunk);
-    }
-
-    if (toolCalls.length === 0) {
-      const reply = extractAssistantReplyText(next);
-      if (!reply) {
-        throw new Error("Model returned no text output");
-      }
-
-      messages.push(buildAssistantHistoryMessage(next));
-      return reply;
-    }
-
-    // 工具调用回复要先写回上下文，这样后续 tool message 才会挂在正确的 assistant turn 之后。
-    messages.push(buildAssistantHistoryMessage(next));
-
-    for (const toolCall of toolCalls) {
+  try {
+    // 工具轮次受 maxSteps 限制，避免模型无限循环调用工具。
+    for (let step = 0; step < options.maxSteps; step += 1) {
       throwIfAborted(options.abortSignal);
 
-      if (toolCall.type !== "function") {
-        continue;
-      }
-
-      // 这些回调主要给 UI 展示即时反馈；真正供模型消费的是后面的 tool message。
-      options.onToolCallStart?.(toolCall.function.name, toolCall.function.arguments);
-
-      let result: string;
+      let response: OpenAI.Chat.Completions.ChatCompletion;
       try {
-        result = await executeToolCall(toolCall.function.name, toolCall.function.arguments, options.context);
+        response = await sendChatCompletion(client, {
+          model: options.model,
+          messages,
+          tools: TOOL_SCHEMAS,
+          toolChoice: "auto",
+          temperature: 0.2,
+          gcliGeminiCompat: options.gcliGeminiCompat,
+          messageTimestampsEnabled: options.messageTimestampsEnabled,
+          requestPatches: options.requestPatches,
+          abortSignal: options.abortSignal,
+          onReconnect: options.onReconnect
+        });
       } catch (error) {
         if (isTurnInterruptedError(error, options.abortSignal)) {
           throw toTurnInterruptedError(error, options.abortSignal);
@@ -107,15 +64,77 @@ export async function runAgentTurn(
         throw error;
       }
 
-      throwIfAborted(options.abortSignal);
-      options.onToolCallResult?.(toolCall.function.name, result, toolCall.function.arguments);
+      const next = response.choices[0]?.message;
+      if (!next) {
+        throw new Error("Model returned an empty response");
+      }
 
-      messages.push({
-        role: "tool",
-        tool_call_id: toolCall.id,
-        content: result
-      });
+      const toolCalls = next.tool_calls ?? [];
+      const thinkingChunks = extractThinkingChunks(next, toolCalls.length > 0);
+      for (const chunk of thinkingChunks) {
+        options.onThinking?.(chunk);
+      }
+
+      if (toolCalls.length === 0) {
+        const reply = extractAssistantReplyText(next);
+        if (!reply) {
+          throw new Error("Model returned no text output");
+        }
+
+        messages.push(buildAssistantHistoryMessage(next));
+        return reply;
+      }
+
+      // 工具调用回复要先写回上下文，这样后续 tool message 才会挂在正确的 assistant turn 之后。
+      messages.push(buildAssistantHistoryMessage(next));
+
+      const toolMessages: OpenAI.Chat.Completions.ChatCompletionToolMessageParam[] = [];
+      const supplementalMessages: MessageParam[] = [];
+
+      for (const toolCall of toolCalls) {
+        throwIfAborted(options.abortSignal);
+
+        if (toolCall.type !== "function") {
+          continue;
+        }
+
+        // 这些回调主要给 UI 展示即时反馈；真正供模型消费的是后面的 tool message。
+        options.onToolCallStart?.(toolCall.function.name, toolCall.function.arguments);
+
+        let result: Awaited<ReturnType<typeof executeToolCall>>;
+        try {
+          result = await executeToolCall(
+            toolCall.function.name,
+            toolCall.function.arguments,
+            options.context
+          );
+        } catch (error) {
+          if (isTurnInterruptedError(error, options.abortSignal)) {
+            throw toTurnInterruptedError(error, options.abortSignal);
+          }
+
+          throw error;
+        }
+
+        throwIfAborted(options.abortSignal);
+        options.onToolCallResult?.(
+          toolCall.function.name,
+          result.displayResult,
+          toolCall.function.arguments
+        );
+
+        toolMessages.push({
+          role: "tool",
+          tool_call_id: toolCall.id,
+          content: result.displayResult
+        });
+        supplementalMessages.push(...result.supplementalMessages);
+      }
+
+      messages.push(...toolMessages, ...supplementalMessages);
     }
+  } finally {
+    removeReadAttachmentMessages(messages);
   }
 
   throw new Error(`Max tool steps reached (${options.maxSteps})`);

@@ -611,6 +611,8 @@ function buildCollapsedToolBlocks(
         truncated: preview.truncated
       };
     }
+    case "read":
+      return buildCollapsedMessageBlocks(message.blocks, width, 12);
     case "generic":
       return buildCollapsedMessageBlocks(message.blocks, width, 3);
     case "write":

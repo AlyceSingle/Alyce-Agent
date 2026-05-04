@@ -149,6 +149,8 @@ src/tools/executeToolCall.ts
 **内置工具清单：**
 `AskUserQuestion` · `Read` · `Glob` · `Grep` · `TodoWrite` · `Edit` · `Write` · `Bash` · `PowerShell` · `WebFetch` · `WebSearch`
 
+`Read` 现在覆盖文本文件、目录、notebook 摘要、缺失路径建议、更安全的分段输出封顶、按需外部目录授权，以及针对受支持格式的真实图片/PDF 多模态附件流，同时保留图片尺寸等资产元数据展示。它也会记录文件读取新鲜度状态，让 `Edit`/`Write` 可以拒绝基于陈旧内容的修改。Alyce 仍然无法内联的其他二进制格式则继续只返回元数据。
+
 *想加新工具？定义它、注册它、然后给新增的审批规则接上线。模式是一致的——照抄一个现有工具就能看清骨架。*
 
 ### 终端 UI

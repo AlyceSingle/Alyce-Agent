@@ -61,6 +61,21 @@ export function resolvePathFromInput(
   return resolveAllowedPath(allowedRoots, expandedInput, workspaceRoot);
 }
 
+export function resolvePathFromInputUnchecked(
+  workspaceRoot: string,
+  inputPath: string
+): string {
+  const normalizedInput = inputPath.trim();
+  if (!normalizedInput) {
+    throw new Error("Path must not be empty");
+  }
+
+  const expandedInput = expandHomePath(normalizedInput);
+  return path.isAbsolute(expandedInput)
+    ? path.resolve(expandedInput)
+    : path.resolve(workspaceRoot, expandedInput);
+}
+
 export function toWorkspaceRelative(workspaceRoot: string, absolutePath: string): string {
   const normalizedAbsolute = path.resolve(absolutePath);
   const normalizedWorkspace = path.resolve(workspaceRoot);

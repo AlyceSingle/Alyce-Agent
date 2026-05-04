@@ -50,7 +50,7 @@ Type these into the main input. They start with `/` and execute immediately.
 | `/add-dir <path>` | Adds a directory to the agent's allowed file scope for this session. |
 | `/add-dir --save <path>` | Same, but persists the directory across sessions. |
 
-*By default, Alyce can only access files within the workspace. Use `/add-dir` when you need it to reach outside — say, for a shared library in another project.*
+*By default, Alyce starts with the workspace as its file scope. `Read`, `Glob`, and `Grep` can request external directory access on demand; approving "Allow directory for session" adds that directory until restart. Use `/add-dir` when you want to pre-authorize a directory, and `/add-dir --save` when it should persist across sessions.*
 
 ### Session History
 

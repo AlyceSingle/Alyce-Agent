@@ -6,6 +6,7 @@ Usage:
 - pattern: required glob pattern such as "**/*.ts" or "src/**/*.tsx"
 - path: optional directory; absolute path is preferred and "~"/"~/" paths are supported
 - workspace-relative paths are also supported and resolve from workspace root
+- paths outside the current workspace can be requested directly; the runtime will ask the user before granting external directory access
 
 Notes:
 - Results are workspace-relative paths when inside workspace, otherwise absolute paths.

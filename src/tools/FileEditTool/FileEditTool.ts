@@ -2,6 +2,7 @@ import { promises as fs } from "node:fs";
 import type { z } from "zod";
 import { throwIfAborted } from "../../core/abort.js";
 import { resolvePathFromInput, toWorkspaceRelative } from "../internal/pathSandbox.js";
+import { ensureFreshFileRead, recordWrittenTextFile } from "../internal/readState.js";
 import type { ToolExecutionContext } from "../types.js";
 import { FILE_EDIT_TOOL_NAME } from "./constants.js";
 import { getEditToolDescription } from "./prompt.js";
@@ -18,6 +19,7 @@ export async function executeFileEdit(
   // 统一先解析为工作区内绝对路径，后续读写都基于同一路径。
   const fullFilePath = resolveEditPath(context.workspaceRoot, context.allowedRoots, input.file_path);
   const relativePath = toWorkspaceRelative(context.workspaceRoot, fullFilePath);
+  await ensureFreshFileRead(fullFilePath, context, FILE_EDIT_TOOL_NAME);
 
   const originalFile = await fs.readFile(fullFilePath, "utf8");
   if (input.old_string === input.new_string) {
@@ -64,6 +66,9 @@ export async function executeFileEdit(
 
   await context.captureFileBeforeWrite(fullFilePath);
   await fs.writeFile(fullFilePath, patchResult.updatedFile, "utf8");
+  const lineCount =
+    patchResult.updatedFile.length === 0 ? 0 : patchResult.updatedFile.split(/\r?\n/).length;
+  await recordWrittenTextFile(fullFilePath, relativePath, lineCount, context);
 
   return {
     filePath: relativePath,

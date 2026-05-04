@@ -20,6 +20,7 @@ import type {
   UiToolData,
   UiToolEditResult,
   UiToolMessagePhase,
+  UiToolReadResult,
   UiToolResultKind,
   UiToolShellResult,
   UiToolWriteResult
@@ -34,6 +35,7 @@ export type TerminalUiToolResultKind = UiToolResultKind;
 export type TerminalUiToolShellResult = UiToolShellResult;
 export type TerminalUiToolWriteResult = UiToolWriteResult;
 export type TerminalUiToolEditResult = UiToolEditResult;
+export type TerminalUiToolReadResult = UiToolReadResult;
 export type TerminalUiToolData = UiToolData;
 
 export interface TerminalUiMessage {
@@ -66,6 +68,7 @@ export type PermissionDecision =
   | "allow-once"
   | "reject-once"
   | "allow-kind-session"
+  | "allow-scope-session"
   | "auto-approve-session";
 
 export type ActiveDialog =

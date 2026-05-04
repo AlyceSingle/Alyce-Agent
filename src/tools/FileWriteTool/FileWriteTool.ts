@@ -3,6 +3,7 @@ import path from "node:path";
 import { z } from "zod";
 import { throwIfAborted } from "../../core/abort.js";
 import { resolvePathFromInput, toWorkspaceRelative } from "../internal/pathSandbox.js";
+import { ensureFreshFileRead, recordWrittenTextFile } from "../internal/readState.js";
 import type { ToolExecutionContext } from "../types.js";
 import { FILE_WRITE_TOOL_NAME, getWriteToolDescription } from "./prompt.js";
 import { getPatchForWrite, type StructuredPatchHunk } from "./utils.js";
@@ -37,9 +38,14 @@ export async function executeFileWrite(
   const relativePath = toWorkspaceRelative(context.workspaceRoot, fullFilePath);
 
   const exists = await fileExists(fullFilePath);
+  if (exists) {
+    await ensureFreshFileRead(fullFilePath, context, FILE_WRITE_TOOL_NAME);
+  }
+
   const mode: FileWriteResult["type"] = exists ? "update" : "create";
   const originalFile = exists ? await fs.readFile(fullFilePath, "utf8") : "";
   const byteSize = Buffer.byteLength(input.content, "utf8");
+  const lineCount = input.content.length === 0 ? 0 : input.content.split(/\r?\n/).length;
 
   const approved = await context.requestApproval({
     kind: "file-write",
@@ -55,11 +61,12 @@ export async function executeFileWrite(
   throwIfAborted(context.abortSignal);
 
   if (exists && originalFile === input.content) {
+    await recordWrittenTextFile(fullFilePath, relativePath, lineCount, context);
     return {
       type: mode,
       filePath: relativePath,
       bytes: byteSize,
-      lineCount: input.content.length === 0 ? 0 : input.content.split(/\r?\n/).length,
+      lineCount,
       structuredPatch: getPatchForWrite({
         filePath: relativePath,
         originalFile,
@@ -72,12 +79,13 @@ export async function executeFileWrite(
   await context.captureFileBeforeWrite(fullFilePath);
   await fs.mkdir(path.dirname(fullFilePath), { recursive: true });
   await fs.writeFile(fullFilePath, input.content, "utf8");
+  await recordWrittenTextFile(fullFilePath, relativePath, lineCount, context);
 
   return {
     type: mode,
     filePath: relativePath,
     bytes: byteSize,
-    lineCount: input.content.length === 0 ? 0 : input.content.split(/\r?\n/).length,
+    lineCount,
     structuredPatch: getPatchForWrite({
       filePath: relativePath,
       originalFile,
