@@ -12,6 +12,9 @@ export function getWriteToolDescription(): string {
 Usage:
 - This tool will overwrite the existing file if there is one at the provided path.${getPreReadInstruction()}
 - Prefer the Edit tool for modifying existing files - it only sends the diff. Only use this tool to create new files or for complete rewrites.
+- After approval, the tool rechecks that the target file did not change before writing.
+- Existing text-file encoding and BOM are preserved; existing line endings are preserved when the supplied content does not explicitly contain CRLF.
+- After writing, the tool may run a configured project formatter for the affected file type and will return TypeScript/JavaScript diagnostics when available.
 - NEVER create documentation files (*.md) or README files unless explicitly requested by the User.
 - Only use emojis if the user explicitly requests it. Avoid writing emojis to files unless asked.`;
 }

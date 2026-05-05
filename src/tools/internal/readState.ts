@@ -1,5 +1,6 @@
 import { promises as fs } from "node:fs";
 import type { FileReadState, ToolExecutionContext } from "../types.js";
+import { readTextFileWithMetadata } from "./textFileIO.js";
 
 export async function ensureFreshFileRead(
   absolutePath: string,
@@ -25,6 +26,16 @@ export async function ensureFreshFileRead(
 
   const stats = await fs.stat(absolutePath);
   if (readState.mtimeMs !== undefined && !isSameMtime(readState.mtimeMs, stats.mtimeMs)) {
+    const refreshedState = await createRefreshedStateIfContentUnchanged(
+      absolutePath,
+      readState,
+      stats,
+      context
+    );
+    if (refreshedState) {
+      return refreshedState;
+    }
+
     throw new Error(
       `File changed since the last Read. Use Read again before modifying ${readState.displayPath}.`
     );
@@ -37,7 +48,8 @@ export async function recordWrittenTextFile(
   absolutePath: string,
   displayPath: string,
   lineCount: number,
-  context: ToolExecutionContext
+  context: ToolExecutionContext,
+  content?: string
 ): Promise<void> {
   const stats = await fs.stat(absolutePath);
   context.recordFileRead(absolutePath, {
@@ -50,8 +62,38 @@ export async function recordWrittenTextFile(
     offset: 1,
     totalCount: lineCount,
     returnedCount: lineCount,
-    isPartial: false
+    isPartial: false,
+    content
   });
+}
+
+async function createRefreshedStateIfContentUnchanged(
+  absolutePath: string,
+  readState: FileReadState,
+  stats: { mtimeMs: number; size: number },
+  context: ToolExecutionContext
+): Promise<FileReadState | null> {
+  if (
+    readState.kind !== "text" ||
+    readState.isPartial ||
+    readState.content === undefined
+  ) {
+    return null;
+  }
+
+  const current = await readTextFileWithMetadata(absolutePath);
+  if (current.content !== readState.content) {
+    return null;
+  }
+
+  const refreshedState: FileReadState = {
+    ...readState,
+    readAt: new Date().toISOString(),
+    mtimeMs: stats.mtimeMs,
+    sizeBytes: stats.size
+  };
+  context.recordFileRead(absolutePath, refreshedState);
+  return refreshedState;
 }
 
 function isSameMtime(left: number, right: number) {

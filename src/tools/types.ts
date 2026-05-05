@@ -78,6 +78,7 @@ export interface FileReadState {
   totalCount?: number;
   returnedCount?: number;
   isPartial: boolean;
+  content?: string;
 }
 
 export interface ToolExecutionContext {

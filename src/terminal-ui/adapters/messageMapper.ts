@@ -272,9 +272,11 @@ function buildToolResultBlocks(
     }
     case "write": {
       const patchText = extractStructuredPatchDisplayText(result.structuredResult);
-      return [
+      const blocks = [
         createBlock(patchText || "(empty patch)", { label: "Patch", style: "code" })
       ];
+      blocks.push(...buildPostWriteCheckBlocks(toolData.write));
+      return blocks;
     }
     case "edit": {
       const edit = toolData.edit;
@@ -283,9 +285,11 @@ function buildToolResultBlocks(
       }
 
       const patchText = extractStructuredPatchDisplayText(result.structuredResult);
-      return [
+      const blocks = [
         createBlock(patchText || "(empty patch)", { label: "Patch", style: "code" })
       ];
+      blocks.push(...buildPostWriteCheckBlocks(edit));
+      return blocks;
     }
     case "read": {
       const read = toolData.read;
@@ -329,6 +333,21 @@ function buildToolResultMetadata(toolData: TerminalUiToolData) {
     metadata.push(toolData.write.mode === "create" ? "Created" : "Updated");
     metadata.push(`${toolData.write.bytes} bytes`);
     metadata.push(`${toolData.write.lineCount} lines`);
+    if (toolData.write.formatter && toolData.write.formatter.status !== "skipped") {
+      metadata.push(formatFormatterMetadata(toolData.write.formatter));
+    }
+    if (toolData.write.diagnostics && toolData.write.diagnostics.status !== "skipped") {
+      metadata.push(formatDiagnosticsMetadata(toolData.write.diagnostics));
+    }
+  }
+
+  if (toolData.edit) {
+    if (toolData.edit.formatter && toolData.edit.formatter.status !== "skipped") {
+      metadata.push(formatFormatterMetadata(toolData.edit.formatter));
+    }
+    if (toolData.edit.diagnostics && toolData.edit.diagnostics.status !== "skipped") {
+      metadata.push(formatDiagnosticsMetadata(toolData.edit.diagnostics));
+    }
   }
 
   if (toolData.read) {
@@ -427,8 +446,184 @@ function toWriteResult(
     filePath,
     mode: type,
     bytes,
-    lineCount
+    lineCount,
+    formatter: toFormatterResult(record.formatter) ?? undefined,
+    diagnostics: toDiagnosticsResult(record.diagnostics) ?? undefined
   };
+}
+
+function buildPostWriteCheckBlocks(
+  result: TerminalUiToolWriteResult | TerminalUiToolEditResult | undefined
+): TerminalUiMessageBlock[] {
+  if (!result) {
+    return [];
+  }
+
+  const blocks: TerminalUiMessageBlock[] = [];
+  if (result.formatter && result.formatter.status !== "skipped") {
+    blocks.push(createBlock(formatFormatterResult(result.formatter), {
+      label: "Formatter",
+      tone: result.formatter.status === "failed" ? "warning" : "success",
+      style: "code"
+    }));
+  }
+
+  if (result.diagnostics && result.diagnostics.status !== "skipped") {
+    blocks.push(createBlock(formatDiagnosticsResult(result.diagnostics), {
+      label: "Diagnostics",
+      tone: result.diagnostics.status === "issues"
+        ? "warning"
+        : result.diagnostics.status === "failed"
+          ? "warning"
+          : "success",
+      style: "code"
+    }));
+  }
+
+  return blocks;
+}
+
+function toFormatterResult(value: unknown): TerminalUiToolWriteResult["formatter"] | null {
+  const record = asRecord(value);
+  const status = asString(record?.status);
+  if (!record || !isFormatterStatus(status)) {
+    return null;
+  }
+
+  return {
+    status,
+    formatter: asString(record.formatter),
+    command: Array.isArray(record.command)
+      ? record.command.filter((item): item is string => typeof item === "string")
+      : undefined,
+    durationMs: asNumber(record.durationMs),
+    exitCode: asNullableNumber(record.exitCode),
+    signal: asNullableString(record.signal),
+    stdout: asString(record.stdout),
+    stderr: asString(record.stderr),
+    message: asString(record.message)
+  };
+}
+
+function toDiagnosticsResult(value: unknown): TerminalUiToolWriteResult["diagnostics"] | null {
+  const record = asRecord(value);
+  const status = asString(record?.status);
+  const totalIssueCount = asNumber(record?.totalIssueCount);
+  const truncated = asBoolean(record?.truncated);
+  if (!record || !isDiagnosticsStatus(status) || totalIssueCount === undefined || truncated === undefined) {
+    return null;
+  }
+
+  const issues = Array.isArray(record.issues)
+    ? record.issues.flatMap((issue) => {
+        const issueRecord = asRecord(issue);
+        const filePath = asString(issueRecord?.filePath);
+        const line = asNumber(issueRecord?.line);
+        const character = asNumber(issueRecord?.character);
+        const severity = asString(issueRecord?.severity);
+        const code = asString(issueRecord?.code);
+        const message = asString(issueRecord?.message);
+        if (
+          !filePath ||
+          line === undefined ||
+          character === undefined ||
+          !severity ||
+          !code ||
+          !message
+        ) {
+          return [];
+        }
+
+        return [{
+          filePath,
+          line,
+          character,
+          severity,
+          code,
+          message,
+          source: asString(issueRecord?.source)
+        }];
+      })
+    : [];
+
+  return {
+    status,
+    backend: asString(record.backend),
+    issues,
+    totalIssueCount,
+    truncated,
+    message: asString(record.message)
+  };
+}
+
+function isFormatterStatus(value: string | undefined): value is NonNullable<TerminalUiToolWriteResult["formatter"]>["status"] {
+  return value === "skipped" || value === "unchanged" || value === "formatted" || value === "failed";
+}
+
+function isDiagnosticsStatus(value: string | undefined): value is NonNullable<TerminalUiToolWriteResult["diagnostics"]>["status"] {
+  return value === "skipped" || value === "ok" || value === "issues" || value === "failed";
+}
+
+function formatFormatterResult(formatter: NonNullable<TerminalUiToolWriteResult["formatter"]>) {
+  const lines = [`Status: ${formatter.status}`];
+  if (formatter.formatter) {
+    lines.push(`Formatter: ${formatter.formatter}`);
+  }
+  if (formatter.durationMs !== undefined) {
+    lines.push(`Duration: ${formatter.durationMs} ms`);
+  }
+  if (formatter.exitCode !== undefined) {
+    lines.push(`Exit: ${formatter.exitCode ?? formatter.signal ?? "unknown"}`);
+  }
+  if (formatter.command?.length) {
+    lines.push(`Command: ${formatter.command.join(" ")}`);
+  }
+  if (formatter.message) {
+    lines.push(`Message: ${formatter.message}`);
+  }
+  if (formatter.stdout?.trim()) {
+    lines.push("", "Stdout:", formatter.stdout.trim());
+  }
+  if (formatter.stderr?.trim()) {
+    lines.push("", "Stderr:", formatter.stderr.trim());
+  }
+
+  return lines.join("\n");
+}
+
+function formatDiagnosticsResult(diagnostics: NonNullable<TerminalUiToolWriteResult["diagnostics"]>) {
+  if (diagnostics.status === "ok") {
+    return "No TypeScript/JavaScript diagnostics reported.";
+  }
+
+  if (diagnostics.status === "failed") {
+    return diagnostics.message ?? "Diagnostics failed.";
+  }
+
+  const lines = diagnostics.issues.map((issue) =>
+    `${issue.filePath}:${issue.line}:${issue.character} ${issue.severity.toUpperCase()} ${formatDiagnosticCode(issue)} ${issue.message}`
+  );
+  if (diagnostics.truncated) {
+    lines.push(`... ${diagnostics.totalIssueCount - diagnostics.issues.length} more omitted`);
+  }
+
+  return lines.length > 0 ? lines.join("\n") : diagnostics.message ?? "Diagnostics reported no displayable issues.";
+}
+
+function formatDiagnosticCode(issue: { source?: string; code: string }) {
+  return issue.source ? `[${issue.source} ${issue.code}]` : `[${issue.code}]`;
+}
+
+function formatFormatterMetadata(formatter: NonNullable<TerminalUiToolWriteResult["formatter"]>) {
+  return formatter.formatter ? `Formatter: ${formatter.formatter} ${formatter.status}` : `Formatter: ${formatter.status}`;
+}
+
+function formatDiagnosticsMetadata(diagnostics: NonNullable<TerminalUiToolWriteResult["diagnostics"]>) {
+  if (diagnostics.status === "issues") {
+    return `Diagnostics: ${diagnostics.totalIssueCount}`;
+  }
+
+  return `Diagnostics: ${diagnostics.status}`;
 }
 
 function toEditResult(value: unknown): TerminalUiToolEditResult | null {
@@ -440,13 +635,11 @@ function toEditResult(value: unknown): TerminalUiToolEditResult | null {
   const filePath = asString(record.filePath);
   const replaceAll = asBoolean(record.replaceAll);
   const matchCount = asNumber(record.matchCount);
-  const structuredPatch = extractStructuredPatchLines(record);
 
   if (
     !filePath ||
     replaceAll === undefined ||
-    matchCount === undefined ||
-    structuredPatch.length === 0
+    matchCount === undefined
   ) {
     return null;
   }
@@ -454,7 +647,9 @@ function toEditResult(value: unknown): TerminalUiToolEditResult | null {
   return {
     filePath,
     replaceAll,
-    matchCount
+    matchCount,
+    formatter: toFormatterResult(record.formatter) ?? undefined,
+    diagnostics: toDiagnosticsResult(record.diagnostics) ?? undefined
   };
 }
 

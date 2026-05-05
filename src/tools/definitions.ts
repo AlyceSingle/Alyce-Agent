@@ -14,6 +14,12 @@ import {
   executeBashTool
 } from "./BashTool/BashTool.js";
 import { FILE_EDIT_TOOL_DESCRIPTION, executeFileEdit, FileEditInputSchema } from "./FileEditTool/FileEditTool.js";
+import {
+  executeFileMultiEdit,
+  FILE_MULTI_EDIT_TOOL_DESCRIPTION
+} from "./FileMultiEditTool/FileMultiEditTool.js";
+import { FILE_MULTI_EDIT_TOOL_NAME } from "./FileMultiEditTool/prompt.js";
+import { FileMultiEditInputSchema } from "./FileMultiEditTool/types.js";
 import { executeFileRead, FileReadInputSchema } from "./FileReadTool/FileReadTool.js";
 import { DESCRIPTION, FILE_READ_TOOL_NAME } from "./FileReadTool/prompt.js";
 import {
@@ -120,6 +126,12 @@ export const REGISTERED_TOOLS: AgentTool[] = [
     description: FILE_EDIT_TOOL_DESCRIPTION,
     inputSchema: FileEditInputSchema,
     execute: (input, context) => executeFileEdit(input, context)
+  },
+  {
+    name: FILE_MULTI_EDIT_TOOL_NAME,
+    description: FILE_MULTI_EDIT_TOOL_DESCRIPTION,
+    inputSchema: FileMultiEditInputSchema,
+    execute: (input, context) => executeFileMultiEdit(input, context)
   },
   {
     name: "Write",

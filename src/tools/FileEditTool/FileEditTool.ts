@@ -1,13 +1,21 @@
-import { promises as fs } from "node:fs";
 import type { z } from "zod";
 import { throwIfAborted } from "../../core/abort.js";
+import { withFileWriteLock } from "../internal/fileWriteLocks.js";
 import { resolvePathFromInput, toWorkspaceRelative } from "../internal/pathSandbox.js";
+import { runPostWriteChecks } from "../internal/postWriteChecks.js";
 import { ensureFreshFileRead, recordWrittenTextFile } from "../internal/readState.js";
+import {
+  countTextLines,
+  readTextFileBytesWithMetadata,
+  readTextFileWithMetadata,
+  writeTextFileWithMetadata
+} from "../internal/textFileIO.js";
+import { assertExistingFileBytesUnchangedAfterApproval } from "../internal/writeSafety.js";
 import type { ToolExecutionContext } from "../types.js";
 import { FILE_EDIT_TOOL_NAME } from "./constants.js";
 import { getEditToolDescription } from "./prompt.js";
 import { type FileEditOutput, inputSchema } from "./types.js";
-import { getPatchForEdit } from "./utils.js";
+import { getPatchForEdit, resolveEditMatch } from "./utils.js";
 
 export const FileEditInputSchema = inputSchema();
 export const FILE_EDIT_TOOL_DESCRIPTION = getEditToolDescription();
@@ -19,29 +27,32 @@ export async function executeFileEdit(
   // 统一先解析为工作区内绝对路径，后续读写都基于同一路径。
   const fullFilePath = resolveEditPath(context.workspaceRoot, context.allowedRoots, input.file_path);
   const relativePath = toWorkspaceRelative(context.workspaceRoot, fullFilePath);
+
+  return withFileWriteLock(fullFilePath, () =>
+    executeFileEditLocked(input, context, fullFilePath, relativePath)
+  );
+}
+
+async function executeFileEditLocked(
+  input: z.infer<typeof FileEditInputSchema>,
+  context: ToolExecutionContext,
+  fullFilePath: string,
+  relativePath: string
+): Promise<FileEditOutput> {
   await ensureFreshFileRead(fullFilePath, context, FILE_EDIT_TOOL_NAME);
 
-  const originalFile = await fs.readFile(fullFilePath, "utf8");
+  const originalMetadata = await readTextFileBytesWithMetadata(fullFilePath);
+  const originalFile = originalMetadata.content;
   if (input.old_string === input.new_string) {
     throw new Error("No changes to make: old_string and new_string are identical");
   }
 
-  if (!originalFile.includes(input.old_string)) {
-    throw new Error("String to replace was not found in the target file");
-  }
-
-  // 默认要求 old_string 唯一命中，避免误改多处内容。
-  const matchCount = countMatches(originalFile, input.old_string);
-  if (matchCount > 1 && !input.replace_all) {
-    throw new Error(
-      `Found ${matchCount} matches. Set replace_all=true or provide more unique old_string context.`
-    );
-  }
+  const match = resolveEditMatch(originalFile, input.old_string, Boolean(input.replace_all));
 
   const patchResult = getPatchForEdit({
     filePath: relativePath,
     fileContents: originalFile,
-    oldString: input.old_string,
+    oldString: match.actualOldString,
     newString: input.new_string,
     replaceAll: input.replace_all
   });
@@ -56,7 +67,11 @@ export async function executeFileEdit(
     toolName: FILE_EDIT_TOOL_NAME,
     title: "Edit file",
     summary: relativePath,
-    details: [`Matches: ${matchCount}`, `Replace all: ${input.replace_all ? "yes" : "no"}`]
+    details: [
+      `Matches: ${match.matchCount}`,
+      `Replace all: ${input.replace_all ? "yes" : "no"}`,
+      `Match strategy: ${match.strategy}`
+    ]
   });
   if (!approved) {
     throw new Error("User rejected Edit tool request");
@@ -64,20 +79,49 @@ export async function executeFileEdit(
 
   throwIfAborted(context.abortSignal);
 
+  await assertExistingFileBytesUnchangedAfterApproval(fullFilePath, originalMetadata.rawBytes, {
+    toolName: FILE_EDIT_TOOL_NAME,
+    deletedRetryAction: "editing it",
+    changedRetryAction: "modifying it"
+  });
+
   await context.captureFileBeforeWrite(fullFilePath);
-  await fs.writeFile(fullFilePath, patchResult.updatedFile, "utf8");
-  const lineCount =
-    patchResult.updatedFile.length === 0 ? 0 : patchResult.updatedFile.split(/\r?\n/).length;
-  await recordWrittenTextFile(fullFilePath, relativePath, lineCount, context);
+  await writeTextFileWithMetadata(fullFilePath, patchResult.updatedFile, {
+    encoding: originalMetadata.encoding,
+    hasBom: originalMetadata.hasBom,
+    lineEndings: originalMetadata.lineEndings
+  });
+  const postWriteChecks = await runPostWriteChecks({
+    absolutePath: fullFilePath,
+    workspaceRoot: context.workspaceRoot,
+    allowedRoots: context.allowedRoots,
+    abortSignal: context.abortSignal
+  });
+  const finalFile = (await readTextFileWithMetadata(fullFilePath)).content;
+  const lineCount = countTextLines(finalFile);
+  await recordWrittenTextFile(fullFilePath, relativePath, lineCount, context, finalFile);
 
   return {
     filePath: relativePath,
     oldString: input.old_string,
     newString: input.new_string,
-    structuredPatch: patchResult.patch,
+    actualOldString: match.actualOldString,
+    matchStrategy: match.strategy,
+    structuredPatch:
+      finalFile === patchResult.updatedFile
+        ? patchResult.patch
+        : getPatchForEdit({
+            filePath: relativePath,
+            fileContents: originalFile,
+            oldString: originalFile,
+            newString: finalFile,
+            replaceAll: false
+          }).patch,
     userModified: false,
     replaceAll: Boolean(input.replace_all),
-    matchCount
+    matchCount: match.matchCount,
+    formatter: postWriteChecks.formatter,
+    diagnostics: postWriteChecks.diagnostics
   };
 }
 
@@ -92,12 +136,4 @@ function resolveEditPath(
   }
 
   return resolvePathFromInput(workspaceRoot, allowedRoots, normalized);
-}
-
-function countMatches(content: string, needle: string): number {
-  if (!needle) {
-    return 0;
-  }
-
-  return content.split(needle).length - 1;
 }

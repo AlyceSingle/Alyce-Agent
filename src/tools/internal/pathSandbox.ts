@@ -15,6 +15,7 @@ export function normalizeAllowedRoots(allowedRoots: readonly string[]): string[]
       continue;
     }
 
+    assertNotUncPath(normalized);
     deduped.add(path.resolve(expandHomePath(normalized)));
   }
 
@@ -22,6 +23,10 @@ export function normalizeAllowedRoots(allowedRoots: readonly string[]): string[]
 }
 
 export function isPathAllowed(allowedRoots: readonly string[], absolutePath: string): boolean {
+  if (isUncPath(absolutePath)) {
+    return false;
+  }
+
   const normalizedPath = path.resolve(absolutePath);
   const checkedPath = resolvePathForSandboxCheck(normalizedPath);
   const roots = normalizeAllowedRoots(allowedRoots);
@@ -35,6 +40,7 @@ export function resolveAllowedPath(
   maybeRelative: string,
   baseDirectory: string
 ): string {
+  assertNotUncPath(maybeRelative);
   const resolvedPath = path.resolve(baseDirectory, expandHomePath(maybeRelative));
   assertPathAllowed(allowedRoots, resolvedPath);
   return resolvedPath;
@@ -50,7 +56,9 @@ export function resolvePathFromInput(
     throw new Error("Path must not be empty");
   }
 
+  assertNotUncPath(normalizedInput);
   const expandedInput = expandHomePath(normalizedInput);
+  assertNotUncPath(expandedInput);
 
   if (path.isAbsolute(expandedInput)) {
     const resolvedPath = path.resolve(expandedInput);
@@ -70,7 +78,9 @@ export function resolvePathFromInputUnchecked(
     throw new Error("Path must not be empty");
   }
 
+  assertNotUncPath(normalizedInput);
   const expandedInput = expandHomePath(normalizedInput);
+  assertNotUncPath(expandedInput);
   return path.isAbsolute(expandedInput)
     ? path.resolve(expandedInput)
     : path.resolve(workspaceRoot, expandedInput);
@@ -100,7 +110,22 @@ function expandHomePath(inputPath: string): string {
   return trimmedPath;
 }
 
+export function isUncPath(inputPath: string): boolean {
+  return inputPath.startsWith("\\\\") || inputPath.startsWith("//");
+}
+
+export function assertNotUncPath(inputPath: string) {
+  if (!isUncPath(inputPath)) {
+    return;
+  }
+
+  throw new Error(
+    "UNC paths are not supported by Alyce file tools because probing them can trigger Windows network authentication."
+  );
+}
+
 function resolvePathForSandboxCheck(absolutePath: string): string {
+  assertNotUncPath(absolutePath);
   const normalizedPath = path.resolve(absolutePath);
   const existingPath = findNearestExistingPath(normalizedPath);
   if (!existingPath) {

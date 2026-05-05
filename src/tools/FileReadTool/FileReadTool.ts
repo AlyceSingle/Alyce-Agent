@@ -6,6 +6,11 @@ import { throwIfAborted } from "../../core/abort.js";
 import { createReadAttachmentMessage } from "../../core/api/generatedMessages.js";
 import { resolveReadablePathWithExternalApproval } from "../internal/externalDirectoryAccess.js";
 import { toWorkspaceRelative } from "../internal/pathSandbox.js";
+import {
+  detectTextFileEncoding,
+  readTextFileWithMetadata,
+  type TextFileEncoding
+} from "../internal/textFileIO.js";
 import { createToolResultEnvelope } from "../resultEnvelope.js";
 import type { FileReadStateKind, ToolExecutionContext } from "../types.js";
 import { getDefaultFileReadingLimits } from "./limits.js";
@@ -378,7 +383,8 @@ export async function executeFileRead(
     ]);
   }
 
-  if (await isBinaryFile(absolutePath, stats.size)) {
+  const textEncoding = await detectTextFileEncoding(absolutePath);
+  if (await isBinaryFile(absolutePath, stats.size, textEncoding)) {
     return createAssetResult(context, absolutePath, displayPath, {
       kind: "binary",
       mediaType: "application/octet-stream",
@@ -413,14 +419,29 @@ export async function executeFileRead(
     return unchanged;
   }
 
-  const { selectedLines, totalLines, byteCapped, lineCapped } = await readLineWindow(
-    absolutePath,
-    requestedOffset,
-    requestedLimit,
-    limits.maxLineChars,
-    limits.maxTextResultBytes,
-    context.abortSignal
-  );
+  const fullTextMetadata = stats.size <= limits.maxSizeBytes
+    ? await readTextFileWithMetadata(absolutePath)
+    : null;
+  throwIfAborted(context.abortSignal);
+
+  const lineWindow = fullTextMetadata
+    ? createLineWindowFromContent(
+        fullTextMetadata.content,
+        requestedOffset,
+        requestedLimit,
+        limits.maxLineChars,
+        limits.maxTextResultBytes
+      )
+    : await readLineWindow(
+        absolutePath,
+        requestedOffset,
+        requestedLimit,
+        limits.maxLineChars,
+        limits.maxTextResultBytes,
+        textEncoding,
+        context.abortSignal
+      );
+  const { selectedLines, totalLines, byteCapped, lineCapped } = lineWindow;
   const hasContinuation =
     selectedLines.length > 0 &&
     (requestedOffset + selectedLines.length - 1 < totalLines || byteCapped);
@@ -435,6 +456,7 @@ export async function executeFileRead(
     maxTextResultBytes: limits.maxTextResultBytes
   });
   const rendered = renderWithLineNumbers(totalLines, requestedOffset, selectedLines, notice);
+  const isPartial = requestedOffset !== 1 || selectedLines.length < totalLines || byteCapped || lineCapped;
   recordFileRead(context, absolutePath, {
     kind: "text",
     source: "read",
@@ -446,7 +468,8 @@ export async function executeFileRead(
     limit: requestedLimit,
     totalCount: totalLines,
     returnedCount: selectedLines.length,
-    isPartial: requestedOffset !== 1 || selectedLines.length < totalLines || byteCapped || lineCapped
+    isPartial,
+    content: isPartial ? undefined : fullTextMetadata?.content
   });
 
   return {
@@ -464,12 +487,59 @@ export async function executeFileRead(
   };
 }
 
+interface TextLineWindow {
+  selectedLines: string[];
+  totalLines: number;
+  byteCapped: boolean;
+  lineCapped: boolean;
+}
+
+function createLineWindowFromContent(
+  content: string,
+  startLine: number,
+  limit: number,
+  maxLineChars: number,
+  maxTextResultBytes: number
+): TextLineWindow {
+  const lines = splitTextLines(content);
+  const selectedLines: string[] = [];
+  const startIndex = Math.max(0, startLine - 1);
+  const endIndexExclusive = Math.min(lines.length, startIndex + limit);
+  let selectedBytes = 0;
+  let byteCapped = false;
+  let lineCapped = false;
+
+  for (let index = startIndex; index < endIndexExclusive; index += 1) {
+    const line = lines[index] ?? "";
+    const lineTruncated = line.length > maxLineChars;
+    const renderedLine = truncateLine(line, maxLineChars, lineTruncated);
+    const nextLineBytes =
+      Buffer.byteLength(renderedLine, "utf8") + (selectedLines.length > 0 ? 1 : 0);
+    if (selectedBytes + nextLineBytes > maxTextResultBytes) {
+      byteCapped = true;
+      break;
+    }
+
+    lineCapped ||= lineTruncated;
+    selectedLines.push(renderedLine);
+    selectedBytes += nextLineBytes;
+  }
+
+  return {
+    selectedLines,
+    totalLines: lines.length,
+    byteCapped,
+    lineCapped
+  };
+}
+
 async function readLineWindow(
   absolutePath: string,
   startLine: number,
   limit: number,
   maxLineChars: number,
   maxTextResultBytes: number,
+  encoding: TextFileEncoding,
   abortSignal?: AbortSignal
 ) {
   throwIfAborted(abortSignal);
@@ -477,7 +547,7 @@ async function readLineWindow(
   const selectedLines: string[] = [];
   const endLineExclusive = startLine + limit;
   const stream = createReadStream(absolutePath, {
-    encoding: "utf8"
+    encoding
   });
   let totalLines = 0;
   let currentLine = 1;
@@ -590,6 +660,19 @@ async function readLineWindow(
     byteCapped,
     lineCapped
   };
+}
+
+function splitTextLines(content: string) {
+  if (content.length === 0) {
+    return [];
+  }
+
+  const lines = content.split("\n");
+  if (content.endsWith("\n")) {
+    lines.pop();
+  }
+
+  return lines;
 }
 
 function createFileUnchangedResultIfCurrent(
@@ -1359,10 +1442,18 @@ function truncateLine(line: string, maxLineChars: number, wasTruncated = false) 
   return `${line.slice(0, maxLineChars)}... (line truncated to ${maxLineChars} chars)`;
 }
 
-async function isBinaryFile(absolutePath: string, fileSize: number): Promise<boolean> {
+async function isBinaryFile(
+  absolutePath: string,
+  fileSize: number,
+  textEncoding: TextFileEncoding
+): Promise<boolean> {
   const extension = path.extname(absolutePath).toLowerCase();
   if (KNOWN_BINARY_EXTENSIONS.has(extension)) {
     return true;
+  }
+
+  if (textEncoding === "utf16le") {
+    return false;
   }
 
   if (fileSize === 0) {

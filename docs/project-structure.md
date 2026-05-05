@@ -147,9 +147,9 @@ src/tools/executeToolCall.ts
 Everything the agent can *do* — read files, search code, edit, write, run commands, browse the web, ask you questions. Each tool is a class with its own definition, execution logic, and approval behavior.
 
 **Built-in tools:**
-`AskUserQuestion` · `Read` · `Glob` · `Grep` · `TodoWrite` · `Edit` · `Write` · `Bash` · `PowerShell` · `WebFetch` · `WebSearch`
+`AskUserQuestion` · `Read` · `Glob` · `Grep` · `TodoWrite` · `Edit` · `MultiEdit` · `Write` · `Bash` · `PowerShell` · `WebFetch` · `WebSearch`
 
-`Read` now covers text files, directories, notebook summaries, missing-path suggestions, safer output capping for partial reads, on-demand external directory approval, and true multimodal image/PDF attachment flow for supported formats, while still surfacing asset metadata such as image dimensions. It also records file freshness state so `Edit`/`Write` can reject stale modifications. Binary formats that Alyce cannot inline remain metadata-only.
+`Read` now covers text files, directories, notebook summaries, missing-path suggestions, safer output capping for partial reads, on-demand external directory approval, and true multimodal image/PDF attachment flow for supported formats, while still surfacing asset metadata such as image dimensions. It also records file freshness state and full-read content when available so `Edit`/`MultiEdit`/`Write` can reject stale modifications while tolerating mtime-only touches. `Edit`, `MultiEdit`, and `Write` additionally block Windows UNC paths, serialize writes per file, recheck the target at byte level after approval, preserve text encoding and line endings, take raw-byte pre-write snapshots for rollback, run configured formatters when available, and return TypeScript/JavaScript diagnostics for supported files. Binary formats that Alyce cannot inline remain metadata-only.
 
 *If you're adding a new tool: define it, register it, then wire any new approval rules. The patterns are consistent — copy an existing tool and you'll see the shape.*
 

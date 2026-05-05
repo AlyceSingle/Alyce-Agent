@@ -21,7 +21,7 @@
 最简单的使用方式是通过 npm 全局安装 Alyce：
 
 ```bash
-npm install -g alyce
+npm install -g alyce@latest
 ```
 
 然后你可以在任何目录下直接输入以下命令启动：

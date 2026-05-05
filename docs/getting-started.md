@@ -21,7 +21,7 @@ If any of those is missing, you'll know pretty quickly because the app will tell
 The easiest way to use Alyce is to install it globally via npm:
 
 ```bash
-npm install -g alyce
+npm install -g alyce@latest
 ```
 
 Then you can start it from any directory by simply typing:

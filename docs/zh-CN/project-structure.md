@@ -147,9 +147,9 @@ src/tools/executeToolCall.ts
 助手能"做"的一切——读文件、搜代码、编辑、写入、跑命令、浏览网页、问你问题。每个工具是一个类，有自己的定义、执行逻辑和审批行为。
 
 **内置工具清单：**
-`AskUserQuestion` · `Read` · `Glob` · `Grep` · `TodoWrite` · `Edit` · `Write` · `Bash` · `PowerShell` · `WebFetch` · `WebSearch`
+`AskUserQuestion` · `Read` · `Glob` · `Grep` · `TodoWrite` · `Edit` · `MultiEdit` · `Write` · `Bash` · `PowerShell` · `WebFetch` · `WebSearch`
 
-`Read` 现在覆盖文本文件、目录、notebook 摘要、缺失路径建议、更安全的分段输出封顶、按需外部目录授权，以及针对受支持格式的真实图片/PDF 多模态附件流，同时保留图片尺寸等资产元数据展示。它也会记录文件读取新鲜度状态，让 `Edit`/`Write` 可以拒绝基于陈旧内容的修改。Alyce 仍然无法内联的其他二进制格式则继续只返回元数据。
+`Read` 现在覆盖文本文件、目录、notebook 摘要、缺失路径建议、更安全的分段输出封顶、按需外部目录授权，以及针对受支持格式的真实图片/PDF 多模态附件流，同时保留图片尺寸等资产元数据展示。它也会记录文件读取新鲜度状态，并在完整文本读取时保存内容，让 `Edit`/`MultiEdit`/`Write` 可以拒绝基于陈旧内容的修改，同时容忍只有 mtime 变化但内容未变的误报。`Edit`、`MultiEdit` 和 `Write` 还会阻断 Windows UNC 路径、按文件串行化写入、在审批后按字节级再次检查目标文件、保留文本编码和行尾、写入前拍原始字节快照用于回滚、在可用时运行项目格式化程序，并为受支持的 TypeScript/JavaScript 文件返回诊断。Alyce 仍然无法内联的其他二进制格式则继续只返回元数据。
 
 *想加新工具？定义它、注册它、然后给新增的审批规则接上线。模式是一致的——照抄一个现有工具就能看清骨架。*
 

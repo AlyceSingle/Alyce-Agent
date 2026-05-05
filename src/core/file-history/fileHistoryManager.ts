@@ -7,7 +7,7 @@ const MAX_FILE_HISTORY_SNAPSHOTS = 100;
 export interface TrackedFileSnapshot {
   absolutePath: string;
   existed: boolean;
-  originalContent: string;
+  originalContent: Buffer;
 }
 
 export interface TurnFileHistorySnapshot {
@@ -47,7 +47,7 @@ export class FileHistoryManager {
 
     // 同一轮里每个文件只抓一次写前内容，后续重复写入直接复用首份快照。
     try {
-      const originalContent = await fs.readFile(absolutePath, "utf8");
+      const originalContent = await fs.readFile(absolutePath);
       snapshot.trackedFiles.set(absolutePath, {
         absolutePath,
         existed: true,
@@ -58,7 +58,7 @@ export class FileHistoryManager {
         snapshot.trackedFiles.set(absolutePath, {
           absolutePath,
           existed: false,
-          originalContent: ""
+          originalContent: Buffer.alloc(0)
         });
         return;
       }
@@ -92,7 +92,7 @@ export class FileHistoryManager {
     for (const entry of entries) {
       if (entry.existed) {
         await fs.mkdir(path.dirname(entry.absolutePath), { recursive: true });
-        await fs.writeFile(entry.absolutePath, entry.originalContent, "utf8");
+        await fs.writeFile(entry.absolutePath, entry.originalContent);
         restored.push(entry.absolutePath);
         continue;
       }

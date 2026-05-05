@@ -42,12 +42,51 @@ export interface UiToolWriteResult {
   mode: "create" | "update";
   bytes: number;
   lineCount: number;
+  formatter?: UiToolFormatterResult;
+  diagnostics?: UiToolDiagnosticsResult;
+}
+
+export type UiToolFormatterStatus = "skipped" | "unchanged" | "formatted" | "failed";
+
+export interface UiToolFormatterResult {
+  status: UiToolFormatterStatus;
+  formatter?: string;
+  command?: string[];
+  durationMs?: number;
+  exitCode?: number | null;
+  signal?: string | null;
+  stdout?: string;
+  stderr?: string;
+  message?: string;
+}
+
+export type UiToolDiagnosticsStatus = "skipped" | "ok" | "issues" | "failed";
+
+export interface UiToolDiagnosticIssue {
+  filePath: string;
+  line: number;
+  character: number;
+  severity: string;
+  code: string;
+  message: string;
+  source?: string;
+}
+
+export interface UiToolDiagnosticsResult {
+  status: UiToolDiagnosticsStatus;
+  backend?: string;
+  issues: UiToolDiagnosticIssue[];
+  totalIssueCount: number;
+  truncated: boolean;
+  message?: string;
 }
 
 export interface UiToolEditResult {
   filePath: string;
   replaceAll: boolean;
   matchCount: number;
+  formatter?: UiToolFormatterResult;
+  diagnostics?: UiToolDiagnosticsResult;
 }
 
 export type UiToolReadResult =
