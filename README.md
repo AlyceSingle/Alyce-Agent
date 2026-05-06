@@ -72,7 +72,7 @@ copy .env.example .env
 - `OPENAI_BASE_URL`
 - `OPENAI_MODEL`
 
-Optional web tuning includes `ALYCE_WEB_FETCH_CACHE_MAX_BYTES` for the total in-memory WebFetch cache budget; see [Configuration](docs/configuration.md) for the full list.
+Optional web tuning includes `ALYCE_WEB_FETCH_CACHE_MAX_BYTES` for the total in-memory WebFetch cache budget; see [Configuration](https://github.com/AlyceSingle/Alyce-Agent/blob/master/docs/configuration.md) for the full list.
 
 4. Start Alyce
 
@@ -89,16 +89,16 @@ npm start
 
 ## Documentation
 
-- [Documentation Index](docs/README.md)
-- [Getting Started](docs/getting-started.md)
-- [Project Structure](docs/project-structure.md)
-- [apply_patch Tool](docs/apply-patch-tool.md)
-- [Commands and Keys](docs/commands-and-keys.md)
-- [Configuration](docs/configuration.md)
-- [Memory and Context](docs/memory-and-context.md)
-- [Persona Presets](docs/persona-presets.md)
-- [Contributing](CONTRIBUTING.md)
-- [Security](SECURITY.md)
+- [Documentation Index](https://github.com/AlyceSingle/Alyce-Agent/blob/master/docs/README.md)
+- [Getting Started](https://github.com/AlyceSingle/Alyce-Agent/blob/master/docs/getting-started.md)
+- [Project Structure](https://github.com/AlyceSingle/Alyce-Agent/blob/master/docs/project-structure.md)
+- [apply_patch Tool](https://github.com/AlyceSingle/Alyce-Agent/blob/master/docs/apply-patch-tool.md)
+- [Commands and Keys](https://github.com/AlyceSingle/Alyce-Agent/blob/master/docs/commands-and-keys.md)
+- [Configuration](https://github.com/AlyceSingle/Alyce-Agent/blob/master/docs/configuration.md)
+- [Memory and Context](https://github.com/AlyceSingle/Alyce-Agent/blob/master/docs/memory-and-context.md)
+- [Persona Presets](https://github.com/AlyceSingle/Alyce-Agent/blob/master/docs/persona-presets.md)
+- [Contributing](https://github.com/AlyceSingle/Alyce-Agent/blob/master/CONTRIBUTING.md)
+- [Security](https://github.com/AlyceSingle/Alyce-Agent/blob/master/SECURITY.md)
 
 ## Project Notes
 
@@ -116,4 +116,4 @@ The minimum validation step before submitting changes is:
 npm run build
 ```
 
-I would recommend reading [Project Structure](docs/project-structure.md) first if you plan to maintain the codebase. It is... a little easier on the nerves when the layers are clear.
+I would recommend reading [Project Structure](https://github.com/AlyceSingle/Alyce-Agent/blob/master/docs/project-structure.md) first if you plan to maintain the codebase. It is... a little easier on the nerves when the layers are clear.

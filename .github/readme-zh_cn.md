@@ -86,16 +86,16 @@ npm start
 
 ## 文档索引
 
-- [文档索引](../docs/zh-CN/README.md)
-- [快速开始](../docs/zh-CN/getting-started.md)
-- [项目结构](../docs/zh-CN/project-structure.md)
-- [apply_patch 工具](../docs/zh-CN/apply-patch-tool.md)
-- [命令与按键](../docs/zh-CN/commands-and-keys.md)
-- [配置说明](../docs/zh-CN/configuration.md)
-- [记忆与上下文](../docs/zh-CN/memory-and-context.md)
-- [角色预设](../docs/zh-CN/persona-presets.md)
-- [贡献指南](../docs/zh-CN/contributing.md)
-- [安全说明](../docs/zh-CN/security.md)
+- [文档索引](https://github.com/AlyceSingle/Alyce-Agent/blob/master/docs/zh-CN/README.md)
+- [快速开始](https://github.com/AlyceSingle/Alyce-Agent/blob/master/docs/zh-CN/getting-started.md)
+- [项目结构](https://github.com/AlyceSingle/Alyce-Agent/blob/master/docs/zh-CN/project-structure.md)
+- [apply_patch 工具](https://github.com/AlyceSingle/Alyce-Agent/blob/master/docs/zh-CN/apply-patch-tool.md)
+- [命令与按键](https://github.com/AlyceSingle/Alyce-Agent/blob/master/docs/zh-CN/commands-and-keys.md)
+- [配置说明](https://github.com/AlyceSingle/Alyce-Agent/blob/master/docs/zh-CN/configuration.md)
+- [记忆与上下文](https://github.com/AlyceSingle/Alyce-Agent/blob/master/docs/zh-CN/memory-and-context.md)
+- [角色预设](https://github.com/AlyceSingle/Alyce-Agent/blob/master/docs/zh-CN/persona-presets.md)
+- [贡献指南](https://github.com/AlyceSingle/Alyce-Agent/blob/master/docs/zh-CN/contributing.md)
+- [安全说明](https://github.com/AlyceSingle/Alyce-Agent/blob/master/docs/zh-CN/security.md)
 
 ## 项目提示
 
@@ -113,4 +113,4 @@ npm start
 npm run build
 ```
 
-如果您准备维护代码，我建议先看 [项目结构](../docs/zh-CN/project-structure.md)。层次清楚一点的时候，我……会安心很多。
+如果您准备维护代码，我建议先看 [项目结构](https://github.com/AlyceSingle/Alyce-Agent/blob/master/docs/zh-CN/project-structure.md)。层次清楚一点的时候，我……会安心很多。
