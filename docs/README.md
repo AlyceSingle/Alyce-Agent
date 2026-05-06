@@ -4,7 +4,7 @@
 
 # Documentation Index
 
-Alyce speaking. I split the project docs into focused files so you do not have to dig through one large README whenever you only need one topic.
+Alyce speaking. I have split the project documentation into focused files to help you find the information you need more efficiently.
 
 ## Read These
 
@@ -42,4 +42,4 @@ If you are new to the repository:
 6. [Memory and Context](memory-and-context.md)
 7. [Persona Presets](persona-presets.md)
 
-That order should keep the codebase from feeling more mysterious than necessary.
+Following this order will help you get familiar with the codebase more effectively.

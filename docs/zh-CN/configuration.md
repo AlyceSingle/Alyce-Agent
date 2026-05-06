@@ -4,140 +4,55 @@
 
 # 配置说明
 
-我是 Alyce。*配置系统这种事吧，表面看着简单，等你发现同一个设置可能从四个不同地方来、还搞不清谁说了算的时候，就开始头疼了。所以让我老老实实把它讲明白。*
+我是 Alyce。本页将为您详细说明 Alyce 的配置系统，包括配置来源、优先级以及各项参数的含义。
 
-Alyce 的配置是分层的。多个来源可以设同一个值，有一个明确的优先级来决定谁赢。知道了排序，就不难了。
+## 配置优先级
 
-## 设置从哪来
+Alyce 的配置采用分层加载机制，优先级从高到低排列如下（高优先级将覆盖低优先级）：
 
-### 连接配置（API key、base URL、model）
-
-按这个优先级加载——**排前面的赢后面的**：
-
-1. **CLI 参数**（启动程序时传的）
-2. **环境变量**（`.env` 文件中）
-3. **项目级配置** — `./.alyce/config.json`
-4. **用户级配置** — `~/.alyce/config.json`
-
-*实际使用中环境变量通常是赢家，因为 `.env` 最先被加载，而且大多数人也不会传 CLI 参数。但如果你在设置弹窗里改了并保存到项目级，下次启动就会生效。*
+### 连接配置（API Key、Base URL、Model）
+1. **命令行参数**（启动时传入）。
+2. **环境变量**（`.env` 文件）。
+3. **项目级配置**（`./.alyce/config.json`）。
+4. **用户级配置**（`~/.alyce/config.json`）。
 
 ### 会话设置（角色、记忆、审批等）
+1. **命令行参数**。
+2. **环境变量**。
+3. **项目级设置**（`./.alyce/settings.json`）。
+4. **用户级设置**（`~/.alyce/settings.json`）。
 
-同样——**排前面的赢**：
+## 环境变量说明
 
-1. **CLI 参数**
-2. **环境变量**
-3. **项目级设置** — `./.alyce/settings.json`
-4. **用户级设置** — `~/.alyce/settings.json`
+### 核心配置（必填）
+- `OPENAI_API_KEY`：您的 API 密钥。
+- `OPENAI_BASE_URL`：API 接口地址。
+- `OPENAI_MODEL`：使用的模型标识符。
 
-## 文件对应表
+### 搜索与抓取（可选）
+- `ALYCE_WEB_SEARCH_PROVIDER`：搜索服务商（`auto`、`brave`、`exa`、`duckduckgo`）。
+- `ALYCE_BRAVE_SEARCH_API_KEY`：Brave Search API 密钥。
+- `ALYCE_WEB_FETCH_MAX_BYTES`：单次网页抓取的最大字节数。
 
-| 什么 | 在哪 |
-|---|---|
-| 项目连接配置 | `./.alyce/config.json` |
-| 用户连接配置 | `~/.alyce/config.json` |
-| 项目会话设置 | `./.alyce/settings.json` |
-| 用户会话设置 | `~/.alyce/settings.json` |
+## 会话设置项
 
-*`./` 开头的是按项目来的——跟着仓库走（如果你交了 `.alyce/` 的话，但最好别）。`~/` 开头的是这台机器全局的。项目特有的事放项目级，个人习惯放用户级。*
-
-## 环境变量
-
-### 必填（缺了程序起不来）
-- `OPENAI_API_KEY`
-- `OPENAI_BASE_URL`
-- `OPENAI_MODEL`
-
-### 可选（大多是内存调参）
-- `AGENT_ADDITIONAL_DIRECTORIES` — 逗号分隔的额外路径
-- `AGENT_MEMORY_DIR` — 覆盖记忆存储目录
-- `AGENT_MEMORY_FILE` — 覆盖记忆文件名
-- `AGENT_MEMORY_MAX_SESSION` — 会话记忆最大条数
-- `AGENT_MEMORY_MAX_PERSISTENT` — 持久记忆最大条数
-- `AGENT_MEMORY_MAX_PROMPT` — 注入 prompt 的记忆最大字符数
-- `AGENT_MEMORY_AUTO_SUMMARY` — 开关自动摘要
-- `AGENT_MEMORY_SUMMARY_MIN_MESSAGES` — 多少条消息后开始摘要
-- `AGENT_MEMORY_SUMMARY_INTERVAL_MESSAGES` — 摘要更新间隔
-- `AGENT_MEMORY_SUMMARY_WINDOW_MESSAGES` — 每次摘要覆盖多少条
-- `AGENT_MEMORY_SUMMARY_MAX_CHARS_PER_MESSAGE` — 每条消息截断长度
-
-*绝大多数人不会碰可选变量。它们是为了那些对记忆行为有强烈个人偏好、或者跑在非常规环境里的人准备的。*
-
-### 可选 Web Search 设置
-
-- `ALYCE_WEB_SEARCH_PROVIDER` — `auto`、`brave`、`exa` 或 `duckduckgo`。`auto` 会在配置 key 时优先尝试 Brave Search，然后尝试 Exa MCP，最后回退到 DuckDuckGo HTML。
-- `WEB_SEARCH_PROVIDER` — `ALYCE_WEB_SEARCH_PROVIDER` 的兼容别名。
-- `ALYCE_BRAVE_SEARCH_API_KEY` — 可选 Brave Search API key。
-- `BRAVE_SEARCH_API_KEY` — `ALYCE_BRAVE_SEARCH_API_KEY` 的兼容别名。
-- `ALYCE_WEB_SEARCH_CACHE_TTL_MS` — Web search provider 结果的内存缓存 TTL，单位毫秒。设为 `0` 可关闭。
-- `WEB_SEARCH_CACHE_TTL_MS` — `ALYCE_WEB_SEARCH_CACHE_TTL_MS` 的兼容别名。
-- `ALYCE_WEB_SEARCH_USER_AGENT` — DuckDuckGo fallback 请求使用的可选浏览器兼容 User-Agent 覆盖值。
-- `ALYCE_WEB_SEARCH_HONEST_USER_AGENT` — Exa MCP 和 DuckDuckGo challenge fallback 使用的可选透明 User-Agent 覆盖值。
-- `ALYCE_WEB_SEARCH_ACCEPT_LANGUAGE` — Web search 请求使用的可选 `Accept-Language` header。
-
-DuckDuckGo HTML 保留为不需要 key 的 fallback，但它仍然可能被搜索引擎反爬或限流。能用默认 `auto` provider 时优先用 `auto`。
-
-### 可选 Web Fetch 设置
-
-- `ALYCE_WEB_FETCH_MAX_BYTES` — `WebFetch` 单次响应最多下载的字节数。默认 `5242880`。
-- `WEB_FETCH_MAX_BYTES` — `ALYCE_WEB_FETCH_MAX_BYTES` 的兼容别名。
-- `ALYCE_WEB_FETCH_CACHE_TTL_MS` — 成功 fetch 结果的内存缓存 TTL，单位毫秒。设为 `0` 可关闭。
-- `WEB_FETCH_CACHE_TTL_MS` — `ALYCE_WEB_FETCH_CACHE_TTL_MS` 的兼容别名。
-- `ALYCE_WEB_FETCH_CACHE_MAX_BYTES` — 成功 fetch 结果的内存缓存总字节预算。默认 `33554432`；设为 `0` 可关闭 fetch 缓存。
-- `WEB_FETCH_CACHE_MAX_BYTES` — `ALYCE_WEB_FETCH_CACHE_MAX_BYTES` 的兼容别名。
-- `ALYCE_WEB_FETCH_USER_AGENT` — `WebFetch` 使用的可选浏览器兼容 User-Agent 覆盖值。
-- `ALYCE_WEB_FETCH_HONEST_USER_AGENT` — Wikimedia 这类站点和 challenge fallback 使用的可选透明 User-Agent 覆盖值。对要求联系信息的网站，应包含 contact URL。
-- `ALYCE_WEB_FETCH_ACCEPT_LANGUAGE` — `WebFetch` 使用的可选 `Accept-Language` header。
-
-## 连接字段
-
-在设置的**连接**标签页里出现：
-
-- `apiKey` — 兼容 OpenAI 的 API 密钥
-- `baseURL` — 端点地址
-- `model` — 模型标识字符串
-
-可以保存为**用户级**（你这台机器全局）或**项目级**（跟这个项目走）。在连接标签页按 `P` 切换保存范围。
-
-*API key 我建议存用户级——这样它完全不会出现在项目目录里。*
-
-## 会话设置字段
-
-在设置的**会话**标签页里出现。
+在设置面板（`Ctrl+X`）的“会话”标签页中可以调整以下内容：
 
 ### 执行与审批
+- **审批模式**：控制工具调用的审批严格程度。
+- **最大步数**：单轮对话中允许 Agent 连续调用工具的最大次数。
+- **命令超时**：Shell 命令执行的超时时间（毫秒）。
 
-- `approvalMode` — 工具审批严格程度。从"每次都问"到"智能默认"可调。
-- `maxSteps` — 每轮最多调多少次工具，之后必须给出最终回复。
-- `commandTimeoutMs` — shell 命令超时毫秒数。
-
-### Prompt 与角色
-
-- `languagePreference` — 助手用什么语言回复。
-- `personaPreset` — 用哪个内置角色。可选：`None`、`alyce`、`lilith`、`corin`。*详见[角色预设](persona-presets.md)页。*
-- `aiPersonalityPrompt` — 自定义角色指令，叠在（或替代）角色预设上面。
-- `appendSystemPrompt` — 直接追加到 system prompt 末尾的文字。省着用。
+### 角色与语言
+- **语言偏好**：助手回复时使用的语言。
+- **角色预设**：选择内置的人格预设（如 `alyce`、`lilith`、`corin`）。
+- **自定义人格提示词**：在预设基础上叠加的自定义指令。
 
 ### 记忆与上下文
-
-- `autoSummaryEnabled` — 是否启用近期工作自动摘要。
-- `messageTimestampsEnabled` — 模型是否在每轮看到当前系统时间。
-- `conversationCompactionEnabled` — 长对话是否压缩以保持在上下文限制内。
-
-### 路径
-
-- `additionalDirectories` — 工作区之外，助手还能访问的额外目录。读取/搜索工具也可以在当前会话中按需请求外部目录授权，而不必把目录保存到这里。
-
-## 两个值得理解的设置
-
-### `messageTimestampsEnabled`
-
-打开后，每次 API 请求会附加一个 `# Current System Time` 小段落，带着本地日期时间。这是请求时才注入的——不会出现在你可见的 transcript 里，也不会混进聊天历史。*我觉得挺实用的，因为模型就能说"截至今天早上"之类的话，而不是每次都对时间含糊其辞。*
-
-### `conversationCompactionEnabled`
-
-打开后，长对话超过阈值就会被压缩。最近几轮原始消息不动；更早的内容改写为结构化摘要。目标不是删东西——是把有用信息保留下来，同时不拖着整份 transcript 一直往前堆。*没这个的话，跑几个小时的会话最终会溢出上下文窗口，模型就会"忘记"对话开头发生了什么。*
+- **自动摘要**：是否开启近期对话的自动摘要功能。
+- **系统时间注入**：是否让模型在每轮对话中感知当前的系统时间。
+- **对话压缩**：当对话接近上下文上限时，是否自动压缩旧消息。
 
 ---
 
-*这就是配置层的全部了。如果某个设置表现得不对劲，用 `/context` 看看模型实际收到了什么——通常是排查配置问题最快的办法。*
+如果您在配置过程中遇到问题，建议使用 `/context` 命令查看模型实际接收到的 Payload，这有助于排查配置是否生效。

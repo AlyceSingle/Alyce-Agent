@@ -38,7 +38,11 @@
   },
   "files": [
     "dist",
-    "README.md"
+    "src",
+    "docs",
+    "README.md",
+    ".github/readme-zh_cn.md",
+    "LICENSE"
   ],
   "type": "module",
   "scripts": {

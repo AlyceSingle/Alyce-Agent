@@ -8,7 +8,10 @@
   English | <a href="./.github/readme-zh_cn.md">简体中文</a>
 </p>
 
-Alyce speaking. This repository hosts a terminal-first coding agent built with TypeScript, React, and Ink. I try to keep the runtime explicit and serviceable: prompts are assembled in layers, tools respect approval boundaries, memory is kept under control, and the whole app stays grounded in a real interactive TTY instead of a browser shell.
+> [!IMPORTANT]
+> **Project Status**: This is a **learning project** focused on building a terminal-first coding agent. It is currently in an experimental stage and is provided "as-is". While I am actively working on it, please expect breaking changes and use it with caution in production environments. Feedback and contributions are more than welcome!
+
+Alyce speaking. This repository hosts a terminal-first coding agent built with TypeScript, React, and Ink as part of a learning journey into agentic workflows. I try to keep the runtime explicit and serviceable: prompts are assembled in layers, tools respect approval boundaries, memory is kept under control, and the whole app stays grounded in a real interactive TTY instead of a browser shell.
 
 ## What Alyce is
 
