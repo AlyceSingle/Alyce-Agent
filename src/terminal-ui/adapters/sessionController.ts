@@ -767,9 +767,7 @@ export function createSessionController(
 
   const buildAccessScopeSnapshot = () => {
     return [
-      "Workspace: " + runtime.workspaceRoot,
-      "Path scope: workspace paths are available by default; read/search tools can request external directory access on demand.",
-      "Execution may still require user approval depending on the tool."
+      "Workspace: " + runtime.workspaceRoot
     ];
   };
 

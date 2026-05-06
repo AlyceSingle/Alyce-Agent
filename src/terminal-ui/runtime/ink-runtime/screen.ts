@@ -82,12 +82,17 @@ const INVERSE_CODE: AnsiCode = {
   code: '\x1b[7m',
   endCode: '\x1b[27m',
 }
+const INTENSITY_RESET_CODE = '\x1b[22m'
+const BOLD_START_CODE = '\x1b[1m'
+const DIM_START_CODE = '\x1b[2m'
+
 // Bold (SGR 1) — stacks cleanly, no reflow in monospace. endCode 22
-// also cancels dim (SGR 2); harmless here since we never add dim.
+// also cancels dim (SGR 2), so transitions between dim and bold need
+// an explicit reset before applying the target intensity.
 const BOLD_CODE: AnsiCode = {
   type: 'ansi',
-  code: '\x1b[1m',
-  endCode: '\x1b[22m',
+  code: BOLD_START_CODE,
+  endCode: INTENSITY_RESET_CODE,
 }
 // Underline (SGR 4). Kept alongside yellow+bold — the underline is the
 // unambiguous visible-on-any-theme marker. Yellow-bg-via-inverse can
@@ -155,7 +160,13 @@ export class StylePool {
     const key = fromId * 0x100000 + toId
     let str = this.transitionCache.get(key)
     if (str === undefined) {
-      str = ansiCodesToString(diffAnsiCodes(this.get(fromId), this.get(toId)))
+      const from = this.get(fromId)
+      const to = this.get(toId)
+      const diff = diffAnsiCodes(from, to)
+      str =
+        shouldResetIntensityBeforeTransition(from, to, diff) ?
+          INTENSITY_RESET_CODE + ansiCodesToString(diff)
+        : ansiCodesToString(diff)
       this.transitionCache.set(key, str)
     }
     return str
@@ -273,6 +284,27 @@ function hasVisibleSpaceEffect(styles: AnsiCode[]): boolean {
     if (VISIBLE_ON_SPACE.has(style.endCode)) return true
   }
   return false
+}
+
+function shouldResetIntensityBeforeTransition(
+  from: AnsiCode[],
+  to: AnsiCode[],
+  diff: AnsiCode[],
+): boolean {
+  if (diff.some(code => code.code === INTENSITY_RESET_CODE)) return false
+
+  const fromIntensity = getIntensityCode(from)
+  const toIntensity = getIntensityCode(to)
+  return Boolean(fromIntensity && toIntensity && fromIntensity !== toIntensity)
+}
+
+function getIntensityCode(styles: AnsiCode[]): string | undefined {
+  for (const style of styles) {
+    if (style.code === BOLD_START_CODE || style.code === DIM_START_CODE) {
+      return style.code
+    }
+  }
+  return undefined
 }
 
 /**

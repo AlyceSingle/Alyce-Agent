@@ -323,7 +323,6 @@ function renderSingleBlockToken(
         createWrappedSpanBlock(toInlineSpans(getInlineTokenSource(token)), width, {
           key,
           indent: baseIndent,
-          prefixFirst: `${"#".repeat(depth)} `,
           variant: `heading-${Math.min(depth, 4)}` as MarkdownLineVariant
         })
       ];

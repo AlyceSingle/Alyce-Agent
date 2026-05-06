@@ -943,7 +943,7 @@ function renderWithLineNumbers(
 
   const suffix = notice ? `\n\n<system-reminder>${notice}</system-reminder>` : "";
 
-  return lines.map((line, index) => `${String(startLine + index).padStart(6, " ")}\t${line}`).join("\n") + suffix;
+  return lines.map((line, index) => `${String(startLine + index).padStart(6, " ")}  ${line}`).join("\n") + suffix;
 }
 
 async function listDirectoryEntries(absolutePath: string): Promise<string[]> {
