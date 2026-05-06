@@ -5,7 +5,7 @@
 </p>
 
 <p align="center">
-  English | <a href="./.github/readme-zh_cn.md">简体中文</a>
+  English | <a href="https://github.com/AlyceSingle/Alyce-Agent/blob/master/.github/readme-zh_cn.md">简体中文</a>
 </p>
 
 > [!IMPORTANT]
