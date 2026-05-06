@@ -1,6 +1,7 @@
 {
   "name": "alyce",
   "version": "0.1.6",
+  "license": "MIT",
   "bin": {
     "alyce": "./dist/index.js",
     "alycE": "./dist/index.js",

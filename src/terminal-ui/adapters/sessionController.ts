@@ -62,7 +62,14 @@ import {
 } from "./messageMapper.js";
 
 // SessionController 负责把 REPL/UI 事件翻译成会话运行时调用，并维护中断恢复状态。
-const RESTORABLE_TOOL_NAMES = new Set(["Edit", "MultiEdit", "Write", "apply_patch"]);
+const RESTORABLE_TOOL_NAMES = new Set([
+  "TaskList",
+  "TaskGet",
+  "Edit",
+  "MultiEdit",
+  "Write",
+  "apply_patch"
+]);
 const MAX_REWIND_POINTS = 100;
 
 // 每轮请求在执行前都会记录一个 checkpoint，便于中断时回滚消息和文件改动。
@@ -1072,7 +1079,12 @@ export function createSessionController(
             requestApproval,
             askUserQuestions,
             getTodos,
-            setTodos: setTodoItems
+            setTodos: setTodoItems,
+            recordToolActivity: (toolName) => {
+              if (!RESTORABLE_TOOL_NAMES.has(toolName)) {
+                checkpoint.hasNonRestorableToolActivity = true;
+              }
+            }
           }),
           requestPatches: runtime.requestPatches,
           onThinking: (thinking) => {
@@ -1100,10 +1112,6 @@ export function createSessionController(
             store.updateState((state) => setStatusText(state, "Thinking..."));
           },
           onToolCallStart: (toolName) => {
-            if (!RESTORABLE_TOOL_NAMES.has(toolName)) {
-              checkpoint.hasNonRestorableToolActivity = true;
-            }
-
             store.updateState((state) => setStatusText(state, `Running ${toolName}...`));
           },
           onToolCallResult: (toolName, result, rawArguments) => {

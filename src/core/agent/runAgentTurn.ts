@@ -25,6 +25,7 @@ export interface AgentTurnOptions {
   gcliGeminiCompat?: boolean;
   requestPatches?: RequestPatchOperation[];
   abortSignal?: AbortSignal;
+  tools?: OpenAI.Chat.Completions.ChatCompletionTool[];
   onThinking?: (content: string) => void;
   onToolCallStart?: (toolName: string, rawArguments: string) => void;
   onToolCallResult?: (toolName: string, result: string, rawArguments: string) => void;
@@ -47,7 +48,7 @@ export async function runAgentTurn(
         response = await sendChatCompletion(client, {
           model: options.model,
           messages,
-          tools: TOOL_SCHEMAS,
+          tools: options.tools ?? TOOL_SCHEMAS,
           toolChoice: "auto",
           temperature: 0.2,
           gcliGeminiCompat: options.gcliGeminiCompat,
@@ -91,45 +92,9 @@ export async function runAgentTurn(
       const toolMessages: OpenAI.Chat.Completions.ChatCompletionToolMessageParam[] = [];
       const supplementalMessages: MessageParam[] = [];
 
-      for (const toolCall of toolCalls) {
-        throwIfAborted(options.abortSignal);
-
-        if (toolCall.type !== "function") {
-          continue;
-        }
-
-        // 这些回调主要给 UI 展示即时反馈；真正供模型消费的是后面的 tool message。
-        options.onToolCallStart?.(toolCall.function.name, toolCall.function.arguments);
-
-        let result: Awaited<ReturnType<typeof executeToolCall>>;
-        try {
-          result = await executeToolCall(
-            toolCall.function.name,
-            toolCall.function.arguments,
-            options.context
-          );
-        } catch (error) {
-          if (isTurnInterruptedError(error, options.abortSignal)) {
-            throw toTurnInterruptedError(error, options.abortSignal);
-          }
-
-          throw error;
-        }
-
-        throwIfAborted(options.abortSignal);
-        options.onToolCallResult?.(
-          toolCall.function.name,
-          result.displayResult,
-          toolCall.function.arguments
-        );
-
-        toolMessages.push({
-          role: "tool",
-          tool_call_id: toolCall.id,
-          content: result.displayResult
-        });
-        supplementalMessages.push(...result.supplementalMessages);
-      }
+      const executedToolCalls = await executeToolCalls(toolCalls, options);
+      toolMessages.push(...executedToolCalls.toolMessages);
+      supplementalMessages.push(...executedToolCalls.supplementalMessages);
 
       messages.push(...toolMessages, ...supplementalMessages);
     }
@@ -138,6 +103,110 @@ export async function runAgentTurn(
   }
 
   throw new Error(`Max tool steps reached (${options.maxSteps})`);
+}
+
+const PARALLEL_SAFE_TOOL_NAMES = new Set([
+  "TaskList",
+  "TaskGet"
+]);
+
+async function executeToolCalls(
+  toolCalls: OpenAI.Chat.Completions.ChatCompletionMessageToolCall[],
+  options: AgentTurnOptions
+): Promise<{
+  toolMessages: OpenAI.Chat.Completions.ChatCompletionToolMessageParam[];
+  supplementalMessages: MessageParam[];
+}> {
+  const toolMessages: OpenAI.Chat.Completions.ChatCompletionToolMessageParam[] = [];
+  const supplementalMessages: MessageParam[] = [];
+  let index = 0;
+
+  while (index < toolCalls.length) {
+    throwIfAborted(options.abortSignal);
+    const toolCall = toolCalls[index];
+    if (!toolCall || toolCall.type !== "function") {
+      index += 1;
+      continue;
+    }
+
+    if (!PARALLEL_SAFE_TOOL_NAMES.has(toolCall.function.name)) {
+      const result = await executeSingleToolCall(toolCall, options);
+      toolMessages.push(result.toolMessage);
+      supplementalMessages.push(...result.supplementalMessages);
+      index += 1;
+      continue;
+    }
+
+    const batch: OpenAI.Chat.Completions.ChatCompletionMessageToolCall[] = [];
+    while (index < toolCalls.length) {
+      const candidate = toolCalls[index];
+      if (
+        !candidate ||
+        candidate.type !== "function" ||
+        !PARALLEL_SAFE_TOOL_NAMES.has(candidate.function.name)
+      ) {
+        break;
+      }
+
+      batch.push(candidate);
+      index += 1;
+    }
+
+    const batchResults = await Promise.all(batch.map((candidate) =>
+      executeSingleToolCall(candidate, options)
+    ));
+    for (const result of batchResults) {
+      toolMessages.push(result.toolMessage);
+      supplementalMessages.push(...result.supplementalMessages);
+    }
+  }
+
+  return {
+    toolMessages,
+    supplementalMessages
+  };
+}
+
+async function executeSingleToolCall(
+  toolCall: OpenAI.Chat.Completions.ChatCompletionMessageToolCall,
+  options: AgentTurnOptions
+): Promise<{
+  toolMessage: OpenAI.Chat.Completions.ChatCompletionToolMessageParam;
+  supplementalMessages: MessageParam[];
+}> {
+  throwIfAborted(options.abortSignal);
+  options.onToolCallStart?.(toolCall.function.name, toolCall.function.arguments);
+
+  let result: Awaited<ReturnType<typeof executeToolCall>>;
+  try {
+    result = await executeToolCall(
+      toolCall.function.name,
+      toolCall.function.arguments,
+      options.context
+    );
+  } catch (error) {
+    if (isTurnInterruptedError(error, options.abortSignal)) {
+      throw toTurnInterruptedError(error, options.abortSignal);
+    }
+
+    throw error;
+  }
+
+  throwIfAborted(options.abortSignal);
+  options.onToolCallResult?.(
+    toolCall.function.name,
+    result.displayResult,
+    toolCall.function.arguments
+  );
+
+  return {
+    toolMessage: {
+      role: "tool",
+      tool_call_id: toolCall.id,
+      content: result.displayResult
+    },
+    supplementalMessages: result.supplementalMessages
+  };
 }
 
 function buildAssistantHistoryMessage(

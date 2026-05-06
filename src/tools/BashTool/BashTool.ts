@@ -87,6 +87,7 @@ export async function executeBashTool(
   }
 
   throwIfAborted(context.abortSignal);
+  context.recordToolActivity?.(BASH_TOOL_NAME);
 
   const startedAt = Date.now();
   const outcome = await runShellCommand(input.command, workingDirectory, timeoutMs, context.abortSignal);

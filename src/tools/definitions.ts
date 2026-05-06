@@ -2,6 +2,12 @@ import type OpenAI from "openai";
 import { z } from "zod";
 import { zodToJsonSchema } from "zod-to-json-schema";
 import {
+  AGENT_TOOL_DESCRIPTION,
+  AgentToolInputSchema,
+  executeAgentTool
+} from "./AgentTool/AgentTool.js";
+import { AGENT_TOOL_NAME } from "./AgentTool/prompt.js";
+import {
   ASK_USER_QUESTION_TOOL_DESCRIPTION,
   ASK_USER_QUESTION_TOOL_NAME,
   AskUserQuestionInputSchema,
@@ -58,6 +64,24 @@ import {
   PowerShellInputSchema
 } from "./PowerShellTool/PowerShellTool.js";
 import {
+  executeTaskGetTool,
+  TASK_GET_TOOL_DESCRIPTION,
+  TASK_GET_TOOL_NAME,
+  TaskGetInputSchema
+} from "./TaskGetTool/TaskGetTool.js";
+import {
+  executeTaskListTool,
+  TASK_LIST_TOOL_DESCRIPTION,
+  TASK_LIST_TOOL_NAME,
+  TaskListInputSchema
+} from "./TaskListTool/TaskListTool.js";
+import {
+  executeTaskStopTool,
+  TASK_STOP_TOOL_DESCRIPTION,
+  TASK_STOP_TOOL_NAME,
+  TaskStopInputSchema
+} from "./TaskStopTool/TaskStopTool.js";
+import {
   executeTodoWriteTool,
   TODO_WRITE_TOOL_DESCRIPTION,
   TODO_WRITE_TOOL_NAME,
@@ -75,6 +99,7 @@ import {
   WEB_SEARCH_TOOL_NAME,
   WebSearchInputSchema
 } from "./WebSearchTool/WebSearchTool.js";
+import { KNOWN_TOOL_NAMES } from "./toolNames.js";
 import type { ToolExecutionContext } from "./types.js";
 
 type AnyZodSchema = z.ZodTypeAny;
@@ -91,6 +116,30 @@ export interface AgentTool<TInputSchema extends AnyZodSchema = AnyZodSchema> {
 }
 
 export const REGISTERED_TOOLS: AgentTool[] = [
+  {
+    name: AGENT_TOOL_NAME,
+    description: AGENT_TOOL_DESCRIPTION,
+    inputSchema: AgentToolInputSchema,
+    execute: (input, context) => executeAgentTool(input, context)
+  },
+  {
+    name: TASK_LIST_TOOL_NAME,
+    description: TASK_LIST_TOOL_DESCRIPTION,
+    inputSchema: TaskListInputSchema,
+    execute: (input, context) => executeTaskListTool(input, context)
+  },
+  {
+    name: TASK_GET_TOOL_NAME,
+    description: TASK_GET_TOOL_DESCRIPTION,
+    inputSchema: TaskGetInputSchema,
+    execute: (input, context) => executeTaskGetTool(input, context)
+  },
+  {
+    name: TASK_STOP_TOOL_NAME,
+    description: TASK_STOP_TOOL_DESCRIPTION,
+    inputSchema: TaskStopInputSchema,
+    execute: (input, context) => executeTaskStopTool(input, context)
+  },
   {
     name: ASK_USER_QUESTION_TOOL_NAME,
     description: ASK_USER_QUESTION_TOOL_DESCRIPTION,
@@ -178,6 +227,17 @@ export const REGISTERED_TOOLS: AgentTool[] = [
 ];
 
 const TOOL_BY_NAME = new Map(REGISTERED_TOOLS.map((tool) => [tool.name, tool]));
+const REGISTERED_TOOL_NAMES = new Set(REGISTERED_TOOLS.map((tool) => tool.name));
+
+if (KNOWN_TOOL_NAMES.size !== REGISTERED_TOOL_NAMES.size) {
+  throw new Error("KNOWN_TOOL_NAMES must match REGISTERED_TOOLS.");
+}
+
+for (const toolName of KNOWN_TOOL_NAMES) {
+  if (!REGISTERED_TOOL_NAMES.has(toolName)) {
+    throw new Error(`KNOWN_TOOL_NAMES contains unregistered tool: ${toolName}`);
+  }
+}
 
 function toFunctionParameters(schema: AnyZodSchema): FunctionParameters {
   const jsonSchema = zodToJsonSchema(schema, {
@@ -202,6 +262,14 @@ export const TOOL_SCHEMAS: OpenAI.Chat.Completions.ChatCompletionTool[] = REGIST
   }
 }));
 
+const TOOL_SCHEMA_BY_NAME = new Map(TOOL_SCHEMAS.map((schema) => [schema.function.name, schema]));
+
 export function getToolDefinition(name: string): AgentTool | undefined {
   return TOOL_BY_NAME.get(name);
+}
+
+export function getToolSchemasByName(toolNames: readonly string[]) {
+  return toolNames
+    .map((name) => TOOL_SCHEMA_BY_NAME.get(name))
+    .filter((schema): schema is OpenAI.Chat.Completions.ChatCompletionTool => schema !== undefined);
 }

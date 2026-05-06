@@ -1,5 +1,5 @@
 import OpenAI from "openai";
-import { buildChatCompletionRequest } from "../core/api/sendChatCompletion.js";
+import { buildChatCompletionRequest } from "../core/api/chatCompletionRequest.js";
 import { TOOL_SCHEMAS } from "../tools/registry.js";
 
 export function buildNextTurnContextPreview(options: {

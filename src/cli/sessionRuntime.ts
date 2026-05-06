@@ -1,4 +1,8 @@
 import process from "node:process";
+import { randomUUID } from "node:crypto";
+import { spawn } from "node:child_process";
+import { promises as fs } from "node:fs";
+import os from "node:os";
 import path from "node:path";
 import OpenAI from "openai";
 import {
@@ -19,9 +23,11 @@ import {
 import { ConversationCompactor, DEFAULT_CONVERSATION_COMPACTION_CONFIG } from "../core/conversation/conversationCompactor.js";
 import { MemoryService } from "../core/memory/memoryService.js";
 import { FileHistoryManager, type FileHistoryRestoreResult } from "../core/file-history/fileHistoryManager.js";
+import { isTurnInterruptedError, throwIfAborted, TurnInterruptedError } from "../core/abort.js";
 import type { MemorySnapshot } from "../core/memory/types.js";
 import { buildEffectiveSystemPrompt } from "../core/prompt/builder.js";
 import { PromptSectionResolver } from "../core/prompt/sectionResolver.js";
+import { runAgentTurn } from "../core/agent/runAgentTurn.js";
 import { prepareSessionResume } from "../core/session-history/sessionResume.js";
 import { SessionHistoryStore } from "../core/session-history/sessionStorage.js";
 import type {
@@ -32,18 +38,105 @@ import type {
   SessionResumePayload
 } from "../core/session-history/types.js";
 import { formatCurrentDateLabel, formatSystemDateTime, getSystemTimeZone } from "../core/time/systemTime.js";
-import { getRegisteredToolNames } from "../tools/registry.js";
+import { getRegisteredToolNames, getToolSchemasByName } from "../tools/registry.js";
+import {
+  loadSubagentDefinition,
+  loadSubagentDefinitions,
+  type SubagentDefinition
+} from "../tools/AgentTool/agents.js";
+import { isToolSchemaAllowedByPolicy } from "../tools/toolPolicy.js";
+import { isKnownToolName } from "../tools/toolNames.js";
 import type {
   AskUserQuestionRequest,
   AskUserQuestionResponse,
   FileReadState,
+  SubagentProgressEvent,
+  SubagentTaskInfo,
+  SubagentTaskLaunchResult,
+  SubagentTaskStopResult,
+  SubagentRunInput,
+  SubagentRunResult,
   TodoItem,
   ToolApprovalRequest,
   ToolExecutionContext
 } from "../tools/types.js";
 import { buildNextTurnContextPreview } from "./contextPreview.js";
+import { resolveSubagentAllowedRoots } from "./subagentAllowedRoots.js";
+import {
+  MAX_SUBAGENT_PROGRESS_DETAIL_CHARS,
+  MAX_SUBAGENT_PROGRESS_EVENTS,
+  MAX_SUBAGENT_PROGRESS_MESSAGE_CHARS,
+  normalizePersistedSubagentProgress,
+  truncateProgressText
+} from "./subagentProgress.js";
 
 export type SessionMessage = OpenAI.Chat.Completions.ChatCompletionMessageParam;
+
+interface SubagentSession {
+  taskId: string;
+  agentType: string;
+  description: string;
+  model: string;
+  maxSteps: number;
+  createdAt: string;
+  updatedAt: string;
+  status: SubagentTaskInfo["status"];
+  startedAt?: string;
+  completedAt?: string;
+  output?: string;
+  error?: string;
+  controller?: AbortController;
+  promise?: Promise<void>;
+  runToken?: string;
+  isolateWorktree?: boolean;
+  activeWorktreePath?: string;
+  progress: SubagentProgressEvent[];
+  worktreePath?: string;
+  diffSummary?: string;
+  hasChanges?: boolean;
+  baseWorkspaceRoot?: string;
+  messages: SessionMessage[];
+}
+
+interface PersistedSubagentTaskFile {
+  version: 1;
+  tasks: PersistedSubagentTask[];
+}
+
+interface PersistedSubagentTask {
+  taskId: string;
+  agentType: string;
+  description: string;
+  model: string;
+  maxSteps: number;
+  createdAt: string;
+  updatedAt: string;
+  status: SubagentSession["status"];
+  startedAt?: string;
+  completedAt?: string;
+  output?: string;
+  error?: string;
+  progress?: SubagentProgressEvent[];
+  worktreePath?: string;
+  diffSummary?: string;
+  hasChanges?: boolean;
+  isolateWorktree?: boolean;
+  baseWorkspaceRoot?: string;
+  messages: SessionMessage[];
+}
+
+interface PromptRuntimeContextOptions {
+  availableTools?: string[];
+  workspaceRoot?: string;
+  allowedRoots?: string[];
+  model?: string;
+}
+
+interface SubagentPromptInput {
+  agentType: string;
+  description: string;
+  model?: string;
+}
 
 // SessionRuntime 统一封装会话消息、持久化配置、记忆系统和工具执行依赖。
 export interface SessionRuntime {
@@ -120,6 +213,7 @@ export interface SessionRuntime {
     ) => Promise<AskUserQuestionResponse>;
     getTodos: () => TodoItem[];
     setTodos: (todos: TodoItem[]) => void;
+    recordToolActivity?: (toolName: string) => void;
   }) => ToolExecutionContext;
 }
 
@@ -219,34 +313,86 @@ export async function createSessionRuntime(
   memoryService.setAutoSummaryEnabled(settings.autoSummaryEnabled);
   await memoryService.initialize();
   const fileReadState = new Map<string, FileReadState>();
+  const subagentSessions = new Map<string, SubagentSession>();
+  const tasksDirectory = path.join(config.paths.alyceDirectory, "tasks");
+  const tasksFilePath = path.join(tasksDirectory, "tasks.json");
+  const getWorktreesDirectory = () =>
+    path.join(os.tmpdir(), "alyce-agent-worktrees", sessionHistory.getCurrentSessionId());
+  let subagentTaskPersistQueue: Promise<void> = Promise.resolve();
+  await loadPersistedSubagentTasks();
 
   const getAllowedRootsSnapshot = () =>
     resolveAllowedRoots(config.paths.workspaceRoot, settings, sessionAdditionalDirectories);
 
+  const getPromptRuntimeContext = async (options: PromptRuntimeContextOptions = {}) => {
+    const now = new Date();
+    const workspaceRoot = options.workspaceRoot ?? config.paths.workspaceRoot;
+    return {
+      model: options.model ?? connection.model,
+      workspaceRoot,
+      allowedRoots: options.allowedRoots ?? resolveAllowedRoots(
+        workspaceRoot,
+        settings,
+        sessionAdditionalDirectories
+      ),
+      currentDate: getCurrentDateLabel(now),
+      currentDateTime: formatSystemDateTime(now),
+      timeZone: getSystemTimeZone(),
+      platform: process.platform,
+      availableTools: options.availableTools ?? getRegisteredToolNames(),
+      memory: await memoryService.getPromptContext()
+    };
+  };
+
   // system prompt 始终由当前模型、环境、工具能力和记忆视图重新生成。
   const buildSystemPrompt = async () =>
-    {
-      const now = new Date();
-      return buildEffectiveSystemPrompt(
-        {
-          model: connection.model,
-          workspaceRoot: config.paths.workspaceRoot,
-          allowedRoots: resolveAllowedRoots(
-            config.paths.workspaceRoot,
-            settings,
-            sessionAdditionalDirectories
-          ),
-          currentDate: getCurrentDateLabel(now),
-          currentDateTime: formatSystemDateTime(now),
-          timeZone: getSystemTimeZone(),
-          platform: process.platform,
-          availableTools: getRegisteredToolNames(),
-          memory: await memoryService.getPromptContext()
-        },
-        settings,
-        promptResolver
-      );
-    };
+    buildEffectiveSystemPrompt(
+      await getPromptRuntimeContext(),
+      settings,
+      promptResolver
+    );
+
+  const buildSubagentSystemPrompt = async (
+    input: SubagentPromptInput,
+    workspaceRoot = config.paths.workspaceRoot
+  ) => {
+    const agent = await loadSubagentDefinition(config.paths.workspaceRoot, input.agentType);
+    if (!agent) {
+      throw new Error(`Unknown subagent type: ${input.agentType}`);
+    }
+
+    const resolver = new PromptSectionResolver();
+    const allowedRoots = resolveSubagentAllowedRoots(
+      workspaceRoot,
+      agent,
+      settings,
+      sessionAdditionalDirectories
+    );
+    const basePrompt = await buildEffectiveSystemPrompt(
+      await getPromptRuntimeContext({
+        availableTools: getAllowedToolNamesForSubagent(agent),
+        workspaceRoot,
+        allowedRoots,
+        model: input.model
+      }),
+      {
+        ...settings,
+        appendSystemPrompt: [
+          agent.systemPrompt,
+          settings.appendSystemPrompt?.trim() ? settings.appendSystemPrompt.trim() : ""
+        ].filter(Boolean).join("\n\n")
+      },
+      resolver
+    );
+
+    return [
+      basePrompt,
+      "# Subagent assignment",
+      `Subagent type: ${agent.type}`,
+      `Task description: ${input.description}`,
+      "Return one final report to the parent agent. Do not ask the user directly unless an available question tool is necessary."
+    ].join("\n\n");
+  };
 
   const messages: SessionMessage[] = [
     {
@@ -263,13 +409,17 @@ export async function createSessionRuntime(
     };
   };
 
-  const resetVolatileConversationState = () => {
+  const resetVolatileConversationState = async () => {
+    const interruptedSubagents = abortRunningSubagentTasks();
     memoryService.clearSession();
     conversationCompactor.clear();
     promptResolver.clearSessionCache();
     fileHistoryManager.clearAll();
     fileReadState.clear();
     sessionAdditionalDirectories = [];
+    if (interruptedSubagents) {
+      await persistSubagentTasks();
+    }
   };
 
   const rebuildConnectionState = (options: {
@@ -391,7 +541,7 @@ export async function createSessionRuntime(
       // 清空会话时保留连接与设置，仅重置对话、记忆缓存和文件回滚历史。
       await sessionHistory.flush();
       sessionHistory.startNewSession();
-      resetVolatileConversationState();
+      await resetVolatileConversationState();
       messages.splice(1);
       await resetSystemMessage();
     },
@@ -424,7 +574,7 @@ export async function createSessionRuntime(
       const loaded = await sessionHistory.loadSession(sessionId);
       const resume = prepareSessionResume(loaded);
       sessionHistory.adoptExistingSession(resume.sessionId, loaded.lastSequence);
-      resetVolatileConversationState();
+      await resetVolatileConversationState();
       messages.splice(
         0,
         messages.length,
@@ -479,7 +629,8 @@ export async function createSessionRuntime(
       requestApproval,
       askUserQuestions,
       getTodos,
-      setTodos
+      setTodos,
+      recordToolActivity
     }) => ({
       // 工具在执行前会先登记 turnId，并在写文件前抓取快照，便于中断后回滚。
       workspaceRoot: config.paths.workspaceRoot,
@@ -497,6 +648,7 @@ export async function createSessionRuntime(
       askUserQuestions,
       getTodos,
       setTodos,
+      recordToolActivity,
       captureFileBeforeWrite: (absolutePath) => fileHistoryManager.captureBeforeWrite(turnId, absolutePath),
       recordFileRead: (absolutePath, state) => {
         fileReadState.set(path.resolve(absolutePath), { ...state });
@@ -504,9 +656,771 @@ export async function createSessionRuntime(
       getFileReadState: (absolutePath) => {
         const state = fileReadState.get(path.resolve(absolutePath));
         return state ? { ...state } : undefined;
-      }
+      },
+      runSubagent: (input) => runSubagent(input, {
+        turnId,
+        abortSignal,
+        requestApproval,
+        askUserQuestions,
+        getTodos,
+        setTodos,
+        recordToolActivity
+      }),
+      launchSubagentTask: (input) => launchSubagentTask(input, {
+        turnId,
+        requestApproval,
+        askUserQuestions,
+        getTodos,
+        setTodos,
+        recordToolActivity
+      }),
+      listSubagentTasks: () => listSubagentTasks(),
+      getSubagentTask: (taskId) => getSubagentTask(taskId),
+      stopSubagentTask: (taskId) => stopSubagentTask(taskId),
+      getSubagentDefinition: (type) => loadSubagentDefinition(config.paths.workspaceRoot, type),
+      listSubagentDefinitions: () => loadSubagentDefinitions(config.paths.workspaceRoot)
     })
   };
+
+  async function runSubagent(
+    input: SubagentRunInput,
+    parentContextOptions: Parameters<SessionRuntime["createToolContext"]>[0]
+  ): Promise<SubagentRunResult> {
+    throwIfAborted(parentContextOptions.abortSignal);
+    const session = await startSubagentSession(input);
+    let output: string;
+    try {
+      output = await runSubagentSession(session, parentContextOptions);
+      const now = new Date().toISOString();
+      session.status = "completed";
+      session.output = output;
+      session.error = undefined;
+      session.completedAt = now;
+      session.updatedAt = now;
+      appendSubagentProgress(session, "status", "Subagent completed.");
+      await persistSubagentTasks();
+    } catch (error) {
+      const now = new Date().toISOString();
+      const isInterrupted = isTurnInterruptedError(error, parentContextOptions.abortSignal);
+      session.status = isInterrupted ? "stopped" : "failed";
+      session.error = isInterrupted
+        ? "Subagent task was interrupted by the parent turn."
+        : error instanceof Error
+          ? error.message
+          : String(error);
+      session.completedAt = now;
+      session.updatedAt = now;
+      appendSubagentProgress(
+        session,
+        "status",
+        `${isInterrupted ? "Subagent interrupted" : "Subagent failed"}: ${session.error}`
+      );
+      await persistSubagentTasks();
+      throw error;
+    }
+
+    return {
+      taskId: session.taskId,
+      agentType: session.agentType,
+      description: input.description,
+      model: session.model,
+      maxSteps: session.maxSteps,
+      output,
+      ...(session.worktreePath ? { worktreePath: session.worktreePath } : {}),
+      ...(session.diffSummary ? { diffSummary: session.diffSummary } : {}),
+      ...(session.hasChanges !== undefined ? { hasChanges: session.hasChanges } : {})
+    };
+  }
+
+  async function launchSubagentTask(
+    input: SubagentRunInput,
+    parentContextOptions: Omit<Parameters<SessionRuntime["createToolContext"]>[0], "abortSignal">
+  ): Promise<SubagentTaskLaunchResult> {
+    const controller = new AbortController();
+    const session = await startSubagentSession(input);
+    const runToken = session.runToken;
+
+    session.controller = controller;
+    session.isolateWorktree = input.isolateWorktree;
+    session.promise = runSubagentSession(session, {
+      ...parentContextOptions,
+      abortSignal: controller.signal
+    }).then((output) => {
+      if (session.runToken !== runToken || session.status !== "running") {
+        return;
+      }
+
+      const now = new Date().toISOString();
+      session.status = "completed";
+      session.output = output;
+      session.error = undefined;
+      session.completedAt = now;
+      session.updatedAt = now;
+      session.controller = undefined;
+      session.promise = undefined;
+      appendSubagentProgress(session, "status", "Background subagent completed.");
+      queuePersistSubagentTasks();
+    }).catch((error: unknown) => {
+      if (session.runToken !== runToken) {
+        return;
+      }
+
+      const now = new Date().toISOString();
+      const wasStopped = session.status === "stopped";
+      session.status = wasStopped ? "stopped" : "failed";
+      session.error = wasStopped
+        ? "Subagent task was stopped by TaskStop."
+        : error instanceof Error
+          ? error.message
+          : String(error);
+      session.completedAt = now;
+      session.updatedAt = now;
+      session.controller = undefined;
+      session.promise = undefined;
+      appendSubagentProgress(session, "status", `${wasStopped ? "Background subagent stopped" : "Background subagent failed"}: ${session.error}`);
+      queuePersistSubagentTasks();
+    });
+    await persistSubagentTasks();
+
+    return {
+      taskId: session.taskId,
+      agentType: session.agentType,
+      description: session.description,
+      status: "running",
+      model: session.model,
+      maxSteps: session.maxSteps,
+      startedAt: session.startedAt ?? session.updatedAt
+    };
+  }
+
+  async function startSubagentSession(input: SubagentRunInput): Promise<SubagentSession> {
+    const agent = await loadSubagentDefinition(config.paths.workspaceRoot, input.agentType);
+    if (!agent) {
+      throw new Error(`Unknown subagent type: ${input.agentType}`);
+    }
+
+    const configuredMaxSteps = input.maxSteps ?? agent.maxSteps ?? settings.maxSteps;
+    const maxSteps = Math.max(1, Math.min(settings.maxSteps, configuredMaxSteps));
+    const model = input.model ?? agent.model ?? connection.model;
+    const session = await getOrCreateSubagentSession(input, {
+      model,
+      systemPrompt: await buildSubagentSystemPrompt({
+        agentType: input.agentType,
+        description: input.description,
+        model
+      }),
+      maxSteps
+    });
+    if (session.status === "running" && session.promise) {
+      throw new Error(`Subagent task_id ${session.taskId} is already running.`);
+    }
+
+    const now = new Date().toISOString();
+    const isExistingSession = session.startedAt !== undefined;
+    const runToken = randomUUID();
+
+    session.messages.push({
+      role: "user",
+      content: input.prompt
+    });
+    session.description = input.description;
+    session.model = input.model ?? agent.model ?? session.model;
+    session.maxSteps = maxSteps;
+    session.status = "running";
+    session.error = undefined;
+    session.output = undefined;
+    session.completedAt = undefined;
+    session.promise = undefined;
+    session.controller = undefined;
+    session.runToken = runToken;
+    session.isolateWorktree = input.isolateWorktree;
+    session.activeWorktreePath = undefined;
+    if (!isExistingSession) {
+      session.worktreePath = undefined;
+    }
+    session.diffSummary = undefined;
+    session.hasChanges = undefined;
+    session.baseWorkspaceRoot = config.paths.workspaceRoot;
+    session.startedAt = now;
+    session.updatedAt = now;
+    appendSubagentProgress(session, "status", `Subagent started: ${input.description}`);
+    await persistSubagentTasks();
+
+    return session;
+  }
+
+  async function runSubagentSession(
+    session: SubagentSession,
+    parentContextOptions: Parameters<SessionRuntime["createToolContext"]>[0]
+  ): Promise<string> {
+    const agent = await loadSubagentDefinition(config.paths.workspaceRoot, session.agentType);
+    if (!agent) {
+      throw new Error(`Unknown subagent type: ${session.agentType}`);
+    }
+
+    const clientForSubagent = client ?? createClientFromConnection(connection);
+    if (!clientForSubagent) {
+      throw new Error("Connection is incomplete. Open settings and fill API key, URL, and model.");
+    }
+
+    const runToken = session.runToken;
+    const isCurrentRun = () => session.runToken === runToken;
+    const workspaceRoot = await prepareSubagentWorkspace(session, agent);
+    throwIfAborted(parentContextOptions.abortSignal);
+    if (!isCurrentRun()) {
+      throw new TurnInterruptedError("subagent-superseded", "Subagent run was superseded by a newer task state.");
+    }
+
+    const recordProgress = (
+      type: SubagentProgressEvent["type"],
+      message: string,
+      patch: Partial<SubagentProgressEvent> = {}
+    ) => {
+      if (!isCurrentRun()) {
+        return;
+      }
+
+      appendSubagentProgress(session, type, message, patch);
+      queuePersistSubagentTasks();
+    };
+    session.messages[0] = {
+      role: "system",
+      content: await buildSubagentSystemPrompt({
+        agentType: session.agentType,
+        description: session.description,
+        model: session.model
+      }, workspaceRoot)
+    };
+
+    const subagentContext: ToolExecutionContext = {
+      workspaceRoot,
+      get allowedRoots() {
+        return resolveSubagentAllowedRoots(
+          workspaceRoot,
+          agent,
+          settings,
+          sessionAdditionalDirectories
+        );
+      },
+      commandTimeoutMs: settings.commandTimeoutMs,
+      turnId: parentContextOptions.turnId,
+      abortSignal: parentContextOptions.abortSignal,
+      requestApproval: (request) =>
+        parentContextOptions.requestApproval(
+          {
+            ...request,
+            title: `[${agent.label}] ${request.title}`,
+            details: [`Subagent: ${agent.type}`, ...request.details]
+          },
+          { signal: parentContextOptions.abortSignal }
+        ),
+      askUserQuestions: parentContextOptions.askUserQuestions,
+      getTodos: parentContextOptions.getTodos,
+      setTodos: parentContextOptions.setTodos,
+      recordToolActivity: parentContextOptions.recordToolActivity,
+      toolPolicy: agent.policy,
+      captureFileBeforeWrite: (absolutePath) =>
+        session.activeWorktreePath && isPathInsideDirectory(session.activeWorktreePath, absolutePath)
+          ? Promise.resolve()
+          : fileHistoryManager.captureBeforeWrite(parentContextOptions.turnId, absolutePath),
+      recordFileRead: (absolutePath, state) => {
+        fileReadState.set(path.resolve(absolutePath), { ...state });
+      },
+      getFileReadState: (absolutePath) => {
+        const state = fileReadState.get(path.resolve(absolutePath));
+        return state ? { ...state } : undefined;
+      }
+    };
+
+    try {
+      return await runAgentTurn(clientForSubagent, session.messages, {
+        model: session.model,
+        maxSteps: session.maxSteps,
+        context: subagentContext,
+        tools: getToolSchemasByName(getAllowedToolNamesForSubagent(agent)),
+        requestPatches: config.requestPatches,
+        abortSignal: parentContextOptions.abortSignal,
+        messageTimestampsEnabled: settings.messageTimestampsEnabled,
+        gcliGeminiCompat: shouldUseGcliGeminiCompat(connection.baseURL, session.model),
+        onThinking: (content) => {
+          recordProgress("thinking", content);
+        },
+        onToolCallStart: (toolName, rawArguments) => {
+          recordProgress("tool_start", `Running ${toolName}`, {
+            toolName,
+            rawArguments
+          });
+        },
+        onToolCallResult: (toolName, result, rawArguments) => {
+          recordProgress("tool_result", `Finished ${toolName}`, {
+            toolName,
+            rawArguments,
+            result
+          });
+        }
+      });
+    } finally {
+      if (isCurrentRun()) {
+        await finalizeSubagentWorkspace(session);
+      }
+    }
+  }
+
+  async function getOrCreateSubagentSession(
+    input: SubagentRunInput,
+    options: {
+      model: string;
+      maxSteps: number;
+      systemPrompt: string;
+    }
+  ): Promise<SubagentSession> {
+    if (input.taskId) {
+      const existing = subagentSessions.get(input.taskId);
+      if (!existing) {
+        throw new Error(`Unknown subagent task_id: ${input.taskId}`);
+      }
+
+      if (existing.agentType !== input.agentType) {
+        throw new Error(
+          `Subagent task_id ${input.taskId} belongs to ${existing.agentType}, not ${input.agentType}.`
+        );
+      }
+
+      return existing;
+    }
+
+    const taskId = randomUUID();
+    const now = new Date().toISOString();
+    const session: SubagentSession = {
+      taskId,
+      agentType: input.agentType,
+      description: input.description,
+      model: options.model,
+      maxSteps: options.maxSteps,
+      createdAt: now,
+      updatedAt: now,
+      status: "completed",
+      progress: [],
+      messages: [
+        {
+          role: "system",
+          content: options.systemPrompt
+        },
+        ...(input.forkContext ? buildForkContextMessages() : [])
+      ]
+    };
+    subagentSessions.set(taskId, session);
+    await persistSubagentTasks();
+    return session;
+  }
+
+  function listSubagentTasks(): SubagentTaskInfo[] {
+    return [...subagentSessions.values()]
+      .map(toSubagentTaskInfo)
+      .sort((left, right) => right.updatedAt.localeCompare(left.updatedAt));
+  }
+
+  function getSubagentTask(taskId: string): SubagentTaskInfo | undefined {
+    const session = subagentSessions.get(taskId);
+    return session ? toSubagentTaskInfo(session) : undefined;
+  }
+
+  async function stopSubagentTask(taskId: string): Promise<SubagentTaskStopResult> {
+    const session = subagentSessions.get(taskId);
+    if (!session) {
+      return {
+        taskId,
+        status: "not_found",
+        message: `Unknown subagent task_id: ${taskId}`
+      };
+    }
+
+    if (session.status !== "running") {
+      return {
+        taskId,
+        status: session.status,
+        message: `Subagent task is already ${session.status}.`,
+        task: toSubagentTaskInfo(session)
+      };
+    }
+
+    session.controller?.abort("task-stop");
+    const now = new Date().toISOString();
+    session.status = "stopped";
+    session.error = "Subagent task was stopped by TaskStop.";
+    session.completedAt = now;
+    session.updatedAt = now;
+    appendSubagentProgress(session, "status", "Subagent task stop requested.");
+    await persistSubagentTasks();
+
+    return {
+      taskId,
+      status: session.status,
+      message: "Stop requested for background subagent task.",
+      stopRequested: true,
+      task: toSubagentTaskInfo(session)
+    };
+  }
+
+  function abortRunningSubagentTasks() {
+    let interrupted = false;
+    for (const session of subagentSessions.values()) {
+      if (session.status !== "running") {
+        continue;
+      }
+
+      interrupted = true;
+      session.controller?.abort("session-reset");
+      const now = new Date().toISOString();
+      session.status = "failed";
+      session.error = "Subagent task was interrupted by session reset.";
+      session.completedAt = now;
+      session.updatedAt = now;
+      session.controller = undefined;
+      session.promise = undefined;
+      session.runToken = randomUUID();
+      appendSubagentProgress(session, "status", "Subagent task interrupted by session reset.");
+    }
+
+    return interrupted;
+  }
+
+  function toSubagentTaskInfo(session: SubagentSession): SubagentTaskInfo {
+    return {
+      taskId: session.taskId,
+      agentType: session.agentType,
+      description: session.description,
+      model: session.model,
+      maxSteps: session.maxSteps,
+      status: session.status,
+      createdAt: session.createdAt,
+      updatedAt: session.updatedAt,
+      ...(session.startedAt ? { startedAt: session.startedAt } : {}),
+      ...(session.completedAt ? { completedAt: session.completedAt } : {}),
+      ...(session.output !== undefined ? { output: session.output } : {}),
+      ...(session.error !== undefined ? { error: session.error } : {}),
+      progress: [...session.progress],
+      ...(session.worktreePath ? { worktreePath: session.worktreePath } : {}),
+      ...(session.diffSummary ? { diffSummary: session.diffSummary } : {}),
+      ...(session.hasChanges !== undefined ? { hasChanges: session.hasChanges } : {})
+    };
+  }
+
+  function appendSubagentProgress(
+    session: SubagentSession,
+    type: SubagentProgressEvent["type"],
+    message: string,
+    patch: Partial<SubagentProgressEvent> = {}
+  ) {
+    session.progress.push({
+      timestamp: new Date().toISOString(),
+      type,
+      message: truncateProgressText(message, MAX_SUBAGENT_PROGRESS_MESSAGE_CHARS),
+      ...(patch.toolName !== undefined
+        ? { toolName: truncateProgressText(patch.toolName, MAX_SUBAGENT_PROGRESS_DETAIL_CHARS) }
+        : {}),
+      ...(patch.rawArguments !== undefined
+        ? { rawArguments: truncateProgressText(patch.rawArguments, MAX_SUBAGENT_PROGRESS_DETAIL_CHARS) }
+        : {}),
+      ...(patch.result !== undefined
+        ? { result: truncateProgressText(patch.result, MAX_SUBAGENT_PROGRESS_DETAIL_CHARS) }
+        : {})
+    });
+    if (session.progress.length > MAX_SUBAGENT_PROGRESS_EVENTS) {
+      session.progress.splice(0, session.progress.length - MAX_SUBAGENT_PROGRESS_EVENTS);
+    }
+    session.updatedAt = new Date().toISOString();
+  }
+
+  async function loadPersistedSubagentTasks() {
+    let parsed: PersistedSubagentTaskFile;
+    try {
+      const raw = await fs.readFile(tasksFilePath, "utf8");
+      parsed = JSON.parse(raw) as PersistedSubagentTaskFile;
+    } catch {
+      return;
+    }
+
+    if (parsed.version !== 1 || !Array.isArray(parsed.tasks)) {
+      return;
+    }
+
+    let migrated = false;
+    for (const task of parsed.tasks) {
+      if (!isPersistedSubagentTask(task)) {
+        continue;
+      }
+
+      const wasRunning = task.status === "running";
+      const restoredSession: SubagentSession = {
+        taskId: task.taskId,
+        agentType: task.agentType,
+        description: task.description,
+        model: task.model,
+        maxSteps: task.maxSteps,
+        createdAt: task.createdAt,
+        updatedAt: task.updatedAt,
+        status: wasRunning ? "failed" : task.status,
+        startedAt: task.startedAt,
+        completedAt: task.completedAt,
+        output: task.output,
+        error: wasRunning
+          ? "Subagent task was interrupted because Alyce restarted."
+          : task.error,
+        progress: normalizePersistedSubagentProgress(task.progress),
+        worktreePath: task.worktreePath,
+        diffSummary: task.diffSummary,
+        hasChanges: task.hasChanges,
+        isolateWorktree: task.isolateWorktree,
+        baseWorkspaceRoot: task.baseWorkspaceRoot,
+        messages: task.messages
+      };
+
+      if (wasRunning) {
+        restoredSession.completedAt = new Date().toISOString();
+        appendSubagentProgress(
+          restoredSession,
+          "status",
+          "Subagent task marked failed because Alyce restarted before it completed."
+        );
+        migrated = true;
+      }
+
+      subagentSessions.set(task.taskId, restoredSession);
+    }
+
+    if (migrated) {
+      queuePersistSubagentTasks();
+    }
+  }
+
+  async function persistSubagentTasks() {
+    const payload = createPersistedSubagentTaskPayload();
+
+    subagentTaskPersistQueue = subagentTaskPersistQueue
+      .catch(() => undefined)
+      .then(async () => {
+        await fs.mkdir(tasksDirectory, { recursive: true });
+        await fs.writeFile(tasksFilePath, JSON.stringify(payload, null, 2), "utf8");
+      });
+
+    await subagentTaskPersistQueue;
+  }
+
+  function queuePersistSubagentTasks() {
+    void persistSubagentTasks().catch(() => undefined);
+  }
+
+  function createPersistedSubagentTaskPayload(): PersistedSubagentTaskFile {
+    return {
+      version: 1,
+      tasks: [...subagentSessions.values()].map((session) => ({
+        taskId: session.taskId,
+        agentType: session.agentType,
+        description: session.description,
+        model: session.model,
+        maxSteps: session.maxSteps,
+        createdAt: session.createdAt,
+        updatedAt: session.updatedAt,
+        status: session.status,
+        ...(session.startedAt ? { startedAt: session.startedAt } : {}),
+        ...(session.completedAt ? { completedAt: session.completedAt } : {}),
+        ...(session.output !== undefined ? { output: session.output } : {}),
+        ...(session.error !== undefined ? { error: session.error } : {}),
+        ...(session.progress.length > 0 ? { progress: session.progress } : {}),
+        ...(session.worktreePath ? { worktreePath: session.worktreePath } : {}),
+        ...(session.diffSummary ? { diffSummary: session.diffSummary } : {}),
+        ...(session.hasChanges !== undefined ? { hasChanges: session.hasChanges } : {}),
+        ...(session.isolateWorktree !== undefined ? { isolateWorktree: session.isolateWorktree } : {}),
+        ...(session.baseWorkspaceRoot ? { baseWorkspaceRoot: session.baseWorkspaceRoot } : {}),
+        messages: session.messages
+      }))
+    };
+  }
+
+  function buildForkContextMessages(): SessionMessage[] {
+    const forkedMessages = messages
+      .slice(1)
+      .filter((message) => message.role === "user" || message.role === "assistant")
+      .slice(-12);
+
+    if (forkedMessages.length === 0) {
+      return [];
+    }
+
+    return [
+      {
+        role: "user",
+        content: [
+          "System-provided fork context from the parent conversation.",
+          "Use this only as background context for the delegated task; do not answer it directly.",
+          JSON.stringify(forkedMessages, null, 2)
+        ].join("\n\n")
+      }
+    ];
+  }
+
+  async function prepareSubagentWorkspace(
+    session: SubagentSession,
+    agent: SubagentDefinition
+  ): Promise<string> {
+    const wantsIsolation = session.isolateWorktree === true ||
+      (session.isolateWorktree !== false && agent.policy.allowWrite);
+    if (!wantsIsolation) {
+      session.activeWorktreePath = undefined;
+      session.worktreePath = undefined;
+      session.baseWorkspaceRoot = undefined;
+      return config.paths.workspaceRoot;
+    }
+
+    if (!await isGitRepository(config.paths.workspaceRoot)) {
+      session.activeWorktreePath = undefined;
+      session.worktreePath = undefined;
+      session.baseWorkspaceRoot = undefined;
+      if (session.isolateWorktree === true) {
+        throw new Error("isolate_worktree requires the workspace to be inside a git repository.");
+      }
+
+      appendSubagentProgress(
+        session,
+        "status",
+        "Writable subagent requested isolation, but workspace is not a git repository; continuing in the main workspace."
+      );
+      return config.paths.workspaceRoot;
+    }
+
+    if (session.worktreePath && await pathExists(session.worktreePath)) {
+      session.activeWorktreePath = session.worktreePath;
+      return session.worktreePath;
+    }
+
+    const worktreesDirectory = getWorktreesDirectory();
+    await fs.mkdir(worktreesDirectory, { recursive: true });
+    const worktreePath = path.join(worktreesDirectory, session.taskId);
+    await fs.rm(worktreePath, { recursive: true, force: true });
+    await runGitCommand(["worktree", "prune"], config.paths.workspaceRoot);
+    await runGitCommand(["worktree", "add", "--detach", worktreePath, "HEAD"], config.paths.workspaceRoot);
+    session.worktreePath = worktreePath;
+    session.activeWorktreePath = worktreePath;
+    session.baseWorkspaceRoot = config.paths.workspaceRoot;
+    appendSubagentProgress(session, "status", `Created isolated git worktree: ${worktreePath}`);
+    await persistSubagentTasks();
+    return worktreePath;
+  }
+
+  async function finalizeSubagentWorkspace(session: SubagentSession) {
+    if (!session.activeWorktreePath) {
+      return;
+    }
+
+    try {
+      const diffSummary = await runGitCommand(["status", "--short"], session.activeWorktreePath);
+      session.diffSummary = diffSummary.trim() || "No worktree changes.";
+      session.hasChanges = diffSummary.trim().length > 0;
+      appendSubagentProgress(
+        session,
+        "status",
+        session.hasChanges
+          ? "Isolated worktree has changes."
+          : "Isolated worktree has no changes."
+      );
+      await persistSubagentTasks();
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      session.diffSummary = `Unable to inspect isolated worktree: ${message}`;
+      session.hasChanges = undefined;
+      appendSubagentProgress(session, "status", session.diffSummary);
+      await persistSubagentTasks();
+    }
+  }
+
+  function getAllowedToolNamesForSubagent(agent: SubagentDefinition) {
+    return agent.allowedTools.filter((toolName) =>
+      isKnownToolName(toolName) && isToolSchemaAllowedByPolicy(toolName, agent.policy)
+    );
+  }
+}
+
+function isPersistedSubagentTask(value: unknown): value is PersistedSubagentTask {
+  if (!value || typeof value !== "object") {
+    return false;
+  }
+
+  const record = value as Partial<PersistedSubagentTask>;
+  return typeof record.taskId === "string" &&
+    typeof record.agentType === "string" &&
+    typeof record.description === "string" &&
+    typeof record.model === "string" &&
+    typeof record.maxSteps === "number" &&
+    typeof record.createdAt === "string" &&
+    typeof record.updatedAt === "string" &&
+    isPersistedSubagentStatus(record.status) &&
+    Array.isArray(record.messages);
+}
+
+function isPersistedSubagentStatus(value: unknown): value is SubagentSession["status"] {
+  return value === "running" ||
+    value === "completed" ||
+    value === "failed" ||
+    value === "stopped";
+}
+
+function isPathInsideDirectory(directory: string, candidate: string): boolean {
+  const relative = path.relative(path.resolve(directory), path.resolve(candidate));
+  return relative.length === 0 || (!relative.startsWith("..") && !path.isAbsolute(relative));
+}
+
+async function isGitRepository(cwd: string): Promise<boolean> {
+  const result = await runProcess("git", ["rev-parse", "--is-inside-work-tree"], cwd);
+  return result.exitCode === 0 && result.stdout.trim() === "true";
+}
+
+async function pathExists(absolutePath: string): Promise<boolean> {
+  try {
+    await fs.access(absolutePath);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+async function runGitCommand(args: string[], cwd: string): Promise<string> {
+  const result = await runProcess("git", args, cwd);
+  if (result.exitCode !== 0) {
+    throw new Error(`git ${args.join(" ")} failed: ${result.stderr || result.stdout}`);
+  }
+
+  return result.stdout;
+}
+
+function runProcess(
+  command: string,
+  args: string[],
+  cwd: string
+): Promise<{ exitCode: number | null; stdout: string; stderr: string }> {
+  return new Promise((resolve, reject) => {
+    const child = spawn(command, args, {
+      cwd,
+      windowsHide: true
+    });
+    const stdout: Buffer[] = [];
+    const stderr: Buffer[] = [];
+
+    child.stdout.on("data", (chunk: Buffer | string) => {
+      stdout.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
+    });
+    child.stderr.on("data", (chunk: Buffer | string) => {
+      stderr.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
+    });
+    child.on("error", reject);
+    child.on("close", (exitCode) => {
+      resolve({
+        exitCode,
+        stdout: Buffer.concat(stdout).toString("utf8"),
+        stderr: Buffer.concat(stderr).toString("utf8")
+      });
+    });
+  });
 }
 
 function mergePersistedSource<T extends object>(base: Partial<T>, patch: Partial<T>): Partial<T> {
@@ -562,6 +1476,22 @@ function createClientFromConnection(connection: ConnectionConfig): OpenAI | null
     apiKey: connection.apiKey,
     baseURL: connection.baseURL
   });
+}
+
+function shouldUseGcliGeminiCompat(baseURL: string | undefined, model: string): boolean {
+  if (!baseURL) {
+    return false;
+  }
+
+  if (!model.trim().toLowerCase().startsWith("gemini")) {
+    return false;
+  }
+
+  try {
+    return new URL(baseURL).hostname.toLowerCase() === "gcli.ggchan.dev";
+  } catch {
+    return false;
+  }
 }
 
 function normalizeConnectionPatch(

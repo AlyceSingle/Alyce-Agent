@@ -1,4 +1,4 @@
-export type ToolPermissionKind = "command" | "file-write" | "web" | "external-directory";
+export type ToolPermissionKind = "agent" | "command" | "file-write" | "web" | "external-directory";
 
 export interface ExternalDirectoryApprovalScope {
   type: "external-directory";
@@ -56,6 +56,100 @@ export interface TodoItem {
   status: TodoStatus;
 }
 
+export interface SubagentRunInput {
+  agentType: string;
+  description: string;
+  prompt: string;
+  taskId?: string;
+  model?: string;
+  maxSteps?: number;
+  forkContext?: boolean;
+  isolateWorktree?: boolean;
+}
+
+export interface SubagentRunResult {
+  taskId: string;
+  agentType: string;
+  description: string;
+  model: string;
+  maxSteps: number;
+  output: string;
+  worktreePath?: string;
+  diffSummary?: string;
+  hasChanges?: boolean;
+}
+
+export type SubagentTaskStatus = "running" | "completed" | "failed" | "stopped";
+
+export type SubagentProgressEventType = "thinking" | "tool_start" | "tool_result" | "status";
+
+export interface SubagentProgressEvent {
+  timestamp: string;
+  type: SubagentProgressEventType;
+  message?: string;
+  toolName?: string;
+  rawArguments?: string;
+  result?: string;
+}
+
+export interface SubagentTaskInfo {
+  taskId: string;
+  agentType: string;
+  description: string;
+  model: string;
+  maxSteps: number;
+  status: SubagentTaskStatus;
+  createdAt: string;
+  updatedAt: string;
+  startedAt?: string;
+  completedAt?: string;
+  output?: string;
+  error?: string;
+  progress: SubagentProgressEvent[];
+  worktreePath?: string;
+  diffSummary?: string;
+  hasChanges?: boolean;
+}
+
+export interface SubagentTaskLaunchResult {
+  taskId: string;
+  agentType: string;
+  description: string;
+  status: "running";
+  model: string;
+  maxSteps: number;
+  startedAt: string;
+}
+
+export interface SubagentTaskStopResult {
+  taskId: string;
+  status: SubagentTaskStatus | "not_found";
+  message: string;
+  stopRequested?: boolean;
+  task?: SubagentTaskInfo;
+}
+
+export type ShellPermissionMode = "none" | "read-only" | "any";
+
+export interface ToolPermissionPolicy {
+  allowWrite: boolean;
+  allowNetwork: boolean;
+  shell: ShellPermissionMode;
+  allowedRoots?: string[];
+}
+
+export interface SubagentDefinitionInfo {
+  type: string;
+  label: string;
+  description: string;
+  systemPrompt: string;
+  allowedTools: string[];
+  policy: ToolPermissionPolicy;
+  maxSteps?: number;
+  model?: string;
+  source?: "built-in" | "custom";
+}
+
 export type FileReadStateKind =
   | "text"
   | "directory"
@@ -93,12 +187,21 @@ export interface ToolExecutionContext {
   ) => Promise<AskUserQuestionResponse>;
   getTodos: () => TodoItem[];
   setTodos: (todos: TodoItem[]) => void;
+  recordToolActivity?: (toolName: string) => void;
+  toolPolicy?: ToolPermissionPolicy;
   commandTimeoutMs: number;
   turnId: string;
   abortSignal: AbortSignal;
   captureFileBeforeWrite: (absolutePath: string) => Promise<void>;
   recordFileRead: (absolutePath: string, state: FileReadState) => void;
   getFileReadState: (absolutePath: string) => FileReadState | undefined;
+  runSubagent?: (input: SubagentRunInput) => Promise<SubagentRunResult>;
+  launchSubagentTask?: (input: SubagentRunInput) => Promise<SubagentTaskLaunchResult>;
+  listSubagentTasks?: () => SubagentTaskInfo[];
+  getSubagentTask?: (taskId: string) => SubagentTaskInfo | undefined;
+  stopSubagentTask?: (taskId: string) => Promise<SubagentTaskStopResult>;
+  getSubagentDefinition?: (type: string) => Promise<SubagentDefinitionInfo | undefined>;
+  listSubagentDefinitions?: () => Promise<SubagentDefinitionInfo[]>;
 }
 
 export type JsonRecord = Record<string, unknown>;

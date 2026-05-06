@@ -1,17 +1,13 @@
 import OpenAI from "openai";
-import { formatSystemDateTime } from "../time/systemTime.js";
+import { extractAssistantTextContent } from "./assistantContent.js";
 import {
-  ASSISTANT_TOOL_CALL_PLACEHOLDER,
-  extractAssistantTextContent
-} from "./assistantContent.js";
+  buildChatCompletionRequest,
+  type ChatCompletionRequestOptions
+} from "./chatCompletionRequest.js";
 import { applyRequestPatchOperations, type RequestPatchOperation } from "./requestPatch.js";
 
-type MessageParam = OpenAI.Chat.Completions.ChatCompletionMessageParam;
-
-type ChatCreateParams = OpenAI.Chat.Completions.ChatCompletionCreateParamsNonStreaming;
 const RECONNECT_DELAY_MS = 10_000;
 const MAX_RECONNECT_RETRIES = 5;
-const ASSISTANT_EMPTY_RESPONSE_PLACEHOLDER = "(assistant response had no text output)";
 const EMPTY_MODEL_RESPONSE_ERROR_CODE = "EMPTY_MODEL_RESPONSE";
 const NO_TEXT_OUTPUT_ERROR_CODE = "NO_TEXT_OUTPUT";
 
@@ -29,110 +25,10 @@ export type ChatCompletionReconnectEvent =
       attemptsUsed: number;
     };
 
-export interface SendChatCompletionOptions {
-  model: string;
-  messages: MessageParam[];
-  tools: OpenAI.Chat.Completions.ChatCompletionTool[];
-  temperature?: number;
-  toolChoice?: ChatCreateParams["tool_choice"];
-  gcliGeminiCompat?: boolean;
-  messageTimestampsEnabled?: boolean;
-  currentRequestTimestamp?: string;
+export interface SendChatCompletionOptions extends ChatCompletionRequestOptions {
   requestPatches?: RequestPatchOperation[];
   abortSignal?: AbortSignal;
   onReconnect?: (event: ChatCompletionReconnectEvent) => void;
-}
-
-function normalizeMessagesForApi(
-  messages: MessageParam[],
-  options: {
-    gcliGeminiCompat: boolean;
-    messageTimestampsEnabled: boolean;
-    currentRequestTimestamp?: string;
-  }
-): MessageParam[] {
-  const normalizedMessages = messages.map((message) => {
-    if (
-      message.role === "tool" &&
-      typeof message.content === "string" &&
-      message.content.trim().length === 0
-    ) {
-      return {
-        ...message,
-        content: "(tool returned empty output)"
-      };
-    }
-
-    if (message.role === "assistant") {
-      const normalizedContent = extractAssistantTextContent(message.content);
-      if (hasAssistantToolRequest(message)) {
-        return {
-          ...message,
-          content: normalizedContent ?? (options.gcliGeminiCompat ? ASSISTANT_TOOL_CALL_PLACEHOLDER : "")
-        };
-      }
-
-      if (normalizedContent !== undefined) {
-        if (typeof message.content === "string" && message.content === normalizedContent) {
-          return message;
-        }
-
-        return {
-          ...message,
-          content: normalizedContent
-        };
-      }
-
-      return {
-        ...message,
-        content: ASSISTANT_EMPTY_RESPONSE_PLACEHOLDER
-      };
-    }
-
-    return message;
-  });
-
-  if (!options.messageTimestampsEnabled) {
-    return normalizedMessages;
-  }
-
-  const currentRequestTimestamp = options.currentRequestTimestamp ?? formatSystemDateTime(new Date());
-  const timestampMessage: OpenAI.Chat.Completions.ChatCompletionSystemMessageParam = {
-    role: "system",
-    content: [
-      "# Current System Time",
-      `Authoritative local time for this request: ${currentRequestTimestamp}`,
-      "Resolve words like today, yesterday, tomorrow, now, latest, currently, and recently against this timestamp.",
-      "If timing is ambiguous or the user may be mistaken, state the exact date explicitly."
-    ].join("\n")
-  };
-
-  let insertIndex = 0;
-  while (insertIndex < normalizedMessages.length && normalizedMessages[insertIndex]?.role === "system") {
-    insertIndex += 1;
-  }
-
-  return [
-    ...normalizedMessages.slice(0, insertIndex),
-    timestampMessage,
-    ...normalizedMessages.slice(insertIndex)
-  ];
-}
-
-export function buildChatCompletionRequest(
-  options: Omit<SendChatCompletionOptions, "abortSignal" | "requestPatches" | "onReconnect">
-): ChatCreateParams {
-  return {
-    model: options.model,
-    messages: normalizeMessagesForApi(options.messages, {
-      gcliGeminiCompat: options.gcliGeminiCompat ?? false,
-      messageTimestampsEnabled: options.messageTimestampsEnabled ?? false,
-      currentRequestTimestamp: options.currentRequestTimestamp
-    }),
-    tools: options.tools,
-    tool_choice: options.toolChoice ?? "auto",
-    temperature: options.temperature ?? 0.2
-  };
 }
 
 // 统一模型请求发送逻辑，支持请求标准化和 JSON Patch 二次改写。

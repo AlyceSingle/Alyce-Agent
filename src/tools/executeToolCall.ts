@@ -3,6 +3,7 @@ import { ZodError } from "zod";
 import { isTurnInterruptedError, throwIfAborted, toTurnInterruptedError } from "../core/abort.js";
 import { getToolDefinition } from "./definitions.js";
 import { isToolResultEnvelope } from "./resultEnvelope.js";
+import { getToolPolicyViolation } from "./toolPolicy.js";
 import type { JsonRecord, ToolExecutionContext } from "./types.js";
 
 type MessageParam = OpenAI.Chat.Completions.ChatCompletionMessageParam;
@@ -55,6 +56,17 @@ export async function executeToolCall(
         type: "invalid_tool_arguments",
         message: `Input validation failed for tool '${name}'.`,
         issues: formatZodIssues(parsed.error)
+      }
+    });
+  }
+
+  const policyError = getToolPolicyViolation(name, parsed.data as JsonRecord, context.toolPolicy);
+  if (policyError) {
+    return createExecutedToolCallResult({
+      ok: false,
+      error: {
+        type: "tool_policy_violation",
+        message: policyError
       }
     });
   }

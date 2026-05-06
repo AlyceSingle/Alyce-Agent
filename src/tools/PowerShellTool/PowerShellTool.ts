@@ -86,6 +86,7 @@ export async function executePowerShellTool(
   }
 
   throwIfAborted(context.abortSignal);
+  context.recordToolActivity?.(POWERSHELL_TOOL_NAME);
 
   const startedAt = Date.now();
   const outcome = await runPowerShellCommand(
