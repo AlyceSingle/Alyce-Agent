@@ -113,6 +113,48 @@ function runTests() {
 
   assert.equal(getCopyableMessageContent(editMessage), "Patch\n-old\n+new");
 
+  const applyPatchMessage = createMessage({
+    kind: "tool",
+    content: "Files\nM file.txt (+1 -1)\n\nPatch\n-old\n+new",
+    blocks: [
+      {
+        label: "Files",
+        content: "M file.txt (+1 -1)",
+        style: "code"
+      },
+      {
+        label: "Patch",
+        content: "-old\n+new",
+        style: "code"
+      }
+    ],
+    toolData: {
+      phase: "result",
+      toolName: "apply_patch",
+      summary: "apply_patch file.txt",
+      ok: true,
+      resultKind: "patch",
+      patch: {
+        filePath: "file.txt",
+        operationCount: 1,
+        additions: 1,
+        deletions: 1,
+        files: [{
+          type: "update",
+          filePath: "file.txt",
+          additions: 1,
+          deletions: 1,
+          matchStrategies: ["exact"]
+        }]
+      }
+    }
+  });
+
+  assert.equal(
+    getCopyableMessageContent(applyPatchMessage),
+    "Files\nM file.txt (+1 -1)\n\nPatch\n-old\n+new"
+  );
+
   const normalAssistantMessage = createMessage({
     kind: "assistant",
     content: "hello world",

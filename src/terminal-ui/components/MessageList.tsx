@@ -391,7 +391,7 @@ function isDefaultExpandedToolMessage(message: TerminalUiMessage) {
   return (
     message.kind === "tool" &&
     message.toolData?.phase === "result" &&
-    (message.toolData.resultKind === "edit" || message.toolData.resultKind === "write") &&
+    isEditLikeToolResult(message.toolData.resultKind) &&
     message.toolData.ok === true
   );
 }
@@ -432,7 +432,7 @@ function renderToolMessageState(
     };
   }
 
-  if (toolData.resultKind === "edit" || toolData.resultKind === "write") {
+  if (isEditLikeToolResult(toolData.resultKind)) {
     const renderableBlocks = getRenderableToolBlocks(message.blocks, toolData);
     const collapsedPreview = buildCollapsedRenderedSections(renderableBlocks, width, 12);
     const sections = expanded
@@ -465,6 +465,10 @@ function renderToolMessageState(
     metadataLine: buildExpandableMetadataLine(baseMetadata, toggleHint),
     expandable: Boolean(toggleHint)
   };
+}
+
+function isEditLikeToolResult(resultKind: TerminalUiToolData["resultKind"]) {
+  return resultKind === "edit" || resultKind === "write" || resultKind === "patch";
 }
 
 function renderLegacyToolMessageState(

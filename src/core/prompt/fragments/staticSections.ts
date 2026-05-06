@@ -111,6 +111,14 @@ function getUsingToolsSection(runtimeContext: PromptRuntimeContext) {
     providedToolGuidance.push("Use Edit for minimal in-place changes instead of shell text substitution when possible.");
   }
 
+  if (hasTool(runtimeContext, "MultiEdit")) {
+    providedToolGuidance.push("Use MultiEdit for multiple related replacements in the same file when they should be verified and approved together.");
+  }
+
+  if (hasTool(runtimeContext, "apply_patch")) {
+    providedToolGuidance.push("Use apply_patch for coordinated multi-file edits and renames. Do not generate unified diff headers or @@ line-number ranges for this tool.");
+  }
+
   if (hasTool(runtimeContext, "Write")) {
     providedToolGuidance.push("Use Write for creating new files or full rewrites instead of shell redirection.");
   }

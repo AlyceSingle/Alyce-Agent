@@ -6,6 +6,7 @@ import type {
   TerminalUiMessageBlockTone,
   TerminalUiToolData,
   TerminalUiToolEditResult,
+  TerminalUiToolPatchResult,
   TerminalUiToolReadResult,
   TerminalUiToolShellResult,
   TerminalUiToolWriteResult
@@ -217,6 +218,18 @@ function buildToolResultData(result: ParsedToolCallExecutionResult, summary: str
     };
   }
 
+  const patch = toPatchResult(result.structuredResult);
+  if (patch) {
+    return {
+      phase: "result",
+      toolName: result.toolName,
+      summary,
+      ok: true,
+      resultKind: "patch",
+      patch
+    };
+  }
+
   const read = toReadResult(result.structuredResult);
   if (read) {
     return {
@@ -291,6 +304,20 @@ function buildToolResultBlocks(
       blocks.push(...buildPostWriteCheckBlocks(edit));
       return blocks;
     }
+    case "patch": {
+      const patch = toolData.patch;
+      if (!patch) {
+        break;
+      }
+
+      const patchText = extractStructuredPatchDisplayText(result.structuredResult);
+      const blocks = [
+        createBlock(formatPatchFiles(patch), { label: "Files", style: "code" }),
+        createBlock(patchText || "(empty patch)", { label: "Patch", style: "code" })
+      ];
+      blocks.push(...buildPostWriteCheckBlocks(patch));
+      return blocks;
+    }
     case "read": {
       const read = toolData.read;
       if (!read) {
@@ -347,6 +374,17 @@ function buildToolResultMetadata(toolData: TerminalUiToolData) {
     }
     if (toolData.edit.diagnostics && toolData.edit.diagnostics.status !== "skipped") {
       metadata.push(formatDiagnosticsMetadata(toolData.edit.diagnostics));
+    }
+  }
+
+  if (toolData.patch) {
+    metadata.push(`${toolData.patch.operationCount} file(s)`);
+    metadata.push(`+${toolData.patch.additions} -${toolData.patch.deletions}`);
+    if (toolData.patch.formatter && toolData.patch.formatter.status !== "skipped") {
+      metadata.push(formatFormatterMetadata(toolData.patch.formatter));
+    }
+    if (toolData.patch.diagnostics && toolData.patch.diagnostics.status !== "skipped") {
+      metadata.push(formatDiagnosticsMetadata(toolData.patch.diagnostics));
     }
   }
 
@@ -453,7 +491,7 @@ function toWriteResult(
 }
 
 function buildPostWriteCheckBlocks(
-  result: TerminalUiToolWriteResult | TerminalUiToolEditResult | undefined
+  result: TerminalUiToolWriteResult | TerminalUiToolEditResult | TerminalUiToolPatchResult | undefined
 ): TerminalUiMessageBlock[] {
   if (!result) {
     return [];
@@ -651,6 +689,93 @@ function toEditResult(value: unknown): TerminalUiToolEditResult | null {
     formatter: toFormatterResult(record.formatter) ?? undefined,
     diagnostics: toDiagnosticsResult(record.diagnostics) ?? undefined
   };
+}
+
+function toPatchResult(value: unknown): TerminalUiToolPatchResult | null {
+  const record = asRecord(value);
+  if (!record) {
+    return null;
+  }
+
+  const filePath = asString(record.filePath);
+  const operationCount = asNumber(record.operationCount);
+  const additions = asNumber(record.additions);
+  const deletions = asNumber(record.deletions);
+  if (
+    !filePath ||
+    operationCount === undefined ||
+    additions === undefined ||
+    deletions === undefined ||
+    !Array.isArray(record.files)
+  ) {
+    return null;
+  }
+
+  const files = record.files.flatMap((item) => {
+    const file = asRecord(item);
+    const type = asString(file?.type);
+    const itemFilePath = asString(file?.filePath);
+    const itemAdditions = asNumber(file?.additions);
+    const itemDeletions = asNumber(file?.deletions);
+    if (
+      !isPatchFileType(type) ||
+      !itemFilePath ||
+      itemAdditions === undefined ||
+      itemDeletions === undefined
+    ) {
+      return [];
+    }
+
+    return [{
+      type,
+      filePath: itemFilePath,
+      sourcePath: asString(file?.sourcePath),
+      bytes: asNumber(file?.bytes),
+      lineCount: asNumber(file?.lineCount),
+      additions: itemAdditions,
+      deletions: itemDeletions,
+      matchStrategies: Array.isArray(file?.matchStrategies)
+        ? file.matchStrategies.filter((strategy): strategy is string => typeof strategy === "string")
+        : [],
+      formatter: toFormatterResult(file?.formatter) ?? undefined,
+      diagnostics: toDiagnosticsResult(file?.diagnostics) ?? undefined
+    }];
+  });
+
+  return {
+    filePath,
+    operationCount,
+    additions,
+    deletions,
+    files,
+    formatter: toFormatterResult(record.formatter) ?? undefined,
+    diagnostics: toDiagnosticsResult(record.diagnostics) ?? undefined
+  };
+}
+
+function isPatchFileType(value: string | undefined): value is TerminalUiToolPatchResult["files"][number]["type"] {
+  return value === "add" || value === "update" || value === "delete" || value === "move";
+}
+
+function formatPatchFiles(patch: TerminalUiToolPatchResult) {
+  return patch.files.map((file) => {
+    const prefix = file.type === "add"
+      ? "A"
+      : file.type === "delete"
+        ? "D"
+        : file.type === "move"
+          ? "R"
+          : "M";
+    const filePath = file.type === "move" && file.sourcePath
+      ? `${file.sourcePath} -> ${file.filePath}`
+      : file.filePath;
+    const size = file.bytes === undefined ? "" : `, ${formatBytes(file.bytes)}`;
+    const lines = file.lineCount === undefined ? "" : `, ${file.lineCount} lines`;
+    const strategies = file.matchStrategies.length > 0
+      ? `, ${file.matchStrategies.join(", ")}`
+      : "";
+    return `${prefix} ${filePath} (+${file.additions} -${file.deletions}${size}${lines}${strategies})`;
+  }).join("\n");
 }
 
 function toReadResult(value: unknown): TerminalUiToolReadResult | null {

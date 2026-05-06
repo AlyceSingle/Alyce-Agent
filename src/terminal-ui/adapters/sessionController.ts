@@ -62,7 +62,7 @@ import {
 } from "./messageMapper.js";
 
 // SessionController 负责把 REPL/UI 事件翻译成会话运行时调用，并维护中断恢复状态。
-const RESTORABLE_TOOL_NAMES = new Set(["Edit", "Write"]);
+const RESTORABLE_TOOL_NAMES = new Set(["Edit", "MultiEdit", "Write", "apply_patch"]);
 const MAX_REWIND_POINTS = 100;
 
 // 每轮请求在执行前都会记录一个 checkpoint，便于中断时回滚消息和文件改动。

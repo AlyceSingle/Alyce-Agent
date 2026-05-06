@@ -30,7 +30,7 @@ export function getRenderableToolBlocks(
   blocks: readonly TerminalUiMessageBlock[],
   toolData: TerminalUiToolData
 ): TerminalUiMessageBlock[] {
-  if (toolData.resultKind !== "edit" && toolData.resultKind !== "write") {
+  if (!isEditLikeResultKind(toolData.resultKind)) {
     return [...blocks];
   }
 
@@ -45,7 +45,7 @@ export function getRenderableMessageBlocks(message: TerminalUiMessage) {
   if (
     message.kind === "tool" &&
     message.toolData &&
-    (message.toolData.resultKind === "edit" || message.toolData.resultKind === "write")
+    isEditLikeResultKind(message.toolData.resultKind)
   ) {
     return getRenderableToolBlocks(message.blocks, message.toolData);
   }
@@ -88,6 +88,10 @@ function normalizeWriteToolBlocks(blocks: readonly TerminalUiMessageBlock[]) {
     ...filteredBlocks,
     patchBlock
   ];
+}
+
+function isEditLikeResultKind(resultKind: TerminalUiToolData["resultKind"]) {
+  return resultKind === "edit" || resultKind === "write" || resultKind === "patch";
 }
 
 function buildLegacyWritePatchContent(content: string) {

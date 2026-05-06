@@ -24,7 +24,7 @@ export interface UiMessageBlock {
 }
 
 export type UiToolMessagePhase = "start" | "result";
-export type UiToolResultKind = "generic" | "shell" | "write" | "edit" | "read";
+export type UiToolResultKind = "generic" | "shell" | "write" | "edit" | "patch" | "read";
 
 export interface UiToolShellResult {
   command: string;
@@ -85,6 +85,29 @@ export interface UiToolEditResult {
   filePath: string;
   replaceAll: boolean;
   matchCount: number;
+  formatter?: UiToolFormatterResult;
+  diagnostics?: UiToolDiagnosticsResult;
+}
+
+export interface UiToolPatchFileResult {
+  type: "add" | "update" | "delete" | "move";
+  filePath: string;
+  sourcePath?: string;
+  bytes?: number;
+  lineCount?: number;
+  additions: number;
+  deletions: number;
+  matchStrategies: string[];
+  formatter?: UiToolFormatterResult;
+  diagnostics?: UiToolDiagnosticsResult;
+}
+
+export interface UiToolPatchResult {
+  filePath: string;
+  operationCount: number;
+  additions: number;
+  deletions: number;
+  files: UiToolPatchFileResult[];
   formatter?: UiToolFormatterResult;
   diagnostics?: UiToolDiagnosticsResult;
 }
@@ -157,5 +180,6 @@ export interface UiToolData {
   shell?: UiToolShellResult;
   write?: UiToolWriteResult;
   edit?: UiToolEditResult;
+  patch?: UiToolPatchResult;
   read?: UiToolReadResult;
 }

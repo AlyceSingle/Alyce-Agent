@@ -20,6 +20,7 @@ import type {
   UiToolData,
   UiToolEditResult,
   UiToolMessagePhase,
+  UiToolPatchResult,
   UiToolReadResult,
   UiToolResultKind,
   UiToolShellResult,
@@ -35,6 +36,7 @@ export type TerminalUiToolResultKind = UiToolResultKind;
 export type TerminalUiToolShellResult = UiToolShellResult;
 export type TerminalUiToolWriteResult = UiToolWriteResult;
 export type TerminalUiToolEditResult = UiToolEditResult;
+export type TerminalUiToolPatchResult = UiToolPatchResult;
 export type TerminalUiToolReadResult = UiToolReadResult;
 export type TerminalUiToolData = UiToolData;
 

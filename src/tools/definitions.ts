@@ -13,6 +13,12 @@ import {
   BashInputSchema,
   executeBashTool
 } from "./BashTool/BashTool.js";
+import {
+  executeFileApplyPatch,
+  FILE_APPLY_PATCH_TOOL_DESCRIPTION,
+  FileApplyPatchInputSchema
+} from "./FileApplyPatchTool/FileApplyPatchTool.js";
+import { FILE_APPLY_PATCH_TOOL_NAME } from "./FileApplyPatchTool/prompt.js";
 import { FILE_EDIT_TOOL_DESCRIPTION, executeFileEdit, FileEditInputSchema } from "./FileEditTool/FileEditTool.js";
 import {
   executeFileMultiEdit,
@@ -132,6 +138,12 @@ export const REGISTERED_TOOLS: AgentTool[] = [
     description: FILE_MULTI_EDIT_TOOL_DESCRIPTION,
     inputSchema: FileMultiEditInputSchema,
     execute: (input, context) => executeFileMultiEdit(input, context)
+  },
+  {
+    name: FILE_APPLY_PATCH_TOOL_NAME,
+    description: FILE_APPLY_PATCH_TOOL_DESCRIPTION,
+    inputSchema: FileApplyPatchInputSchema,
+    execute: (input, context) => executeFileApplyPatch(input, context)
   },
   {
     name: "Write",

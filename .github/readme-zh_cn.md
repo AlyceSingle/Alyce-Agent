@@ -30,7 +30,7 @@ Alyce 是一套本地优先的编码助手框架，包含：
 - 会话恢复：项目级 JSONL transcript 让 `/resume` 可以重新进入旧对话
 - 会话回退：`Esc` 或 `/rewind` 可以回到更早输入，必要时同步恢复 Alyce 跟踪到的文件改动
 - 上下文控制：消息时间戳、记忆注入、自动摘要、对话压缩一起工作，尽量避免 prompt 无限制膨胀
-- 安全护栏：带作用域的外部目录审批、文件访问范围、Windows UNC 路径阻断、审批流程、单文件写锁、原始字节级写入前快照、“先读后改”的文件新鲜度校验和内容回退、审批期间字节级变更复查、编码/行尾保留、更稳健的编辑匹配、`MultiEdit`，以及编辑/写入后的格式化程序和 TypeScript/JavaScript 诊断都在运行时中处理
+- 安全护栏：带作用域的外部目录审批、文件访问范围、Windows UNC 路径阻断、审批流程、单文件写锁、原始字节级写入前快照、“先读后改”的文件新鲜度校验和内容回退、审批期间字节级变更复查、编码/行尾保留、更稳健的编辑匹配、`MultiEdit`、opencode 风格的 `apply_patch`，以及编辑/写入后的格式化程序和 TypeScript/JavaScript 诊断都在运行时中处理
 
 ## 快速开始
 
@@ -87,6 +87,7 @@ npm start
 - [文档索引](../docs/zh-CN/README.md)
 - [快速开始](../docs/zh-CN/getting-started.md)
 - [项目结构](../docs/zh-CN/project-structure.md)
+- [apply_patch 工具](../docs/zh-CN/apply-patch-tool.md)
 - [命令与按键](../docs/zh-CN/commands-and-keys.md)
 - [配置说明](../docs/zh-CN/configuration.md)
 - [记忆与上下文](../docs/zh-CN/memory-and-context.md)

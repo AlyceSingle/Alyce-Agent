@@ -7,6 +7,7 @@ import type {
   UiToolData,
   UiToolEditResult,
   UiToolMessagePhase,
+  UiToolPatchResult,
   UiToolResultKind,
   UiToolShellResult,
   UiToolWriteResult
@@ -27,6 +28,7 @@ export type SessionHistoryUiToolResultKind = UiToolResultKind;
 export type SessionHistoryUiToolShellResult = UiToolShellResult;
 export type SessionHistoryUiToolWriteResult = UiToolWriteResult;
 export type SessionHistoryUiToolEditResult = UiToolEditResult;
+export type SessionHistoryUiToolPatchResult = UiToolPatchResult;
 export type SessionHistoryUiToolData = UiToolData;
 
 export interface SessionHistoryUiMessage {

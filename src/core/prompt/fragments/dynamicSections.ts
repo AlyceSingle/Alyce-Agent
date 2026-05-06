@@ -26,7 +26,11 @@ function getSessionSpecificGuidanceSection(runtimeContext: PromptRuntimeContext)
   }
 
   if (hasTool(runtimeContext, "Edit")) {
-    items.push("Prefer Edit for minimal diffs; use Write only when a new file or full replacement is actually intended.");
+    items.push("Prefer Edit for minimal diffs; use MultiEdit for several related replacements in one file; use Write only when a new file or full replacement is actually intended.");
+  }
+
+  if (hasTool(runtimeContext, "apply_patch")) {
+    items.push("Use apply_patch for coordinated multi-file edits and renames. Its patch format is not unified diff: use *** Begin Patch/End Patch sections and @@ anchors without line-number ranges.");
   }
 
   if (hasTool(runtimeContext, "Bash")) {

@@ -12,6 +12,8 @@
   环境准备、首次启动、基础验证
 - [项目结构](project-structure.md)
   运行时分层、主要目录、改动落点
+- [apply_patch 工具](apply-patch-tool.md)
+  多文件 patch 语法、安全行为、与 opencode 的对齐说明
 - [命令与按键](commands-and-keys.md)
   Slash 命令、全局快捷键、设置界面操作
 - [配置说明](configuration.md)
@@ -34,9 +36,10 @@
 
 1. [快速开始](getting-started.md)
 2. [项目结构](project-structure.md)
-3. [命令与按键](commands-and-keys.md)
-4. [配置说明](configuration.md)
-5. [记忆与上下文](memory-and-context.md)
-6. [角色预设](persona-presets.md)
+3. [apply_patch 工具](apply-patch-tool.md)
+4. [命令与按键](commands-and-keys.md)
+5. [配置说明](configuration.md)
+6. [记忆与上下文](memory-and-context.md)
+7. [角色预设](persona-presets.md)
 
 这样读下来，会比较不容易迷路。至少……我希望是这样。
