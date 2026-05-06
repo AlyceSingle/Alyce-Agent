@@ -1,0 +1,3 @@
+# Keep GitHub Linguist from classifying TypeScript entrypoints as JavaScript.
+*.ts linguist-language=TypeScript
+*.tsx linguist-language=TypeScript
