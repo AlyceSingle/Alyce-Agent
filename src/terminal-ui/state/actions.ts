@@ -18,6 +18,7 @@ import type {
   TerminalUiState
 } from "./types.js";
 import type { SessionHistoryListItem } from "../../core/session-history/types.js";
+import type { ContextBudgetSnapshot } from "../../core/context/contextBudget.js";
 
 export function createInitialTerminalUiState(options: {
   connectionState: ConnectionConfigState;
@@ -36,6 +37,7 @@ export function createInitialTerminalUiState(options: {
     isLoading: false,
     // 连接是否可用要和运行时校验保持一致，避免把纯空白 API key 误判成已配置。
     statusText: options.connectionState.effective.apiKey.trim().length > 0 ? "Idle" : "Setup required",
+    contextBudget: null,
     dialogQueue: [],
     activeOverlays: [],
     messages: [],
@@ -114,6 +116,20 @@ export function setStatusText(state: TerminalUiState, statusText: string): Termi
   return {
     ...state,
     statusText
+  };
+}
+
+export function setContextBudget(
+  state: TerminalUiState,
+  contextBudget: ContextBudgetSnapshot | null
+): TerminalUiState {
+  if (state.contextBudget === contextBudget) {
+    return state;
+  }
+
+  return {
+    ...state,
+    contextBudget
   };
 }
 

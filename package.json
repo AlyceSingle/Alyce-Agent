@@ -51,6 +51,7 @@
     "start": "node --disable-warning=DEP0040 dist/index.js"
   },
   "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.29.0",
     "auto-bind": "^5.0.1",
     "bidi-js": "^1.0.3",
     "chalk": "^5.6.2",

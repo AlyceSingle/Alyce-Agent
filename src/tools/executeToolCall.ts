@@ -23,6 +23,10 @@ export async function executeToolCall(
 
   const tool = getToolDefinition(name);
   if (!tool) {
+    if (context.mcpRuntime?.canExecuteTool(name)) {
+      return executeMcpToolCall(name, rawArgs, context);
+    }
+
     return createExecutedToolCallResult({
       ok: false,
       error: {
@@ -103,6 +107,83 @@ export async function executeToolCall(
       }
     });
   }
+}
+
+async function executeMcpToolCall(
+  name: string,
+  rawArgs: string,
+  context: ToolExecutionContext
+): Promise<ExecutedToolCall> {
+  let args: JsonRecord = {};
+
+  try {
+    args = rawArgs ? (JSON.parse(rawArgs) as JsonRecord) : {};
+  } catch {
+    return createExecutedToolCallResult({
+      ok: false,
+      error: {
+        type: "invalid_json_arguments",
+        message: "Invalid JSON arguments"
+      }
+    });
+  }
+
+  if (!isJsonRecord(args)) {
+    return createExecutedToolCallResult({
+      ok: false,
+      error: {
+        type: "invalid_tool_arguments",
+        message: `Input validation failed for MCP tool '${name}': arguments must be a JSON object.`
+      }
+    });
+  }
+
+  try {
+    throwIfAborted(context.abortSignal);
+    const result = await context.mcpRuntime!.executeToolCall(name, args, {
+      requestApproval: context.requestApproval,
+      abortSignal: context.abortSignal,
+      timeoutMs: context.commandTimeoutMs
+    });
+    throwIfAborted(context.abortSignal);
+    if (!isMcpRejectedResult(result)) {
+      context.recordToolActivity?.(name);
+    }
+    return createExecutedToolCallResult({
+      ok: true,
+      tool: name,
+      result
+    });
+  } catch (error) {
+    if (isTurnInterruptedError(error, context.abortSignal)) {
+      throw toTurnInterruptedError(error, context.abortSignal);
+    }
+
+    const message = error instanceof Error ? error.message : String(error);
+    return createExecutedToolCallResult({
+      ok: false,
+      error: {
+        type: "mcp_tool_execution_error",
+        message
+      }
+    });
+  }
+}
+
+function isJsonRecord(value: unknown): value is JsonRecord {
+  return Boolean(
+    value &&
+      typeof value === "object" &&
+      !Array.isArray(value)
+  );
+}
+
+function isMcpRejectedResult(value: unknown): boolean {
+  return Boolean(
+    value &&
+      typeof value === "object" &&
+      (value as { status?: unknown }).status === "rejected"
+  );
 }
 
 function formatZodIssues(error: ZodError) {

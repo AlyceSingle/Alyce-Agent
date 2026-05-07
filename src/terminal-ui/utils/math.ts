@@ -9,6 +9,12 @@ export type MarkdownMathSegment =
       display: boolean;
     };
 
+export interface MarkdownMathMatch {
+  raw: string;
+  content: string;
+  display: boolean;
+}
+
 const GREEK_COMMANDS: Record<string, string> = {
   alpha: "alpha",
   beta: "beta",
@@ -146,6 +152,31 @@ const SPACING_COMMANDS = new Set([
   "bigg",
   "Bigg"
 ]);
+
+export function readMarkdownMathSegmentAtStart(input: string): MarkdownMathMatch | undefined {
+  if (input[0] !== "$") {
+    return undefined;
+  }
+
+  const display = input[1] === "$";
+  const delimiterLength = display ? 2 : 1;
+  const closingIndex = findClosingMathDelimiter(input, delimiterLength, display);
+  if (closingIndex < 0) {
+    return undefined;
+  }
+
+  const rawContent = input.slice(delimiterLength, closingIndex);
+  const mathContent = display ? rawContent.trim() : rawContent;
+  if (!isValidMathSegment(mathContent, display)) {
+    return undefined;
+  }
+
+  return {
+    raw: input.slice(0, closingIndex + delimiterLength),
+    content: mathContent,
+    display
+  };
+}
 
 export function splitMarkdownMathSegments(input: string): MarkdownMathSegment[] {
   const segments: MarkdownMathSegment[] = [];
@@ -538,7 +569,7 @@ function wrapMathGroup(value: string): string {
 }
 
 function isSimpleMathAtom(value: string): boolean {
-  return /^[A-Za-z0-9.+-]+$/.test(value);
+  return /^[A-Za-z0-9.+\-*/|]+$/.test(value);
 }
 
 function cleanupMathText(value: string): string {

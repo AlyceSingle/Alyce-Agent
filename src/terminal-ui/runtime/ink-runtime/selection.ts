@@ -363,7 +363,9 @@ export function findPlainTextUrlAt(
  * subsequent drag extends the selection line-by-line. The anchor/focus
  * span from col 0 to width-1; getSelectedText handles noSelect skipping
  * and trailing-whitespace trimming so the copied text is just the visible
- * line content.
+ * line content. applySelectionOverlay also clamps visual highlight to the
+ * row's rendered content so full-line selection does not paint right-side
+ * padding.
  */
 export function selectLineAt(
   s: SelectionState,
@@ -743,6 +745,41 @@ function extractRowText(
   return contentEnd > 0 ? line : line.replace(/\s+$/, '')
 }
 
+/**
+ * Visual selection should not paint terminal padding to the right of the
+ * rendered line. Copy already trims those cells; this mirrors that boundary
+ * for the highlight while keeping internal spaces selected.
+ */
+function rowSelectionEnd(
+  screen: Screen,
+  row: number,
+  requestedEnd: number,
+): number {
+  if (row < 0 || row >= screen.height) return -1
+
+  const width = screen.width
+  let colEnd = Math.min(requestedEnd, width - 1)
+  if (colEnd < 0) return -1
+
+  const contentEnd = row + 1 < screen.height ? screen.softWrap[row + 1]! : 0
+  if (contentEnd > 0) return Math.min(colEnd, contentEnd - 1)
+
+  const rowOff = row * width
+  for (let col = colEnd; col >= 0; col--) {
+    if (screen.noSelect[rowOff + col] === 1) continue
+    const cell = cellAtIndex(screen, rowOff + col)
+    if (
+      cell.width === CellWidth.SpacerTail ||
+      cell.width === CellWidth.SpacerHead
+    ) {
+      continue
+    }
+    if (cell.char !== ' ') return col
+  }
+
+  return -1
+}
+
 /** Accumulator for selected text that merges soft-wrapped rows back
  *  into logical lines. push(text, sw) appends a newline before text
  *  only when sw=false (i.e. the row starts a new logical line). Rows
@@ -902,7 +939,10 @@ export function applySelectionOverlay(
   const noSelect = screen.noSelect
   for (let row = start.row; row <= end.row && row < screen.height; row++) {
     const colStart = row === start.row ? start.col : 0
-    const colEnd = row === end.row ? Math.min(end.col, width - 1) : width - 1
+    const requestedEnd =
+      row === end.row ? Math.min(end.col, width - 1) : width - 1
+    const colEnd = rowSelectionEnd(screen, row, requestedEnd)
+    if (colEnd < colStart) continue
     const rowOff = row * width
     for (let col = colStart; col <= colEnd; col++) {
       const idx = rowOff + col

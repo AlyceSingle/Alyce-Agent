@@ -4,7 +4,7 @@
 
 # Getting Started
 
-Alyce speaking. This guide will help you set up the environment and get Alyce running on your machine.
+I am Alyce. This guide will help you set up the environment and get Alyce running on your machine.
 
 ## Prerequisites
 

@@ -58,11 +58,35 @@ import {
   LSP_TOOL_NAME
 } from "./LSPTool/LSPTool.js";
 import {
+  executeListMcpResourcesTool,
+  LIST_MCP_RESOURCES_TOOL_DESCRIPTION,
+  LIST_MCP_RESOURCES_TOOL_NAME,
+  ListMcpResourcesInputSchema
+} from "./ListMcpResourcesTool/ListMcpResourcesTool.js";
+import {
+  executeMcpStatusTool,
+  MCP_STATUS_TOOL_DESCRIPTION,
+  MCP_STATUS_TOOL_NAME,
+  McpStatusInputSchema
+} from "./McpStatusTool/McpStatusTool.js";
+import {
   executePowerShellTool,
   POWERSHELL_TOOL_DESCRIPTION,
   POWERSHELL_TOOL_NAME,
   PowerShellInputSchema
 } from "./PowerShellTool/PowerShellTool.js";
+import {
+  executeReadMcpResourceTool,
+  READ_MCP_RESOURCE_TOOL_DESCRIPTION,
+  READ_MCP_RESOURCE_TOOL_NAME,
+  ReadMcpResourceInputSchema
+} from "./ReadMcpResourceTool/ReadMcpResourceTool.js";
+import {
+  executeSkillTool,
+  SKILL_TOOL_DESCRIPTION,
+  SKILL_TOOL_NAME,
+  SkillToolInputSchema
+} from "./SkillTool/SkillTool.js";
 import {
   executeTaskGetTool,
   TASK_GET_TOOL_DESCRIPTION,
@@ -145,6 +169,30 @@ export const REGISTERED_TOOLS: AgentTool[] = [
     description: ASK_USER_QUESTION_TOOL_DESCRIPTION,
     inputSchema: AskUserQuestionInputSchema,
     execute: (input, context) => executeAskUserQuestionTool(input, context)
+  },
+  {
+    name: SKILL_TOOL_NAME,
+    description: SKILL_TOOL_DESCRIPTION,
+    inputSchema: SkillToolInputSchema,
+    execute: (input, context) => executeSkillTool(input, context)
+  },
+  {
+    name: MCP_STATUS_TOOL_NAME,
+    description: MCP_STATUS_TOOL_DESCRIPTION,
+    inputSchema: McpStatusInputSchema,
+    execute: (input, context) => executeMcpStatusTool(input, context)
+  },
+  {
+    name: LIST_MCP_RESOURCES_TOOL_NAME,
+    description: LIST_MCP_RESOURCES_TOOL_DESCRIPTION,
+    inputSchema: ListMcpResourcesInputSchema,
+    execute: (input, context) => executeListMcpResourcesTool(input, context)
+  },
+  {
+    name: READ_MCP_RESOURCE_TOOL_NAME,
+    description: READ_MCP_RESOURCE_TOOL_DESCRIPTION,
+    inputSchema: ReadMcpResourceInputSchema,
+    execute: (input, context) => executeReadMcpResourceTool(input, context)
   },
   {
     name: FILE_READ_TOOL_NAME,

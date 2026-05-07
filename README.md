@@ -11,7 +11,7 @@
 > [!IMPORTANT]
 > **Project Status**: This is a **learning project** focused on building a terminal-first coding agent. It is currently in an experimental stage and is provided "as-is". While I am actively working on it, please expect breaking changes and use it with caution in production environments. Feedback and contributions are more than welcome!
 
-Alyce speaking. This repository hosts a terminal-first coding agent built with TypeScript, React, and Ink as part of a learning journey into agentic workflows. I try to keep the runtime explicit and serviceable: prompts are assembled in layers, tools respect approval boundaries, memory is kept under control, and the whole app stays grounded in a real interactive TTY instead of a browser shell.
+I am Alyce, a terminal-first coding agent designed to be your engineering partner. Built with TypeScript, React, and Ink, I focus on providing an explicit and controllable runtime. My core principles include layered prompt assembly, strict tool approval boundaries, and efficient memory management, all while operating directly within your interactive TTY.
 
 ## What Alyce is
 
@@ -22,6 +22,8 @@ Alyce is a local coding assistant framework with:
 - prompt composition with persona and runtime sections
 - resumable project session history, session memory, persistent memory, auto-summary, and conversation compaction
 - approval-aware command, file, and web tooling
+- local `SkillTool` loading from project/user `SKILL.md` files
+- MCP server integration for stdio, streamable HTTP, and SSE tools/resources
 - rollback support for interrupted file edits
 
 ## Highlights
@@ -29,6 +31,7 @@ Alyce is a local coding assistant framework with:
 - Terminal-native UI: React + Ink, including dialogs, message viewer, and settings
 - Tool loop: the model can call multiple tools in one turn before returning a final answer
 - Richer local inspection: `Read` now handles text files, directory listings, notebook summaries, missing-path suggestions, capped continuation reads, on-demand external directory approval, and true multimodal image/PDF attachment flow for supported formats, while still reporting metadata such as image dimensions
+- Extensible context: local skills can be loaded from `./.alyce/skills/**/SKILL.md` or `~/.alyce/skills/**/SKILL.md`, and MCP servers configured in `./.alyce/mcp.json` can expose resources plus dynamic tools
 - Prompt engineering: static rules, dynamic environment, and persona overlays are assembled into one system prompt
 - Session resume: project-local JSONL transcripts let `/resume` reopen earlier conversations
 - Rewind: `Esc` or `/rewind` can restore an earlier prompt, with tracked file rollback when available
@@ -106,6 +109,7 @@ npm start
 - `npm run dev` is a build-then-run workflow, not a hot-reload dev server
 - Project-level runtime state lives in `./.alyce/`
 - User-level runtime state lives in `~/.alyce/`
+- Local skills live in `.alyce/skills/**/SKILL.md`; MCP servers are configured in `.alyce/mcp.json`
 - `User_Info/` is treated as user data, not as project documentation
 
 ## Validation
@@ -116,4 +120,4 @@ The minimum validation step before submitting changes is:
 npm run build
 ```
 
-I would recommend reading [Project Structure](https://github.com/AlyceSingle/Alyce-Agent/blob/master/docs/project-structure.md) first if you plan to maintain the codebase. It is... a little easier on the nerves when the layers are clear.
+I recommend reading the [Project Structure](https://github.com/AlyceSingle/Alyce-Agent/blob/master/docs/project-structure.md) documentation if you plan to maintain or extend the codebase. Understanding the architectural layers will ensure a more predictable development experience.

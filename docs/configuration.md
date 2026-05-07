@@ -4,9 +4,9 @@
 
 # Configuration
 
-Alyce speaking. *Configuration systems are the kind of thing that seem simple until you realize there are four places a setting could come from and you don't know which one wins. So let me be boring but clear.*
+I am Alyce. This page provides a detailed explanation of Alyce's configuration system, including sources, priority, and the meaning of individual parameters.
 
-Alyce's configuration is layered. Multiple sources can set the same value, and there's a specific order that decides who wins. Once you know the order, it's painless.
+Alyce's configuration is layered. Multiple sources can set the same value, and a specific priority order determines which value takes effect.
 
 ## Where Settings Come From
 
@@ -18,8 +18,6 @@ Loaded in this priority order — **earlier wins over later**:
 2. **Environment variables** (from your `.env` file)
 3. **Project config** — `./.alyce/config.json`
 4. **User config** — `~/.alyce/config.json`
-
-*In practice, environment variables usually win because `.env` gets loaded first and most people don't pass CLI arguments. But if you set something in the settings dialog and save it to project scope, that'll take effect next time.*
 
 ### Session Settings (persona, memory, approval, etc.)
 
@@ -38,8 +36,10 @@ Loaded in this priority order — **again, earlier wins**:
 | User connection config | `~/.alyce/config.json` |
 | Project session settings | `./.alyce/settings.json` |
 | User session settings | `~/.alyce/settings.json` |
-
-*The `./` versions are per-project — they travel with the repo (if you commit `.alyce/`, which you shouldn't). The `~/` versions are global to your machine. Use project scope for project-specific stuff, user scope for personal defaults.*
+| Project MCP servers | `./.alyce/mcp.json` |
+| Project skills | `./.alyce/skills/**/SKILL.md` |
+| User skills | `~/.alyce/skills/**/SKILL.md` |
+| MCP binary resource output | `./.alyce/mcp-output/` |
 
 ## Environment Variables
 
@@ -60,8 +60,6 @@ Loaded in this priority order — **again, earlier wins**:
 - `AGENT_MEMORY_SUMMARY_INTERVAL_MESSAGES` — how often summary updates
 - `AGENT_MEMORY_SUMMARY_WINDOW_MESSAGES` — how many messages per summary
 - `AGENT_MEMORY_SUMMARY_MAX_CHARS_PER_MESSAGE` — truncation per message
-
-*Most users never touch the optional ones. They're there for when you have a strong opinion about memory behavior or you're running in an unusual environment.*
 
 ### Optional Web Search Settings
 
@@ -89,6 +87,86 @@ DuckDuckGo HTML is kept as a no-key fallback, but it can still be blocked or rat
 - `ALYCE_WEB_FETCH_HONEST_USER_AGENT` — optional transparent user agent override used for Wikimedia-like sites and challenge fallback. Include a contact URL for sites that require one.
 - `ALYCE_WEB_FETCH_ACCEPT_LANGUAGE` — optional `Accept-Language` header for `WebFetch`.
 
+## Skills
+
+Alyce discovers local skills from:
+
+- Project skills: `./.alyce/skills/**/SKILL.md`
+- User skills: `~/.alyce/skills/**/SKILL.md`
+
+Use `SkillTool` with the skill name to load a skill. Project skills override user skills with the same normalized name. A skill file may include simple frontmatter:
+
+```markdown
+---
+name: example
+description: Use this workflow for repeated project tasks.
+---
+
+# Example Skill
+
+Follow these instructions when this skill is loaded.
+```
+
+The loaded skill content is attached as generated context for the next model step. Loading a skill requires tool approval.
+
+## MCP Servers
+
+Project MCP servers are configured in `./.alyce/mcp.json`. Alyce supports local stdio servers plus remote streamable HTTP or SSE servers. MCP calls and resource reads require approval.
+
+### Local stdio server
+
+```json
+{
+  "mcpServers": {
+    "chrome-devtools": {
+      "command": "npx",
+      "args": ["-y", "chrome-devtools-mcp@latest"],
+      "startup_timeout_ms": 20000
+    }
+  }
+}
+```
+
+After startup, Alyce exposes:
+
+- `McpStatus` — show configured servers, transport, endpoint, capabilities, and errors.
+- `ListMcpResources` — list MCP resources, optionally filtered by server.
+- `ReadMcpResource` — read text resources inline; write blob resources to `./.alyce/mcp-output/`.
+- Dynamic MCP tools as `mcp__server__tool` when a server exposes tools.
+
+### Remote streamable HTTP server
+
+```json
+{
+  "mcpServers": {
+    "remote-example": {
+      "type": "streamable_http",
+      "url": "https://example.com/mcp",
+      "headers": {
+        "Authorization": "Bearer YOUR_TOKEN"
+      },
+      "startup_timeout_ms": 20000
+    }
+  }
+}
+```
+
+### Remote SSE server
+
+```json
+{
+  "mcpServers": {
+    "legacy-sse": {
+      "type": "sse",
+      "url": "https://example.com/sse",
+      "startup_timeout_ms": 20000
+    }
+  }
+}
+```
+
+If a server fails, Alyce reports that server's error without disabling other configured MCP servers.
+
 ## Connection Fields
 
 These appear in the **Connection** tab of settings:
@@ -98,8 +176,6 @@ These appear in the **Connection** tab of settings:
 - `model` — model identifier string
 
 You can save these to **user scope** (global on your machine) or **project scope** (lives with this project). Press `P` in the Connection tab to switch.
-
-*I'd recommend user scope for API keys — it keeps them out of the project directory entirely.*
 
 ## Session Settings
 
@@ -132,12 +208,12 @@ These appear in the **Session** tab of settings.
 
 ### `messageTimestampsEnabled`
 
-When turned on, each API request includes a small `# Current System Time` block with the local date and time. This is injected at request time — it doesn't appear in your visible transcript and doesn't get mixed into the chat history. *I find it useful because the model can then say things like "as of this morning" instead of always being vague about time.*
+When turned on, each API request includes a small `# Current System Time` block with the local date and time. This is injected at request time — it doesn't appear in your visible transcript and doesn't get mixed into the chat history.
 
 ### `conversationCompactionEnabled`
 
-When turned on, long conversations get compacted after they cross a threshold. Recent raw turns stay untouched; older turns get rewritten into a structured summary. The goal isn't to delete anything — it's to keep the useful information present without dragging the full transcript forward forever. *Without this, sessions that run for hours would eventually overflow the model's context window and start losing the beginning of the conversation.*
+When turned on, long conversations get compacted after they cross a threshold. Recent raw turns stay untouched; older turns get rewritten into a structured summary. The goal is to keep useful information present without carrying the full transcript indefinitely.
 
 ---
 
-*That's the configuration layer. If a setting isn't behaving the way you expect, `/context` will show you what the model is actually receiving — it's usually the fastest way to spot a config problem.*
+If a setting is not behaving as expected, `/context` will show what the model is actually receiving, which is often the fastest way to diagnose configuration issues.

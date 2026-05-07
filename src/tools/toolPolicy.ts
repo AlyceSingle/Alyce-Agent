@@ -4,6 +4,12 @@ const WRITE_TOOL_NAMES = new Set(["Edit", "MultiEdit", "Write", "apply_patch", "
 const NETWORK_TOOL_NAMES = new Set(["WebFetch", "WebSearch"]);
 const SHELL_TOOL_NAMES = new Set(["Bash", "PowerShell"]);
 const ORCHESTRATION_TOOL_NAMES = new Set(["AgentTool", "TaskList", "TaskGet", "TaskStop"]);
+const MAIN_SESSION_ONLY_TOOL_NAMES = new Set([
+  "SkillTool",
+  "McpStatus",
+  "ListMcpResources",
+  "ReadMcpResource"
+]);
 
 const READ_ONLY_COMMAND_STARTS = [
   "cat",
@@ -79,6 +85,10 @@ export function isToolSchemaAllowedByPolicy(
     return false;
   }
 
+  if (MAIN_SESSION_ONLY_TOOL_NAMES.has(toolName)) {
+    return false;
+  }
+
   if (WRITE_TOOL_NAMES.has(toolName) && !policy.allowWrite) {
     return false;
   }
@@ -105,6 +115,10 @@ export function getToolPolicyViolation(
 
   if (ORCHESTRATION_TOOL_NAMES.has(toolName)) {
     return `${toolName} is blocked by the current subagent policy: parent orchestration tools are disabled inside subagents.`;
+  }
+
+  if (MAIN_SESSION_ONLY_TOOL_NAMES.has(toolName)) {
+    return `${toolName} is blocked by the current subagent policy: this tool is only available in the main session.`;
   }
 
   if (WRITE_TOOL_NAMES.has(toolName) && !policy.allowWrite) {

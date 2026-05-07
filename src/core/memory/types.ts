@@ -22,6 +22,11 @@ export interface MemoryAutoSummary {
   lastMessageCount: number;
 }
 
+export interface MemoryVolatileSnapshot {
+  session: MemoryEntry[];
+  autoSummary: MemoryAutoSummary | null;
+}
+
 // 用于命令行展示的完整记忆快照。
 export interface MemorySnapshot {
   session: MemoryEntry[];

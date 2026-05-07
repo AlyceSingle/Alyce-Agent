@@ -30,6 +30,11 @@ export class SessionMemoryStore {
     return this.entries.slice(-Math.max(1, limit));
   }
 
+  replace(entries: MemoryEntry[]) {
+    this.entries.splice(0, this.entries.length, ...entries.map((entry) => ({ ...entry })));
+    this.trimToLimit();
+  }
+
   clear() {
     this.entries.length = 0;
   }

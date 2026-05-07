@@ -6,9 +6,17 @@ import { runAgentTurn } from "../../agent.js";
 import { isTurnInterruptedError, throwIfAborted } from "../../core/abort.js";
 import { parseReplCommand } from "../../cli/commandRouter.js";
 import {
+  ContextOverflowError,
+  formatContextBudgetInline,
+  isContextOverflowError,
+  toContextOverflowError,
+  type ContextBudgetSnapshot
+} from "../../core/context/contextBudget.js";
+import {
   formatMemorySnapshot,
   getHelpText,
-  type SessionRuntime
+  type SessionRuntime,
+  type VolatileConversationSnapshot
 } from "../../cli/sessionRuntime.js";
 import type {
   ConnectionConfig,
@@ -33,6 +41,7 @@ import {
   openSettingsDialog,
   replaceMessages,
   setConnectionConfigState,
+  setContextBudget,
   setDraftInput,
   setLoading,
   setSessionAllowedKinds,
@@ -77,8 +86,8 @@ interface TurnCheckpoint {
   turnId: string;
   input: string;
   createdAt: string;
-  runtimeMessageCount: number;
   uiMessageCount: number;
+  volatileSnapshot: VolatileConversationSnapshot;
   controller: AbortController;
   hasAssistantOutput: boolean;
   hasNonRestorableToolActivity: boolean;
@@ -90,8 +99,8 @@ interface RewindPoint {
   turnId: string;
   input: string;
   createdAt: string;
-  runtimeMessageCount: number;
   uiMessageCount: number;
+  volatileSnapshot: VolatileConversationSnapshot;
   hasFileChanges: boolean;
   hasNonRestorableToolActivity: boolean;
   isRestoredFromHistory: boolean;
@@ -105,11 +114,45 @@ function formatPostResponseFailure(step: string, error: unknown): string {
   return `${step}: ${getErrorMessage(error)}`;
 }
 
+function formatContextCompactionMessage(options: {
+  compacted: boolean;
+  before: ContextBudgetSnapshot;
+  after: ContextBudgetSnapshot;
+  snippedMessages?: number;
+  estimatedTokensSaved?: number;
+}) {
+  const onlySnipped = !options.compacted &&
+    options.snippedMessages !== undefined &&
+    options.snippedMessages > 0;
+  const lines = [
+    onlySnipped
+      ? "Older oversized tool output was snipped before sending the model request."
+      : options.compacted
+        ? "Conversation was compacted before sending the model request."
+        : "Alyce checked context before sending the model request, but conversation compaction did not change the prompt.",
+    `Before: ${Math.round(options.before.usedPercent)}% used (${options.before.estimatedInputTokens} estimated input tokens).`,
+    `After: ${Math.round(options.after.usedPercent)}% used (${options.after.estimatedInputTokens} estimated input tokens).`
+  ];
+
+  if (options.snippedMessages && options.snippedMessages > 0) {
+    lines.push(
+      `Snipped ${options.snippedMessages} oversized tool output message(s), saving about ${options.estimatedTokensSaved ?? 0} estimated tokens.`
+    );
+  }
+
+  return lines.join("\n");
+}
+
 type CompletedTurnHistoryPlan = {
   mode: "delta" | "snapshot";
   apiMessages: SessionRuntime["messages"];
   uiBaseMessageCount: number;
 };
+
+function getApiMessagesSinceCheckpoint(checkpoint: TurnCheckpoint, runtime: SessionRuntime) {
+  const baseLength = checkpoint.volatileSnapshot.messages.length;
+  return runtime.messages.slice(Math.min(baseLength, runtime.messages.length));
+}
 
 async function recordCompletedTurnHistory(
   runtime: SessionRuntime,
@@ -225,8 +268,8 @@ export function createSessionController(
     store.updateState((state) => closeDialog(state));
   };
 
-  const rollbackRuntimeConversationToCheckpoint = (checkpoint: TurnCheckpoint) => {
-    runtime.messages.splice(checkpoint.runtimeMessageCount);
+  const rollbackRuntimeConversationToCheckpoint = async (checkpoint: TurnCheckpoint) => {
+    await runtime.restoreVolatileConversationSnapshot(checkpoint.volatileSnapshot);
   };
 
   const getAffectedRewindPoints = (target: RewindPoint) =>
@@ -279,8 +322,8 @@ export function createSessionController(
       turnId: checkpoint.turnId,
       input: checkpoint.input,
       createdAt: checkpoint.createdAt,
-      runtimeMessageCount: checkpoint.runtimeMessageCount,
       uiMessageCount: checkpoint.uiMessageCount,
+      volatileSnapshot: checkpoint.volatileSnapshot,
       hasFileChanges,
       hasNonRestorableToolActivity: checkpoint.hasNonRestorableToolActivity,
       isRestoredFromHistory: false
@@ -351,7 +394,7 @@ export function createSessionController(
         }
       }
 
-      runtime.messages.splice(target.runtimeMessageCount);
+      await runtime.restoreVolatileConversationSnapshot(target.volatileSnapshot);
       const baseMessages = store.getState().messages.slice(0, target.uiMessageCount);
       const summary = [
         `Rewound to before: ${target.input}`,
@@ -370,10 +413,13 @@ export function createSessionController(
       store.updateState((state) =>
         setDraftInput(
           setTranscriptSticky(
-            replaceMessages(setStatusText(closeDialog(state), "Rewound"), [
-              ...baseMessages,
-              systemMessage
-            ]),
+            setContextBudget(
+              replaceMessages(setStatusText(closeDialog(state), "Rewound"), [
+                ...baseMessages,
+                systemMessage
+              ]),
+              null
+            ),
             true
           ),
           target.input
@@ -381,7 +427,7 @@ export function createSessionController(
       );
 
       await runtime.recordSessionRewind({
-        apiMessageCount: Math.max(0, target.runtimeMessageCount - 1),
+        apiMessageCount: Math.max(0, runtime.messages.length - 1),
         uiMessageCount: target.uiMessageCount,
         restoredInput: target.input,
         restoreMode: mode
@@ -397,6 +443,7 @@ export function createSessionController(
 
   const rebuildRewindPointsFromCurrentConversation = (uiMessages: TerminalUiMessage[]) => {
     const apiUserMessages: Array<{ input: string; runtimeMessageCount: number }> = [];
+    const currentSnapshot = runtime.createVolatileConversationSnapshot();
     for (let index = 1; index < runtime.messages.length; index += 1) {
       const message = runtime.messages[index];
       if (message?.role !== "user") {
@@ -430,8 +477,15 @@ export function createSessionController(
         turnId: `history-${uiUserMessage.message.id}`,
         input: apiUserMessage.input || uiUserMessage.message.content,
         createdAt: uiUserMessage.message.createdAt,
-        runtimeMessageCount: apiUserMessage.runtimeMessageCount,
         uiMessageCount: uiUserMessage.index,
+        volatileSnapshot: {
+          ...currentSnapshot,
+          messages: runtime.messages
+            .slice(0, apiUserMessage.runtimeMessageCount)
+            .map((message) => ({ ...message })),
+          fileReadState: new Map(),
+          compaction: null
+        },
         hasFileChanges: false,
         hasNonRestorableToolActivity: false,
         isRestoredFromHistory: true
@@ -620,7 +674,10 @@ export function createSessionController(
         setSessionAllowedKinds(
           setSessionApprovalMode(
             setDraftInput(
-              setTodos(replaceMessages(closeDialog(state), [...restoredMessages, systemMessage]), []),
+              setContextBudget(
+                setTodos(replaceMessages(closeDialog(state), [...restoredMessages, systemMessage]), []),
+                null
+              ),
               ""
             ),
             sessionApprovalMode
@@ -843,9 +900,12 @@ export function createSessionController(
       await runtime.clearConversation();
       store.updateState((state) =>
         setDraftInput(
-          replaceMessages(
-            setTodos(setStatusText(state, "Idle"), []),
-            [createSystemMessage("History and session memory cleared.", "Session")]
+          setContextBudget(
+            replaceMessages(
+              setTodos(setStatusText(state, "Idle"), []),
+              [createSystemMessage("History and session memory cleared.", "Session")]
+            ),
+            null
           ),
           ""
         )
@@ -900,9 +960,14 @@ export function createSessionController(
     }
 
     if (parsedCommand.type === "context-preview") {
-      await runtime.resetSystemMessage();
+      const controller = new AbortController();
       appendUiMessage(
-        createSystemMessage(runtime.buildContextPreview(parsedCommand.nextUserInput), "Context Preview")
+        createSystemMessage(
+          await runtime.buildContextPreview(parsedCommand.nextUserInput, {
+            abortSignal: controller.signal
+          }),
+          "Context Preview"
+        )
       );
       return true;
     }
@@ -1029,16 +1094,14 @@ export function createSessionController(
         return;
       }
 
-      await runtime.resetSystemMessage();
-
       const turnId = randomUUID();
       const controller = new AbortController();
       const checkpoint: TurnCheckpoint = {
         turnId,
         input: normalized,
         createdAt: new Date().toISOString(),
-        runtimeMessageCount: runtime.messages.length,
         uiMessageCount: store.getState().messages.length,
+        volatileSnapshot: runtime.createVolatileConversationSnapshot(),
         controller,
         hasAssistantOutput: false,
         hasNonRestorableToolActivity: false,
@@ -1055,9 +1118,10 @@ export function createSessionController(
       } as const;
       runtime.messages.push(userMessage);
       appendUiMessage(createUserMessage(normalized));
-      store.updateState((state) => setLoading(setStatusText(state, "Thinking..."), true));
+      store.updateState((state) => setLoading(setStatusText(state, "Preparing..."), true));
       let completedTurnHistoryPlan: CompletedTurnHistoryPlan | null = null;
       let turnRecorded = false;
+      let conversationWasCompacted = false;
 
       try {
         // 每轮都绑定独立的 abort controller 和 tool context，确保取消只影响当前轮次。
@@ -1067,6 +1131,25 @@ export function createSessionController(
           runtime.getConnectionConfig().baseURL,
           currentModel
         );
+        const tools = await runtime.getMainAgentToolSchemas({
+          abortSignal: controller.signal
+        });
+        throwIfAborted(controller.signal);
+        await runtime.resetSystemMessage({
+          availableTools: tools.map((tool) => tool.function.name)
+        });
+        store.updateState((state) => setStatusText(state, "Estimating context..."));
+        throwIfAborted(controller.signal);
+        const initialBudget = runtime.estimateContextBudget({
+          model: currentModel,
+          messages: runtime.messages,
+          tools,
+          gcliGeminiCompat
+        });
+        store.updateState((state) =>
+          setContextBudget(setStatusText(state, formatContextBudgetInline(initialBudget)), initialBudget)
+        );
+        store.updateState((state) => setStatusText(state, "Thinking..."));
         const reply = await runAgentTurn(client, runtime.messages, {
           model: currentModel,
           maxSteps: runtime.getSettings().maxSteps,
@@ -1086,7 +1169,61 @@ export function createSessionController(
               }
             }
           }),
+          tools,
           requestPatches: runtime.requestPatches,
+          contextBudgetService: runtime.getContextBudgetService(),
+          refreshTools: async ({ abortSignal }) => {
+            const refreshedTools = await runtime.getMainAgentToolSchemas({
+              abortSignal
+            });
+            await runtime.resetSystemMessage({
+              availableTools: refreshedTools
+                .map((tool) => tool.function.name)
+                .sort((left, right) => left.localeCompare(right))
+            });
+            return refreshedTools;
+          },
+          preflightCompactConversation: ({ abortSignal }) =>
+            runtime.maybeCompactConversation({
+              client,
+              model: currentModel,
+              force: true,
+              abortSignal
+            }),
+          onContextBudget: (snapshot) => {
+            store.updateState((state) =>
+              setContextBudget(setStatusText(state, formatContextBudgetInline(snapshot)), snapshot)
+            );
+          },
+          onContextCompactionStart: (snapshot) => {
+            store.updateState((state) =>
+              setContextBudget(setStatusText(state, "Compacting context..."), snapshot)
+            );
+          },
+          onContextCompactionResult: (event) => {
+            if (event.compacted || event.snipResult?.changed) {
+              conversationWasCompacted = true;
+            }
+
+            store.updateState((state) =>
+              setContextBudget(
+                setStatusText(state, formatContextBudgetInline(event.after)),
+                event.after
+              )
+            );
+            appendUiMessage(
+              createSystemMessage(
+                formatContextCompactionMessage({
+                  compacted: event.compacted,
+                  before: event.before,
+                  after: event.after,
+                  snippedMessages: event.snipResult?.snippedMessages,
+                  estimatedTokensSaved: event.snipResult?.estimatedTokensSaved
+                }),
+                "Context"
+              )
+            );
+          },
           onThinking: (thinking) => {
             const chunk = thinking.trim();
             if (!chunk || shouldSkipThinkingContent(chunk)) {
@@ -1122,8 +1259,10 @@ export function createSessionController(
         checkpoint.hasAssistantOutput = true;
         appendUiMessage(createAssistantMessage(reply));
         completedTurnHistoryPlan = {
-          mode: "delta",
-          apiMessages: runtime.messages.slice(checkpoint.runtimeMessageCount),
+          mode: conversationWasCompacted ? "snapshot" : "delta",
+          apiMessages: conversationWasCompacted
+            ? runtime.messages.slice(1)
+            : getApiMessagesSinceCheckpoint(checkpoint, runtime),
           uiBaseMessageCount: checkpoint.uiMessageCount
         };
         throwIfAborted(controller.signal);
@@ -1154,6 +1293,7 @@ export function createSessionController(
             abortSignal: controller.signal
           });
           if (compacted) {
+            conversationWasCompacted = true;
             completedTurnHistoryPlan = {
               mode: "snapshot",
               apiMessages: runtime.messages.slice(1),
@@ -1171,7 +1311,10 @@ export function createSessionController(
 
         if (summaryUpdated || compacted) {
           try {
-            await runtime.resetSystemMessage();
+            throwIfAborted(controller.signal);
+            await runtime.resetSystemMessage({
+              availableTools: tools.map((tool) => tool.function.name)
+            });
           } catch (error) {
             if (isTurnInterruptedError(error, controller.signal)) {
               throw error;
@@ -1248,13 +1391,21 @@ export function createSessionController(
           activeTurn = null;
 
           if (checkpoint.userCancelled) {
-            const interruptedApiMessages = runtime.messages.slice(checkpoint.runtimeMessageCount);
             const interruptedUiMessages = store.getState().messages.slice(checkpoint.uiMessageCount);
             try {
-              await runtime.recordSessionTurn({
-                apiMessages: interruptedApiMessages,
-                uiMessages: interruptedUiMessages
-              });
+              if (conversationWasCompacted) {
+                await runtime.recordSessionConversationSnapshot({
+                  apiMessages: runtime.messages.slice(1),
+                  uiMessages: interruptedUiMessages,
+                  uiBaseMessageCount: checkpoint.uiMessageCount
+                });
+              } else {
+                await runtime.recordSessionTurn({
+                  apiMessages: getApiMessagesSinceCheckpoint(checkpoint, runtime),
+                  uiMessages: interruptedUiMessages
+                });
+              }
+              turnRecorded = true;
             } catch (historyError) {
               const historyMessage = getErrorMessage(historyError);
               appendUiMessage(createErrorMessage(`Interrupted turn was not saved: ${historyMessage}`));
@@ -1279,7 +1430,7 @@ export function createSessionController(
             store.updateState((state) => setStatusText(state, "Interrupted"));
           } else {
             // 兜底处理中断但未进入“用户主动取消”路径的情况，避免半截 turn 残留在真实会话上下文里。
-            rollbackRuntimeConversationToCheckpoint(checkpoint);
+            await rollbackRuntimeConversationToCheckpoint(checkpoint);
             runtime.discardTurn(turnId);
             appendUiMessage(
               createSystemMessage(
@@ -1299,10 +1450,23 @@ export function createSessionController(
           }
         } else {
           activeTurn = null;
-          rollbackRuntimeConversationToCheckpoint(checkpoint);
+          await rollbackRuntimeConversationToCheckpoint(checkpoint);
           runtime.discardTurn(turnId);
-          const message = getErrorMessage(error);
+          const contextOverflow = isContextOverflowError(error)
+            ? toContextOverflowError(error)
+            : null;
+          const message = contextOverflow
+            ? [
+                getErrorMessage(contextOverflow),
+                "",
+                "This was classified as context_overflow and was not sent through the normal reconnect retry loop.",
+                "Use /context to inspect the budget, then compact context or remove large attachments/tool outputs before retrying."
+              ].join("\n")
+            : getErrorMessage(error);
           appendUiMessage(createErrorMessage(message));
+          if (contextOverflow instanceof ContextOverflowError && contextOverflow.snapshot) {
+            store.updateState((state) => setContextBudget(state, contextOverflow.snapshot ?? null));
+          }
           store.updateState((state) =>
             setDraftInput(setTranscriptSticky(setStatusText(state, "Error"), true), checkpoint.input)
           );

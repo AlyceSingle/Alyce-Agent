@@ -8,7 +8,8 @@ import type {
   MemoryPromptContext,
   MemoryServiceConfig,
   MemorySnapshot,
-  MemorySource
+  MemorySource,
+  MemoryVolatileSnapshot
 } from "./types.js";
 
 type MessageParam = OpenAI.Chat.Completions.ChatCompletionMessageParam;
@@ -50,6 +51,19 @@ export class MemoryService {
   clearSession() {
     this.sessionStore.clear();
     this.autoSummary = null;
+    this.autoSummaryUpdating = false;
+  }
+
+  createVolatileSnapshot(): MemoryVolatileSnapshot {
+    return {
+      session: this.sessionStore.list(Number.MAX_SAFE_INTEGER).map((entry) => ({ ...entry })),
+      autoSummary: this.autoSummary ? { ...this.autoSummary } : null
+    };
+  }
+
+  restoreVolatileSnapshot(snapshot: MemoryVolatileSnapshot) {
+    this.sessionStore.replace(snapshot.session);
+    this.autoSummary = snapshot.autoSummary ? { ...snapshot.autoSummary } : null;
     this.autoSummaryUpdating = false;
   }
 

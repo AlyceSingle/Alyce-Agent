@@ -78,6 +78,7 @@ export function AgentScreen(props: { controller: SessionController }) {
   const sessionAllowedKinds = useTerminalUiSelector((value) => value.sessionAllowedKinds);
   const requestPatchCount = useTerminalUiSelector((value) => value.requestPatchCount);
   const statusText = useTerminalUiSelector((value) => value.statusText);
+  const contextBudget = useTerminalUiSelector((value) => value.contextBudget);
   const isLoading = useTerminalUiSelector((value) => value.isLoading);
   const draftInput = useTerminalUiSelector((value) => value.draftInput);
   const todos = useTerminalUiSelector((value) => value.todos);
@@ -364,6 +365,7 @@ export function AgentScreen(props: { controller: SessionController }) {
           requestPatchCount={requestPatchCount}
           todoSummary={todoSummary}
           statusText={displayedStatusText}
+          contextBudget={contextBudget}
         />
       }
       transcript={

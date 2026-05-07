@@ -1,11 +1,15 @@
 import React from "react";
-import { marked } from "marked";
+import { Marked, type TokenizerAndRendererExtension } from "marked";
 import { Box, Text } from "../runtime/ink.js";
 import type { TerminalUiMessageKind } from "../state/types.js";
 import { terminalUiTheme } from "../theme/theme.js";
 import { decodeHtmlEntities } from "../utils/htmlEntities.js";
 import { measureCharWidth } from "../utils/text.js";
-import { renderLatexMathToText, splitMarkdownMathSegments } from "../utils/math.js";
+import {
+  readMarkdownMathSegmentAtStart,
+  renderLatexMathToText,
+  splitMarkdownMathSegments
+} from "../utils/math.js";
 
 type MarkdownToken = {
   type: string;
@@ -66,6 +70,32 @@ export interface MarkdownRenderPlan {
 
 const MAX_MARKDOWN_PLAN_CACHE_ENTRIES = 128;
 const markdownPlanCache = new Map<string, MarkdownRenderPlan>();
+const markdownMathExtension: TokenizerAndRendererExtension = {
+  name: "math",
+  level: "inline",
+  start(src: string): number | undefined {
+    const index = src.indexOf("$");
+    return index >= 0 ? index : undefined;
+  },
+  tokenizer(src: string) {
+    const match = readMarkdownMathSegmentAtStart(src);
+    if (!match) {
+      return undefined;
+    }
+
+    return {
+      type: "math",
+      raw: match.raw,
+      text: match.content,
+      display: match.display
+    };
+  }
+};
+const markdownLexer = new Marked({
+  gfm: true,
+  breaks: true,
+  extensions: [markdownMathExtension]
+});
 
 export function buildMarkdownRenderPlan(content: string, width: number): MarkdownRenderPlan {
   const safeWidth = Math.max(16, width);
@@ -78,10 +108,7 @@ export function buildMarkdownRenderPlan(content: string, width: number): Markdow
     return cachedPlan;
   }
 
-  const tokens = marked.lexer(normalizedContent, {
-    gfm: true,
-    breaks: true
-  }) as MarkdownToken[];
+  const tokens = markdownLexer.lexer(normalizedContent) as MarkdownToken[];
   const blocks = renderBlockTokens(tokens, safeWidth, "md", 0);
   const plan = {
     blocks,
@@ -726,6 +753,13 @@ function toInlineSpans(tokens: MarkdownToken[]): MarkdownSpan[] {
       case "del":
         spans.push(...applySpanStyle(toInlineSpans(getNestedTokens(token)), { strikethrough: true }));
         break;
+      case "math":
+        spans.push({
+          text: renderMathToken(token),
+          color: terminalUiTheme.colors.markdownInlineCode,
+          bold: true
+        });
+        break;
       case "br":
         spans.push({ text: "\n" });
         break;
@@ -777,9 +811,7 @@ function renderInlineContentWithMath(
   prefixFirst?: string,
   prefixRest?: string
 ): MarkdownRenderBlock[] {
-  const rawText = extractInlinePlainText(tokens);
-  const segments = splitMarkdownMathSegments(rawText);
-  const hasDisplayMath = segments.some((segment) => segment.type === "math" && segment.display);
+  const hasDisplayMath = tokens.some(hasDisplayMathToken);
   if (!hasDisplayMath) {
     return [
       createWrappedSpanBlock(toInlineSpans(tokens), width, {
@@ -792,15 +824,7 @@ function renderInlineContentWithMath(
     ];
   }
 
-  return buildBlocksFromMathSegments(
-    segments,
-    width,
-    key,
-    indent,
-    variant,
-    prefixFirst,
-    prefixRest
-  );
+  return buildBlocksFromInlineTokens(tokens, width, key, indent, variant, prefixFirst, prefixRest);
 }
 
 function spansFromMarkdownText(text: string): MarkdownSpan[] {
@@ -914,44 +938,93 @@ function buildBlocksFromMathSegments(
   return blocks;
 }
 
-function extractInlinePlainText(tokens: MarkdownToken[]): string {
-  let text = "";
+function buildBlocksFromInlineTokens(
+  tokens: MarkdownToken[],
+  width: number,
+  key: string,
+  indent: number,
+  variant: Extract<MarkdownLineVariant, "paragraph" | "quote" | "list">,
+  prefixFirst?: string,
+  prefixRest?: string
+): MarkdownRenderBlock[] {
+  const blocks: MarkdownRenderBlock[] = [];
+  let blockIndex = 0;
+  let currentInlineSpans: MarkdownSpan[] = [];
+
+  const flushInlineBlock = () => {
+    if (currentInlineSpans.length === 0) {
+      return;
+    }
+
+    blocks.push(createWrappedSpanBlock(currentInlineSpans, width, {
+      key: `${key}-inline-${blockIndex}`,
+      indent,
+      prefixFirst: blocks.length === 0 ? prefixFirst : undefined,
+      prefixRest,
+      variant
+    }));
+    blockIndex += 1;
+    currentInlineSpans = [];
+  };
 
   for (const token of tokens) {
-    switch (token.type) {
-      case "text": {
-        const nestedTokens = getNestedTokens(token);
-        text += nestedTokens.length > 0
-          ? extractInlinePlainText(nestedTokens)
-          : decodeHtmlEntities(asString(token.text) ?? asString(token.raw) ?? "");
-        break;
-      }
-      case "strong":
-      case "em":
-      case "del":
-      case "link":
-      case "heading":
-        text += extractInlinePlainText(getInlineTokenSource(token));
-        break;
-      case "codespan":
-        text += decodeCodeLiteral(asString(token.text) ?? asString(token.raw) ?? "");
-        break;
-      case "br":
-        text += "\n";
-        break;
-      case "image":
-        text += `[image: ${decodeHtmlEntities(asString(token.text) ?? asString(token.href) ?? "asset")}]`;
-        break;
-      case "html":
-        text += decodeHtmlEntities(asString(token.raw) ?? asString(token.text) ?? "");
-        break;
-      default:
-        text += decodeHtmlEntities(asString(token.text) ?? asString(token.raw) ?? "");
-        break;
+    if (token.type !== "math") {
+      currentInlineSpans.push(...toInlineSpans([token]));
+      continue;
     }
+
+    if (!asBoolean(token.display)) {
+      currentInlineSpans.push({
+        text: renderMathToken(token),
+        color: terminalUiTheme.colors.markdownInlineCode,
+        bold: true
+      });
+      continue;
+    }
+
+    flushInlineBlock();
+    const continuedPrefix = blocks.length === 0 ? prefixFirst : prefixRest;
+    const mathIndent = continuedPrefix ? indent : indent + 2;
+    blocks.push(createWrappedSpanBlock([{
+      text: renderMathToken(token),
+      color: terminalUiTheme.colors.markdownInlineCode,
+      bold: true
+    }], width, {
+      key: `${key}-math-${blockIndex}`,
+      indent: mathIndent,
+      prefixFirst: continuedPrefix,
+      prefixRest,
+      variant: "math"
+    }));
+    blockIndex += 1;
   }
 
-  return text;
+  flushInlineBlock();
+
+  if (blocks.length === 0) {
+    blocks.push(createWrappedSpanBlock([{ text: " " }], width, {
+      key: `${key}-empty`,
+      indent,
+      prefixFirst,
+      prefixRest,
+      variant
+    }));
+  }
+
+  return blocks;
+}
+
+function hasDisplayMathToken(token: MarkdownToken): boolean {
+  if (token.type === "math") {
+    return asBoolean(token.display);
+  }
+
+  return getNestedTokens(token).some(hasDisplayMathToken);
+}
+
+function renderMathToken(token: MarkdownToken): string {
+  const content = asString(token.text) ?? asString(token.raw) ?? "";
+  return renderLatexMathToText(content) || content;
 }
 
 function applySpanStyle(spans: MarkdownSpan[], style: MarkdownSpanStyle): MarkdownSpan[] {

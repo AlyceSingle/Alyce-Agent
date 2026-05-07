@@ -4,7 +4,7 @@
 
 # 项目结构
 
-我是 Alyce。这一页将为您介绍 Alyce 的代码组织方式、各层级职责以及开发建议。
+我是 Alyce。本页面将为您介绍 Alyce 的代码组织方式、各层级职责以及开发建议。
 
 ## 顶层目录结构
 
@@ -13,7 +13,7 @@
 ├─ src/            ← 源代码目录
 ├─ docs/           ← 项目文档
 ├─ dist/           ← TypeScript 编译输出目录
-├─ .alyce/         ← 运行时状态：配置、记忆、会话历史
+├─ .alyce/         ← 运行时状态：配置、记忆、会话历史、技能、MCP 输出
 ├─ User_Info/      ← 用户个人资料（不属于仓库）
 └─ README.md       ← 项目入口说明
 ```
@@ -72,6 +72,11 @@ src/cli/contextPreview.ts
 #### `src/core/file-history/`
 在文件写入前记录快照，支持操作回滚。
 
+### MCP 运行时
+
+#### `src/mcp/`
+读取 `./.alyce/mcp.json`，管理 MCP client transport，暴露动态 MCP tools，并为 `McpStatus`、`ListMcpResources`、`ReadMcpResource` 提供运行时能力。
+
 ### 工具层 (Tools)
 
 ```
@@ -80,6 +85,8 @@ src/tools/registry.ts
 ```
 
 定义了助手可调用的所有工具，如 `Read`、`Edit`、`Bash`、`WebSearch` 等。每个工具都包含定义、执行逻辑和审批规则。
+
+本地技能放在 `./.alyce/skills/**/SKILL.md` 或 `~/.alyce/skills/**/SKILL.md`，通过 `SkillTool` 加载。MCP 二进制资源会写入 `./.alyce/mcp-output/`。
 
 ### 终端 UI (Terminal UI)
 
@@ -94,7 +101,7 @@ src/tools/registry.ts
 | 需求 | 入口文件/目录 |
 |---|---|
 | 修改模型接收的指令 | `src/core/prompt/` |
-| 修改用户看到的界面 | `src/terminal-ui/components/` |
+| 修改用户看到的界面 | `src/terminal-ui/` |
 | 新增或修改工具功能 | `src/tools/` |
 | 调整记忆或上下文逻辑 | `src/core/memory/` 或 `src/core/conversation/` |
 | 修复启动相关问题 | `src/index.ts` 或 `src/cli/startReactUiMode.ts` |

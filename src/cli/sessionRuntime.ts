@@ -20,11 +20,21 @@ import {
   type SessionSettings,
   type SessionSettingsState
 } from "../config/runtime.js";
-import { ConversationCompactor, DEFAULT_CONVERSATION_COMPACTION_CONFIG } from "../core/conversation/conversationCompactor.js";
+import {
+  ConversationCompactor,
+  DEFAULT_CONVERSATION_COMPACTION_CONFIG,
+  type ConversationCompactionState
+} from "../core/conversation/conversationCompactor.js";
+import {
+  ContextBudgetService,
+  type ContextBudgetSnapshot
+} from "../core/context/contextBudget.js";
 import { MemoryService } from "../core/memory/memoryService.js";
 import { FileHistoryManager, type FileHistoryRestoreResult } from "../core/file-history/fileHistoryManager.js";
 import { isTurnInterruptedError, throwIfAborted, TurnInterruptedError } from "../core/abort.js";
-import type { MemorySnapshot } from "../core/memory/types.js";
+import type { MemorySnapshot, MemoryVolatileSnapshot } from "../core/memory/types.js";
+import { buildPatchedChatCompletionRequest } from "../core/api/sendChatCompletion.js";
+import { cloneJson } from "../core/json/clone.js";
 import { buildEffectiveSystemPrompt } from "../core/prompt/builder.js";
 import { PromptSectionResolver } from "../core/prompt/sectionResolver.js";
 import { runAgentTurn } from "../core/agent/runAgentTurn.js";
@@ -38,7 +48,9 @@ import type {
   SessionResumePayload
 } from "../core/session-history/types.js";
 import { formatCurrentDateLabel, formatSystemDateTime, getSystemTimeZone } from "../core/time/systemTime.js";
+import { createProjectMcpRuntime } from "../mcp/runtime.js";
 import { getRegisteredToolNames, getToolSchemasByName } from "../tools/registry.js";
+import { TOOL_SCHEMAS } from "../tools.js";
 import {
   loadSubagentDefinition,
   loadSubagentDefinitions,
@@ -71,6 +83,14 @@ import {
 } from "./subagentProgress.js";
 
 export type SessionMessage = OpenAI.Chat.Completions.ChatCompletionMessageParam;
+export type FileReadStateSnapshot = Map<string, FileReadState>;
+
+export interface VolatileConversationSnapshot {
+  messages: SessionMessage[];
+  fileReadState: FileReadStateSnapshot;
+  memory: MemoryVolatileSnapshot;
+  compaction: ConversationCompactionState | null;
+}
 
 interface SubagentSession {
   taskId: string;
@@ -96,6 +116,8 @@ interface SubagentSession {
   hasChanges?: boolean;
   baseWorkspaceRoot?: string;
   messages: SessionMessage[];
+  contextBudgetService: ContextBudgetService;
+  conversationCompactor: ConversationCompactor;
 }
 
 interface PersistedSubagentTaskFile {
@@ -145,6 +167,9 @@ export interface SessionRuntime {
   messages: SessionMessage[];
   workspaceRoot: string;
   requestPatches: RuntimeConfig["requestPatches"];
+  getMainAgentToolSchemas: (
+    options?: { abortSignal?: AbortSignal }
+  ) => Promise<OpenAI.Chat.Completions.ChatCompletionTool[]>;
   getSessionId: () => SessionId;
   getSessionHistoryDirectory: () => string;
   hasConnectionConfig: () => boolean;
@@ -163,7 +188,7 @@ export interface SessionRuntime {
   getAllowedRoots: () => string[];
   getSessionAdditionalDirectories: () => string[];
   setSessionAdditionalDirectories: (directories: string[]) => Promise<void>;
-  resetSystemMessage: () => Promise<void>;
+  resetSystemMessage: (options?: { availableTools?: string[] }) => Promise<void>;
   clearConversation: () => Promise<void>;
   clearPromptCache: () => void;
   recordSessionTurn: (options: {
@@ -190,12 +215,22 @@ export interface SessionRuntime {
     excludeCurrent?: boolean;
   }) => Promise<SessionHistoryListItem[]>;
   resumeSessionHistory: (sessionId: SessionId) => Promise<SessionResumePayload>;
-  buildContextPreview: (nextUserInput?: string) => string;
+  buildContextPreview: (nextUserInput?: string, options?: { abortSignal?: AbortSignal }) => Promise<string>;
+  getContextBudgetService: () => ContextBudgetService;
+  estimateContextBudget: (options?: {
+    messages?: SessionMessage[];
+    tools?: OpenAI.Chat.Completions.ChatCompletionTool[];
+    model?: string;
+    gcliGeminiCompat?: boolean;
+  }) => ContextBudgetSnapshot;
   maybeCompactConversation: (options: {
     client: OpenAI;
     model: string;
+    force?: boolean;
     abortSignal?: AbortSignal;
   }) => Promise<boolean>;
+  createVolatileConversationSnapshot: () => VolatileConversationSnapshot;
+  restoreVolatileConversationSnapshot: (snapshot: VolatileConversationSnapshot) => Promise<void>;
   beginTurn: (turnId: string) => void;
   hasTrackedFileChanges: (turnId: string) => boolean;
   restoreFilesForTurn: (turnId: string) => Promise<FileHistoryRestoreResult>;
@@ -302,6 +337,7 @@ export async function createSessionRuntime(
   const conversationCompactor = new ConversationCompactor(
     DEFAULT_CONVERSATION_COMPACTION_CONFIG
   );
+  const contextBudgetService = new ContextBudgetService();
   const sessionHistory = new SessionHistoryStore({
     sessionsDirectory: path.join(config.paths.alyceDirectory, "sessions"),
     workspaceRoot: config.paths.workspaceRoot
@@ -312,6 +348,7 @@ export async function createSessionRuntime(
   });
   memoryService.setAutoSummaryEnabled(settings.autoSummaryEnabled);
   await memoryService.initialize();
+  const mcpRuntime = await createProjectMcpRuntime(config.paths.workspaceRoot);
   const fileReadState = new Map<string, FileReadState>();
   const subagentSessions = new Map<string, SubagentSession>();
   const tasksDirectory = path.join(config.paths.alyceDirectory, "tasks");
@@ -323,6 +360,21 @@ export async function createSessionRuntime(
 
   const getAllowedRootsSnapshot = () =>
     resolveAllowedRoots(config.paths.workspaceRoot, settings, sessionAdditionalDirectories);
+
+  const getMainAgentToolSchemas = async (options: { abortSignal?: AbortSignal } = {}) => [
+    ...TOOL_SCHEMAS,
+    ...await mcpRuntime.getToolSchemas({
+      abortSignal: options.abortSignal,
+      initialize: false
+    })
+  ];
+
+  const getToolNamesFromSchemas = (
+    tools: OpenAI.Chat.Completions.ChatCompletionTool[]
+  ) => tools.map((tool) => tool.function.name).sort((left, right) => left.localeCompare(right));
+
+  const getAvailableToolNamesForPrompt = (availableTools?: string[]) =>
+    availableTools ?? getRegisteredToolNames();
 
   const getPromptRuntimeContext = async (options: PromptRuntimeContextOptions = {}) => {
     const now = new Date();
@@ -339,15 +391,15 @@ export async function createSessionRuntime(
       currentDateTime: formatSystemDateTime(now),
       timeZone: getSystemTimeZone(),
       platform: process.platform,
-      availableTools: options.availableTools ?? getRegisteredToolNames(),
+      availableTools: getAvailableToolNamesForPrompt(options.availableTools),
       memory: await memoryService.getPromptContext()
     };
   };
 
   // system prompt 始终由当前模型、环境、工具能力和记忆视图重新生成。
-  const buildSystemPrompt = async () =>
+  const buildSystemPrompt = async (options: { availableTools?: string[] } = {}) =>
     buildEffectiveSystemPrompt(
-      await getPromptRuntimeContext(),
+      await getPromptRuntimeContext(options),
       settings,
       promptResolver
     );
@@ -402,10 +454,10 @@ export async function createSessionRuntime(
   ];
 
   // 约定 messages[0] 永远保留为 system message，其他消息只追加在其后。
-  const resetSystemMessage = async () => {
+  const resetSystemMessage = async (options: { availableTools?: string[] } = {}) => {
     messages[0] = {
       role: "system",
-      content: await buildSystemPrompt()
+      content: await buildSystemPrompt(options)
     };
   };
 
@@ -420,6 +472,37 @@ export async function createSessionRuntime(
     if (interruptedSubagents) {
       await persistSubagentTasks();
     }
+  };
+
+  const createFileReadStateSnapshot = (): FileReadStateSnapshot =>
+    new Map(
+      [...fileReadState.entries()].map(([absolutePath, state]) => [
+        absolutePath,
+        { ...state }
+      ])
+    );
+
+  const restoreFileReadStateSnapshot = (snapshot: FileReadStateSnapshot) => {
+    fileReadState.clear();
+    for (const [absolutePath, state] of snapshot.entries()) {
+      fileReadState.set(absolutePath, { ...state });
+    }
+  };
+
+  const createVolatileConversationSnapshot = (): VolatileConversationSnapshot => ({
+    messages: cloneJson(messages),
+    fileReadState: createFileReadStateSnapshot(),
+    memory: memoryService.createVolatileSnapshot(),
+    compaction: conversationCompactor.createSnapshot()
+  });
+
+  const restoreVolatileConversationSnapshot = async (snapshot: VolatileConversationSnapshot) => {
+    messages.splice(0, messages.length, ...cloneJson(snapshot.messages));
+    restoreFileReadStateSnapshot(snapshot.fileReadState);
+    memoryService.restoreVolatileSnapshot(snapshot.memory);
+    conversationCompactor.restoreSnapshot(snapshot.compaction);
+    promptResolver.clearSessionCache();
+    await resetSystemMessage();
   };
 
   const rebuildConnectionState = (options: {
@@ -483,6 +566,7 @@ export async function createSessionRuntime(
     messages,
     workspaceRoot: config.paths.workspaceRoot,
     requestPatches: config.requestPatches,
+    getMainAgentToolSchemas,
     getSessionId: () => sessionHistory.getCurrentSessionId(),
     getSessionHistoryDirectory: () => path.join(config.paths.alyceDirectory, "sessions"),
     hasConnectionConfig: () => connection.apiKey.trim().length > 0,
@@ -559,7 +643,10 @@ export async function createSessionRuntime(
     recordSessionRewind: async (options) => {
       await sessionHistory.recordRewind(options);
     },
-    flushSessionHistory: () => sessionHistory.flush(),
+    flushSessionHistory: async () => {
+      await sessionHistory.flush();
+      await mcpRuntime.close();
+    },
     listSessionHistory: (options = {}) =>
       sessionHistory.listSessions({
         limit: options.limit,
@@ -586,7 +673,7 @@ export async function createSessionRuntime(
       );
       return resume;
     },
-    buildContextPreview: (nextUserInput) => {
+    buildContextPreview: async (nextUserInput, options = {}) => {
       const previewTimestamp = formatSystemDateTime(new Date());
       const trimmedInput = nextUserInput?.trim();
       const previewUserMessage: SessionMessage | undefined = trimmedInput
@@ -595,26 +682,62 @@ export async function createSessionRuntime(
             content: trimmedInput
           }
         : undefined;
+      const tools = await getMainAgentToolSchemas({
+        abortSignal: options.abortSignal
+      });
+      const previewMessages = (previewUserMessage ? [...messages, previewUserMessage] : messages)
+        .map((message) => ({ ...message }));
+      previewMessages[0] = {
+        role: "system",
+        content: await buildSystemPrompt({
+          availableTools: getToolNamesFromSchemas(tools)
+        })
+      };
 
       return buildNextTurnContextPreview({
         currentModel: connection.model,
-        messages: previewUserMessage ? [...messages, previewUserMessage] : messages,
+        messages: previewMessages,
+        gcliGeminiCompat: shouldUseGcliGeminiCompat(connection.baseURL, connection.model),
         messageTimestampsEnabled: settings.messageTimestampsEnabled,
-        currentRequestTimestamp: previewTimestamp
+        currentRequestTimestamp: previewTimestamp,
+        tools,
+        requestPatches: config.requestPatches,
+        contextBudgetService
       });
     },
-    maybeCompactConversation: async ({ client: compactClient, model, abortSignal }) => {
+    getContextBudgetService: () => contextBudgetService,
+    estimateContextBudget: (options = {}) => {
+      return contextBudgetService.estimateRequest(buildPatchedChatCompletionRequest({
+        model: options.model ?? connection.model,
+        messages: options.messages ?? messages,
+        tools: options.tools ?? TOOL_SCHEMAS,
+        temperature: 0.2,
+        toolChoice: "auto",
+        gcliGeminiCompat: options.gcliGeminiCompat ??
+          shouldUseGcliGeminiCompat(connection.baseURL, options.model ?? connection.model),
+        messageTimestampsEnabled: settings.messageTimestampsEnabled,
+        requestPatches: config.requestPatches
+      }));
+    },
+    maybeCompactConversation: async ({ client: compactClient, model, force, abortSignal }) => {
       if (!settings.conversationCompactionEnabled) {
         return false;
       }
 
-      return conversationCompactor.maybeCompact({
+      const compacted = await conversationCompactor.maybeCompact({
         client: compactClient,
         model,
         messages,
+        force,
         abortSignal
       });
+      if (compacted) {
+        fileReadState.clear();
+      }
+      return compacted;
     },
+    createVolatileConversationSnapshot,
+    restoreVolatileConversationSnapshot,
     beginTurn: (turnId) => {
       fileHistoryManager.beginTurn(turnId);
     },
@@ -649,6 +772,7 @@ export async function createSessionRuntime(
       getTodos,
       setTodos,
       recordToolActivity,
+      mcpRuntime,
       captureFileBeforeWrite: (absolutePath) => fileHistoryManager.captureBeforeWrite(turnId, absolutePath),
       recordFileRead: (absolutePath, state) => {
         fileReadState.set(path.resolve(absolutePath), { ...state });
@@ -939,6 +1063,26 @@ export async function createSessionRuntime(
         context: subagentContext,
         tools: getToolSchemasByName(getAllowedToolNamesForSubagent(agent)),
         requestPatches: config.requestPatches,
+        contextBudgetService: session.contextBudgetService,
+        refreshTools: async () => getToolSchemasByName(getAllowedToolNamesForSubagent(agent)),
+        preflightCompactConversation: async ({ abortSignal }) => {
+          return session.conversationCompactor.maybeCompact({
+            client: clientForSubagent,
+            model: session.model,
+            messages: session.messages,
+            force: true,
+            abortSignal
+          });
+        },
+        onContextCompactionStart: (snapshot) => {
+          recordProgress("status", `Compacting context (${Math.round(snapshot.usedPercent)}% used).`);
+        },
+        onContextCompactionResult: (event) => {
+          recordProgress(
+            "status",
+            `Context ${event.compacted ? "compacted" : "checked"}: ${Math.round(event.before.usedPercent)}% -> ${Math.round(event.after.usedPercent)}%.`
+          );
+        },
         abortSignal: parentContextOptions.abortSignal,
         messageTimestampsEnabled: settings.messageTimestampsEnabled,
         gcliGeminiCompat: shouldUseGcliGeminiCompat(connection.baseURL, session.model),
@@ -1007,7 +1151,9 @@ export async function createSessionRuntime(
           content: options.systemPrompt
         },
         ...(input.forkContext ? buildForkContextMessages() : [])
-      ]
+      ],
+      contextBudgetService: new ContextBudgetService(),
+      conversationCompactor: new ConversationCompactor(DEFAULT_CONVERSATION_COMPACTION_CONFIG)
     };
     subagentSessions.set(taskId, session);
     await persistSubagentTasks();
@@ -1173,7 +1319,9 @@ export async function createSessionRuntime(
         hasChanges: task.hasChanges,
         isolateWorktree: task.isolateWorktree,
         baseWorkspaceRoot: task.baseWorkspaceRoot,
-        messages: task.messages
+        messages: task.messages,
+        contextBudgetService: new ContextBudgetService(),
+        conversationCompactor: new ConversationCompactor(DEFAULT_CONVERSATION_COMPACTION_CONFIG)
       };
 
       if (wasRunning) {
@@ -1239,10 +1387,17 @@ export async function createSessionRuntime(
   }
 
   function buildForkContextMessages(): SessionMessage[] {
-    const forkedMessages = messages
+    const compactedSummaryMessages = messages
+      .slice(1)
+      .filter((message) => message.role === "system");
+    const recentConversationMessages = messages
       .slice(1)
       .filter((message) => message.role === "user" || message.role === "assistant")
       .slice(-12);
+    const forkedMessages = [
+      ...compactedSummaryMessages,
+      ...recentConversationMessages
+    ];
 
     if (forkedMessages.length === 0) {
       return [];

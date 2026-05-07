@@ -1,6 +1,8 @@
 import { randomUUID } from "node:crypto";
 import { promises as fs } from "node:fs";
 import path from "node:path";
+import { isGeneratedContextMessage } from "../api/generatedMessages.js";
+import { cloneJson } from "../json/clone.js";
 import {
   SESSION_HISTORY_SCHEMA_VERSION,
   type LoadedSessionHistory,
@@ -14,8 +16,17 @@ import {
 
 const SESSION_FILE_EXTENSION = ".jsonl";
 const MAX_TITLE_CHARS = 200;
+const MAX_REWIND_COMPAT_CHECKPOINTS = 250;
 
 type UnknownRecord = Record<string, unknown>;
+
+interface SessionHistoryRewindCheckpoint {
+  input: string;
+  apiMessageCount: number;
+  uiMessageCount: number;
+  apiMessages: SessionHistoryApiMessage[];
+  uiMessages: SessionHistoryUiMessage[];
+}
 
 export class SessionHistoryStore {
   private currentSessionId: SessionId;
@@ -65,7 +76,8 @@ export class SessionHistoryStore {
     apiMessages: SessionHistoryApiMessage[];
     uiMessages: SessionHistoryUiMessage[];
   }): Promise<void> {
-    if (options.apiMessages.length === 0 && options.uiMessages.length === 0) {
+    const apiMessages = filterPersistableApiMessages(options.apiMessages);
+    if (apiMessages.length === 0 && options.uiMessages.length === 0) {
       return;
     }
 
@@ -85,7 +97,7 @@ export class SessionHistoryStore {
       wroteMetaEntry = true;
     }
 
-    entries.push(...this.buildTurnEntries(sessionId, timestamp, options.apiMessages, options.uiMessages));
+    entries.push(...this.buildTurnEntries(sessionId, timestamp, apiMessages, options.uiMessages));
 
     await this.appendEntries(sessionId, entries);
     if (wroteMetaEntry) {
@@ -98,7 +110,8 @@ export class SessionHistoryStore {
     uiMessages: SessionHistoryUiMessage[];
     uiBaseMessageCount: number;
   }): Promise<void> {
-    if (options.apiMessages.length === 0 && options.uiMessages.length === 0) {
+    const apiMessages = filterPersistableApiMessages(options.apiMessages);
+    if (apiMessages.length === 0 && options.uiMessages.length === 0) {
       return;
     }
 
@@ -126,7 +139,7 @@ export class SessionHistoryStore {
       apiMessageCount: 0,
       uiMessageCount: Math.max(0, Math.trunc(options.uiBaseMessageCount))
     });
-    entries.push(...this.buildTurnEntries(sessionId, timestamp, options.apiMessages, options.uiMessages));
+    entries.push(...this.buildTurnEntries(sessionId, timestamp, apiMessages, options.uiMessages));
 
     await this.appendEntries(sessionId, entries);
     if (wroteMetaEntry) {
@@ -262,6 +275,8 @@ export class SessionHistoryStore {
     let updatedAt = stats.mtime.toISOString();
     let title = "";
     let lastSequence = 0;
+    let lastApiRole: string | undefined;
+    const rewindCheckpoints: SessionHistoryRewindCheckpoint[] = [];
 
     for (const line of raw.split(/\r?\n/)) {
       if (!line.trim()) {
@@ -298,7 +313,27 @@ export class SessionHistoryStore {
       if (entry.type === "api-message") {
         const message = asRecord(entry.message);
         if (message) {
-          apiMessages.push(message as unknown as SessionHistoryApiMessage);
+          const historyMessage = message as unknown as SessionHistoryApiMessage;
+          const role = asString(message.role);
+          if (isGeneratedContextMessage(historyMessage)) {
+            continue;
+          }
+
+          if (isConversationUserMessage(historyMessage, lastApiRole)) {
+            const input = extractMessageText(historyMessage.content);
+            if (input) {
+              rewindCheckpoints.push({
+                input,
+                apiMessageCount: apiMessages.length,
+                uiMessageCount: uiMessages.length,
+                apiMessages: cloneApiMessages(apiMessages),
+                uiMessages: cloneUiMessages(uiMessages)
+              });
+              trimRewindCheckpoints(rewindCheckpoints);
+            }
+          }
+          apiMessages.push(historyMessage);
+          lastApiRole = role;
         }
         continue;
       }
@@ -319,12 +354,29 @@ export class SessionHistoryStore {
       if (entry.type === "session-rewind") {
         const apiMessageCount = asNumber(entry.apiMessageCount);
         const uiMessageCount = asNumber(entry.uiMessageCount);
-        if (apiMessageCount !== undefined) {
-          apiMessages.splice(Math.max(0, Math.trunc(apiMessageCount)));
+        const restoredInput = asString(entry.restoredInput);
+        const checkpoint = restoredInput
+          ? findRewindCheckpoint(
+              rewindCheckpoints,
+              restoredInput,
+              apiMessageCount,
+              uiMessageCount,
+              apiMessages.length
+            )
+          : undefined;
+        if (checkpoint) {
+          apiMessages.splice(0, apiMessages.length, ...cloneApiMessages(checkpoint.apiMessages));
+          uiMessages.splice(0, uiMessages.length, ...cloneUiMessages(checkpoint.uiMessages));
+          pruneRewindCheckpointsAfter(rewindCheckpoints, checkpoint);
+        } else {
+          if (apiMessageCount !== undefined) {
+            apiMessages.splice(Math.max(0, Math.trunc(apiMessageCount)));
+          }
+          if (uiMessageCount !== undefined) {
+            uiMessages.splice(Math.max(0, Math.trunc(uiMessageCount)));
+          }
         }
-        if (uiMessageCount !== undefined) {
-          uiMessages.splice(Math.max(0, Math.trunc(uiMessageCount)));
-        }
+        lastApiRole = apiMessages.at(-1)?.role;
         title = extractTitleFromApiMessages(apiMessages);
       }
     }
@@ -424,13 +476,19 @@ function toListItem(history: LoadedSessionHistory): SessionHistoryListItem {
   };
 }
 
+function filterPersistableApiMessages(
+  messages: SessionHistoryApiMessage[]
+): SessionHistoryApiMessage[] {
+  return messages.filter((message) => !isGeneratedContextMessage(message));
+}
+
 function extractTitleFromApiMessages(messages: SessionHistoryApiMessage[]): string {
   for (const message of messages) {
-    if (message.role !== "user") {
+    if (message.role !== "user" || isGeneratedContextMessage(message)) {
       continue;
     }
 
-    const text = extractText(message.content);
+    const text = extractMessageText(message.content);
     if (text) {
       return truncateTitle(text);
     }
@@ -439,24 +497,114 @@ function extractTitleFromApiMessages(messages: SessionHistoryApiMessage[]): stri
   return "";
 }
 
-function extractText(value: unknown): string {
+function isConversationUserMessage(
+  message: SessionHistoryApiMessage,
+  previousRole: string | undefined
+): boolean {
+  return message.role === "user" &&
+    previousRole !== "tool" &&
+    !isGeneratedContextMessage(message);
+}
+
+function findRewindCheckpoint(
+  checkpoints: SessionHistoryRewindCheckpoint[],
+  restoredInput: string,
+  apiMessageCount?: number,
+  uiMessageCount?: number,
+  currentApiMessageCount?: number
+) {
+  const normalized = normalizeMessageText(restoredInput);
+  const normalizedApiCount = apiMessageCount === undefined
+    ? undefined
+    : Math.max(0, Math.trunc(apiMessageCount));
+  const normalizedUiCount = uiMessageCount === undefined
+    ? undefined
+    : Math.max(0, Math.trunc(uiMessageCount));
+  const apiCountLooksUsable = normalizedApiCount !== undefined &&
+    (currentApiMessageCount === undefined || normalizedApiCount <= currentApiMessageCount);
+  let exactApiMatch: SessionHistoryRewindCheckpoint | undefined;
+  let closestApiMatch: SessionHistoryRewindCheckpoint | undefined;
+  let fallback: SessionHistoryRewindCheckpoint | undefined;
+
+  for (let index = checkpoints.length - 1; index >= 0; index -= 1) {
+    const checkpoint = checkpoints[index];
+    if (normalizeMessageText(checkpoint.input) !== normalized) {
+      continue;
+    }
+
+    if (!apiCountLooksUsable) {
+      fallback ??= checkpoint;
+      continue;
+    }
+
+    if (checkpoint.apiMessageCount === normalizedApiCount) {
+      if (normalizedUiCount === undefined || checkpoint.uiMessageCount === normalizedUiCount) {
+        return checkpoint;
+      }
+
+      exactApiMatch ??= checkpoint;
+      continue;
+    }
+
+    if (
+      normalizedApiCount !== undefined &&
+      checkpoint.apiMessageCount <= normalizedApiCount
+    ) {
+      closestApiMatch ??= checkpoint;
+    }
+  }
+
+  return exactApiMatch ?? closestApiMatch ?? fallback;
+}
+
+function extractMessageText(value: unknown): string {
   if (typeof value === "string") {
-    return value.replace(/\s+/g, " ").trim();
+    return normalizeMessageText(value);
   }
 
   if (!Array.isArray(value)) {
     return "";
   }
 
-  return value
-    .map((item) => {
-      const record = asRecord(item);
-      return record ? asString(record.text) ?? "" : "";
-    })
-    .filter(Boolean)
-    .join(" ")
-    .replace(/\s+/g, " ")
-    .trim();
+  return normalizeMessageText(
+    value
+      .map((item) => {
+        const record = asRecord(item);
+        return record ? asString(record.text) ?? asString(record.content) ?? "" : "";
+      })
+      .filter(Boolean)
+      .join(" ")
+  );
+}
+
+function normalizeMessageText(value: string): string {
+  return value.replace(/\s+/g, " ").trim();
+}
+
+function cloneApiMessages(messages: SessionHistoryApiMessage[]) {
+  return cloneJson(messages);
+}
+
+function cloneUiMessages(messages: SessionHistoryUiMessage[]) {
+  return cloneJson(messages);
+}
+
+function trimRewindCheckpoints(checkpoints: SessionHistoryRewindCheckpoint[]) {
+  if (checkpoints.length <= MAX_REWIND_COMPAT_CHECKPOINTS) {
+    return;
+  }
+
+  checkpoints.splice(0, checkpoints.length - MAX_REWIND_COMPAT_CHECKPOINTS);
+}
+
+function pruneRewindCheckpointsAfter(
+  checkpoints: SessionHistoryRewindCheckpoint[],
+  checkpoint: SessionHistoryRewindCheckpoint
+) {
+  const index = checkpoints.indexOf(checkpoint);
+  if (index >= 0 && index + 1 < checkpoints.length) {
+    checkpoints.splice(index + 1);
+  }
 }
 
 function truncateTitle(value: string): string {

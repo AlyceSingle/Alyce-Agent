@@ -33,7 +33,13 @@ async function runTests() {
   await testAnyShellPolicyBlocksNetworkCommandWhenNetworkDisabled();
   await testAnyShellPolicyBlocksCommonNetworkCommands();
   await testPolicyBlocksSubagentOrchestrationTools();
+  await testPolicyBlocksMainSessionOnlyTools();
   await testPolicyDoesNotHideInvalidArguments();
+  await testRoutesMcpToolCalls();
+  await testInvalidMcpJsonDoesNotRequestApproval();
+  await testNonObjectMcpArgumentsDoNotExecute();
+  await testMcpToolRecordsActivityAfterExecution();
+  await testRejectedMcpToolDoesNotRecordActivity();
   await testInvalidArgumentsDoNotRecordToolActivity();
   await testReadOnlyExecutionDoesNotRecordToolActivity();
   console.log("executeToolCall tests passed");
@@ -183,6 +189,19 @@ async function testPolicyBlocksSubagentOrchestrationTools() {
   assert.match(violation ?? "", /parent orchestration tools are disabled/);
 }
 
+async function testPolicyBlocksMainSessionOnlyTools() {
+  const policy = {
+    allowWrite: true,
+    allowNetwork: true,
+    shell: "any" as const
+  };
+
+  for (const toolName of ["SkillTool", "McpStatus", "ListMcpResources", "ReadMcpResource"]) {
+    assert.equal(isToolSchemaAllowedByPolicy(toolName, policy), false);
+    assert.match(getToolPolicyViolation(toolName, {}, policy) ?? "", /only available in the main session/);
+  }
+}
+
 async function testPolicyDoesNotHideInvalidArguments() {
   const result = await executeToolCall(
     "PowerShell",
@@ -219,6 +238,156 @@ async function testInvalidArgumentsDoNotRecordToolActivity() {
   assert.deepEqual(recorded, []);
 }
 
+async function testRoutesMcpToolCalls() {
+  const approvals: string[] = [];
+  const result = await executeToolCall(
+    "mcp__demo__echo",
+    JSON.stringify({ text: "hello" }),
+    createTestContext({
+      requestApproval: async (request) => {
+        approvals.push(request.kind);
+        return true;
+      },
+      mcpRuntime: {
+        getToolSchemas: async () => [],
+        canExecuteTool: (toolName) => toolName === "mcp__demo__echo",
+        executeToolCall: async (_toolName, args, options) => {
+          const approved = await options.requestApproval({
+            kind: "mcp",
+            toolName: "mcp__demo__echo",
+            title: "Call MCP tool",
+            summary: "demo.echo",
+            details: []
+          });
+          return {
+            approved,
+            args
+          };
+        },
+        getStatus: async () => ({ servers: [] }),
+        listResources: async () => ({ servers: [], resourceCount: 0 }),
+        readResource: async (server, uri) => ({
+          status: "not_found",
+          server,
+          uri,
+          contents: []
+        }),
+        close: async () => undefined
+      }
+    })
+  );
+
+  const parsed = JSON.parse(result.displayResult) as {
+    ok: boolean;
+    result: { approved: boolean; args: { text: string } };
+  };
+  assert.equal(parsed.ok, true);
+  assert.equal(parsed.result.approved, true);
+  assert.equal(parsed.result.args.text, "hello");
+  assert.deepEqual(approvals, ["mcp"]);
+}
+
+async function testInvalidMcpJsonDoesNotRequestApproval() {
+  let approvalCount = 0;
+  const result = await executeToolCall(
+    "mcp__demo__echo",
+    "{",
+    createTestContext({
+      requestApproval: async () => {
+        approvalCount += 1;
+        return true;
+      },
+      mcpRuntime: {
+        getToolSchemas: async () => [],
+        canExecuteTool: (toolName) => toolName === "mcp__demo__echo",
+        executeToolCall: async () => {
+          throw new Error("should not execute");
+        },
+        getStatus: async () => ({ servers: [] }),
+        listResources: async () => ({ servers: [], resourceCount: 0 }),
+        readResource: async (server, uri) => ({
+          status: "not_found",
+          server,
+          uri,
+          contents: []
+        }),
+        close: async () => undefined
+      }
+    })
+  );
+
+  const parsed = JSON.parse(result.displayResult) as { ok: boolean; error: { type: string } };
+  assert.equal(parsed.ok, false);
+  assert.equal(parsed.error.type, "invalid_json_arguments");
+  assert.equal(approvalCount, 0);
+}
+
+async function testNonObjectMcpArgumentsDoNotExecute() {
+  let executed = false;
+  const result = await executeToolCall(
+    "mcp__demo__echo",
+    "[]",
+    createTestContext({
+      mcpRuntime: createMcpRuntime({
+        canExecuteTool: (toolName) => toolName === "mcp__demo__echo",
+        executeToolCall: async () => {
+          executed = true;
+          return { status: "completed" };
+        }
+      })
+    })
+  );
+
+  const parsed = JSON.parse(result.displayResult) as { ok: boolean; error: { type: string } };
+  assert.equal(executed, false);
+  assert.equal(parsed.ok, false);
+  assert.equal(parsed.error.type, "invalid_tool_arguments");
+}
+
+async function testMcpToolRecordsActivityAfterExecution() {
+  const recorded: string[] = [];
+  const result = await executeToolCall(
+    "mcp__demo__mutate",
+    JSON.stringify({ text: "hello" }),
+    createTestContext({
+      recordToolActivity: (toolName) => {
+        recorded.push(toolName);
+      },
+      mcpRuntime: createMcpRuntime({
+        executeToolCall: async () => ({
+          status: "completed"
+        })
+      })
+    })
+  );
+
+  const parsed = JSON.parse(result.displayResult) as { ok: boolean };
+  assert.equal(parsed.ok, true);
+  assert.deepEqual(recorded, ["mcp__demo__mutate"]);
+}
+
+async function testRejectedMcpToolDoesNotRecordActivity() {
+  const recorded: string[] = [];
+  const result = await executeToolCall(
+    "mcp__demo__mutate",
+    JSON.stringify({ text: "hello" }),
+    createTestContext({
+      recordToolActivity: (toolName) => {
+        recorded.push(toolName);
+      },
+      mcpRuntime: createMcpRuntime({
+        executeToolCall: async () => ({
+          status: "rejected"
+        })
+      })
+    })
+  );
+
+  const parsed = JSON.parse(result.displayResult) as { ok: boolean };
+  assert.equal(parsed.ok, true);
+  assert.deepEqual(recorded, []);
+}
+
 async function testReadOnlyExecutionDoesNotRecordToolActivity() {
   const recorded: string[] = [];
   const result = await executeToolCall(
@@ -235,6 +404,24 @@ async function testReadOnlyExecutionDoesNotRecordToolActivity() {
   const parsed = JSON.parse(result.displayResult) as { ok: boolean };
   assert.equal(parsed.ok, true);
   assert.deepEqual(recorded, []);
+}
+
+function createMcpRuntime(patch: Partial<ToolExecutionContext["mcpRuntime"]>) {
+  return {
+    getToolSchemas: async () => [],
+    canExecuteTool: (toolName: string) => toolName === "mcp__demo__mutate",
+    executeToolCall: async () => undefined,
+    getStatus: async () => ({ servers: [] }),
+    listResources: async () => ({ servers: [], resourceCount: 0 }),
+    readResource: async (server: string, uri: string) => ({
+      status: "not_found" as const,
+      server,
+      uri,
+      contents: []
+    }),
+    close: async () => undefined,
+    ...patch
+  };
 }
 
 void runTests();

@@ -4,6 +4,7 @@ import {
   buildChatCompletionRequest,
   type ChatCompletionRequestOptions
 } from "./chatCompletionRequest.js";
+import { isContextOverflowError, toContextOverflowError } from "../context/contextBudget.js";
 import { applyRequestPatchOperations, type RequestPatchOperation } from "./requestPatch.js";
 
 const RECONNECT_DELAY_MS = 10_000;
@@ -31,13 +32,19 @@ export interface SendChatCompletionOptions extends ChatCompletionRequestOptions 
   onReconnect?: (event: ChatCompletionReconnectEvent) => void;
 }
 
+export function buildPatchedChatCompletionRequest(
+  options: ChatCompletionRequestOptions & { requestPatches?: RequestPatchOperation[] }
+) {
+  const baseRequest = buildChatCompletionRequest(options);
+  return applyRequestPatchOperations(baseRequest, options.requestPatches ?? []);
+}
+
 // 统一模型请求发送逻辑，支持请求标准化和 JSON Patch 二次改写。
 export async function sendChatCompletion(
   client: OpenAI,
   options: SendChatCompletionOptions
 ): Promise<OpenAI.Chat.Completions.ChatCompletion> {
-  const baseRequest = buildChatCompletionRequest(options);
-  const patchedRequest = applyRequestPatchOperations(baseRequest, options.requestPatches ?? []);
+  const patchedRequest = buildPatchedChatCompletionRequest(options);
   let retriesUsed = 0;
 
   while (true) {
@@ -58,6 +65,10 @@ export async function sendChatCompletion(
     } catch (error) {
       if (isAbortLikeError(error, options.abortSignal)) {
         throw error;
+      }
+
+      if (isContextOverflowError(error)) {
+        throw toContextOverflowError(error);
       }
 
       if (!shouldRetryChatCompletionError(error)) {

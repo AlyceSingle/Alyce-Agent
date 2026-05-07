@@ -1,4 +1,5 @@
 import type { ApprovalMode, ConnectionConfig } from "../../config/runtime.js";
+import type { ContextBudgetSnapshot } from "../../core/context/contextBudget.js";
 import { Box, Text } from "../runtime/ink.js";
 import { terminalUiTheme } from "../theme/theme.js";
 
@@ -21,6 +22,7 @@ export function StatusBar(props: {
   requestPatchCount: number;
   todoSummary?: string;
   statusText: string;
+  contextBudget: ContextBudgetSnapshot | null;
 }) {
   const isReady = props.connection.apiKey.trim().length > 0;
   const connectionColor = isReady
@@ -34,6 +36,15 @@ export function StatusBar(props: {
     props.todoSummary && props.todoSummary.trim().length > 0
       ? ` | Todos ${props.todoSummary}`
       : "";
+  const contextText = props.contextBudget
+    ? ` | Context ${Math.round(props.contextBudget.usedPercent)}%`
+    : "";
+  const contextColor =
+    props.contextBudget?.state === "blocking"
+      ? terminalUiTheme.colors.danger
+      : props.contextBudget?.state === "warning" || props.contextBudget?.state === "auto_compact"
+        ? terminalUiTheme.colors.warning
+        : terminalUiTheme.colors.subtle;
   const inlineStatusText =
     props.statusText.trim().length > 0 ? ` | ${props.statusText}` : "";
 
@@ -49,6 +60,7 @@ export function StatusBar(props: {
         {" | "}
         Approval {formatApprovalMode(props.sessionApprovalMode, props.sessionAllowedKinds)}
         {todoSummaryText}
+        <Text color={contextColor}>{contextText}</Text>
         <Text color={terminalUiTheme.colors.subtle}>{inlineStatusText}</Text>
       </Text>
     </Box>

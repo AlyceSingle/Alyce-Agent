@@ -12,6 +12,7 @@ import type {
   ToolPermissionKind
 } from "../../tools/types.js";
 import type { SessionHistoryListItem } from "../../core/session-history/types.js";
+import type { ContextBudgetSnapshot } from "../../core/context/contextBudget.js";
 import type {
   UiMessageBlock,
   UiMessageBlockStyle,
@@ -96,6 +97,7 @@ export interface TerminalUiState {
   draftInput: string;
   isLoading: boolean;
   statusText: string;
+  contextBudget: ContextBudgetSnapshot | null;
   dialogQueue: ActiveDialog[];
   activeOverlays: TerminalUiOverlayId[];
   messages: TerminalUiMessage[];

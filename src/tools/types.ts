@@ -1,4 +1,13 @@
-export type ToolPermissionKind = "agent" | "command" | "file-write" | "web" | "external-directory";
+import type { McpToolRuntime } from "../mcp/types.js";
+
+export type ToolPermissionKind =
+  | "agent"
+  | "command"
+  | "file-write"
+  | "web"
+  | "external-directory"
+  | "skill"
+  | "mcp";
 
 export interface ExternalDirectoryApprovalScope {
   type: "external-directory";
@@ -188,6 +197,7 @@ export interface ToolExecutionContext {
   getTodos: () => TodoItem[];
   setTodos: (todos: TodoItem[]) => void;
   recordToolActivity?: (toolName: string) => void;
+  mcpRuntime?: McpToolRuntime;
   toolPolicy?: ToolPermissionPolicy;
   commandTimeoutMs: number;
   turnId: string;

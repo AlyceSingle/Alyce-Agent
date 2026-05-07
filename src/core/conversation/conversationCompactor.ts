@@ -1,5 +1,6 @@
 import OpenAI from "openai";
 import { isTurnInterruptedError, toTurnInterruptedError } from "../abort.js";
+import { isGeneratedContextMessage } from "../api/generatedMessages.js";
 
 type MessageParam = OpenAI.Chat.Completions.ChatCompletionMessageParam;
 
@@ -46,15 +47,24 @@ export class ConversationCompactor {
     this.state = null;
   }
 
+  createSnapshot(): ConversationCompactionState | null {
+    return this.state ? { ...this.state } : null;
+  }
+
+  restoreSnapshot(snapshot: ConversationCompactionState | null) {
+    this.state = snapshot ? { ...snapshot } : null;
+  }
+
   async maybeCompact(options: {
     client: OpenAI;
     model: string;
     messages: MessageParam[];
+    force?: boolean;
     abortSignal?: AbortSignal;
   }): Promise<boolean> {
     const firstConversationIndex = getFirstConversationMessageIndex(options.messages);
     const conversationMessages = options.messages.slice(firstConversationIndex);
-    if (conversationMessages.length < this.config.triggerMessageCount) {
+    if (!options.force && conversationMessages.length < this.config.triggerMessageCount) {
       return false;
     }
 
@@ -127,7 +137,8 @@ function getKeepStartIndex(
 ) {
   const userMessageIndexes: number[] = [];
   for (let index = firstConversationIndex; index < messages.length; index += 1) {
-    if (messages[index]?.role === "user") {
+    const message = messages[index];
+    if (message?.role === "user" && !isGeneratedContextMessage(message)) {
       userMessageIndexes.push(index);
     }
   }

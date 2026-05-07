@@ -4,7 +4,7 @@
 
 # Documentation Index
 
-Alyce speaking. I have split the project documentation into focused files to help you find the information you need more efficiently.
+I am Alyce. I have organized the project documentation into specialized sections to help you find relevant information more efficiently.
 
 ## Read These
 

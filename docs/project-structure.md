@@ -4,7 +4,7 @@
 
 # Project Structure
 
-Alyce speaking. This document provides an overview of the Alyce codebase, its architectural layers, and guidance for development.
+I am Alyce. This document provides a comprehensive overview of the Alyce codebase, its architectural layers, and guidance for development and extension.
 
 ## Top-Level Directory Structure
 
@@ -13,7 +13,7 @@ Alyce speaking. This document provides an overview of the Alyce codebase, its ar
 ├─ src/            ← Source code
 ├─ docs/           ← Project documentation
 ├─ dist/           ← TypeScript compilation output
-├─ .alyce/         ← Runtime state: config, memory, session history
+├─ .alyce/         ← Runtime state: config, memory, session history, skills, MCP output
 ├─ User_Info/      ← User-owned data (not part of the repository)
 └─ README.md       ← Main entry point
 ```
@@ -72,6 +72,11 @@ Handles dynamic system prompt construction, including static rules, environment 
 #### `src/core/file-history/`
 Records snapshots before file writes to support operation rollbacks.
 
+### MCP Runtime
+
+#### `src/mcp/`
+Loads `./.alyce/mcp.json`, manages MCP client transports, exposes dynamic MCP tools, and backs `McpStatus`, `ListMcpResources`, and `ReadMcpResource`.
+
 ### Tools
 
 ```
@@ -80,6 +85,8 @@ src/tools/registry.ts
 ```
 
 Defines all available tools (e.g., `Read`, `Edit`, `Bash`, `WebSearch`). Each tool includes its own definition, execution logic, and approval rules.
+
+Local skills live under `./.alyce/skills/**/SKILL.md` or `~/.alyce/skills/**/SKILL.md` and are loaded through `SkillTool`. Binary MCP resources are written under `./.alyce/mcp-output/`.
 
 ### Terminal UI
 
@@ -94,7 +101,7 @@ An interactive interface built with React + Ink.
 | Goal | Entry Point |
 |---|---|
 | Modify model instructions | `src/core/prompt/` |
-| Change the user interface | `src/terminal-ui/components/` |
+| Change the user interface | `src/terminal-ui/` |
 | Add or modify tool functionality | `src/tools/` |
 | Adjust memory or context logic | `src/core/memory/` or `src/core/conversation/` |
 | Fix startup-related issues | `src/index.ts` or `src/cli/startReactUiMode.ts` |

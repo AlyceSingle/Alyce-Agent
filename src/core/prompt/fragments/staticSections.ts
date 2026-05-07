@@ -1,4 +1,4 @@
-import { sessionPromptSection } from "../sectionFactory.js";
+import { sessionPromptSection, turnPromptSection } from "../sectionFactory.js";
 import type { PromptBuildOptions, PromptRuntimeContext, PromptSection } from "../types.js";
 import { promptFormatting } from "./formatting.js";
 import { buildBuiltinPersonaSection, getBuiltinPersonaPresetTitle } from "./personaPresets.js";
@@ -143,8 +143,16 @@ function getUsingToolsSection(runtimeContext: PromptRuntimeContext) {
     providedToolGuidance.push("Use AskUserQuestion when you need a concrete user decision during execution instead of asking free-form questions in normal assistant text.");
   }
 
+  if (hasTool(runtimeContext, "McpStatus") || hasTool(runtimeContext, "ListMcpResources") || hasTool(runtimeContext, "ReadMcpResource")) {
+    providedToolGuidance.push("Use MCP resource tools to inspect configured MCP servers and read resources by server and URI; binary resources are returned as local .alyce/mcp-output paths.");
+  }
+
   if (hasTool(runtimeContext, "TodoWrite")) {
     providedToolGuidance.push("Use TodoWrite to maintain a visible task checklist for complex multi-step work, but skip it for simple one-step tasks.");
+  }
+
+  if (runtimeContext.availableTools.some((toolName) => toolName.startsWith("mcp__"))) {
+    providedToolGuidance.push("Use MCP tools when they expose the exact external capability you need; do not replace them with shell commands unless the MCP tool is unavailable or unsuitable.");
   }
 
   return promptFormatting.buildSection("Using your tools", [
@@ -190,7 +198,7 @@ export const STATIC_PROMPT_SECTIONS: PromptSection[] = [
   sessionPromptSection("system", () => getSystemSection()),
   sessionPromptSection("doing_tasks", () => getDoingTasksSection()),
   sessionPromptSection("actions", () => getActionsSection()),
-  sessionPromptSection("using_tools", (runtimeContext) => getUsingToolsSection(runtimeContext)),
+  turnPromptSection("using_tools", (runtimeContext) => getUsingToolsSection(runtimeContext)),
   sessionPromptSection("tone_and_style", () => getToneAndStyleSection()),
   sessionPromptSection("output_efficiency", () => getOutputEfficiencySection())
 ];

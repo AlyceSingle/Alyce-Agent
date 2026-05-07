@@ -1,7 +1,5 @@
-import jsonPatch from "fast-json-patch";
+import { applyPatch } from "fast-json-patch/commonjs/core.js";
 import { z } from "zod";
-
-const { applyPatch } = jsonPatch;
 
 const JsonPointerSchema = z
   .string()
