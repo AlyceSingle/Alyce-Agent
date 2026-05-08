@@ -7,7 +7,6 @@ import { isTurnInterruptedError, throwIfAborted } from "../../core/abort.js";
 import { parseReplCommand } from "../../cli/commandRouter.js";
 import {
   ContextOverflowError,
-  formatContextBudgetInline,
   isContextOverflowError,
   toContextOverflowError,
   type ContextBudgetSnapshot
@@ -429,6 +428,7 @@ export function createSessionController(
       await runtime.recordSessionRewind({
         apiMessageCount: Math.max(0, runtime.messages.length - 1),
         uiMessageCount: target.uiMessageCount,
+        sessionMemory: target.volatileSnapshot.memory.sessionMemory,
         restoredInput: target.input,
         restoreMode: mode
       });
@@ -484,6 +484,10 @@ export function createSessionController(
             .slice(0, apiUserMessage.runtimeMessageCount)
             .map((message) => ({ ...message })),
           fileReadState: new Map(),
+          memory: {
+            ...currentSnapshot.memory,
+            sessionMemory: null
+          },
           compaction: null
         },
         hasFileChanges: false,
@@ -923,7 +927,7 @@ export function createSessionController(
         createSystemMessage(
           parsedCommand.persist
             ? "Saved to session and persistent memory."
-            : "Saved to session memory only.",
+            : "Saved to session notes only.",
           "Memory"
         )
       );
@@ -942,7 +946,8 @@ export function createSessionController(
     }
 
     if (parsedCommand.type === "memory-clear") {
-      runtime.memoryService.clearSession();
+      await runtime.memoryService.clearSession();
+      await runtime.recordSessionMemory(null);
       if (parsedCommand.clearPersistent) {
         await runtime.memoryService.clearPersistent();
       }
@@ -952,7 +957,7 @@ export function createSessionController(
         createSystemMessage(
           parsedCommand.clearPersistent
             ? "Session and persistent memory cleared."
-            : "Session memory cleared.",
+            : "Session memory and notes cleared.",
           "Memory"
         )
       );
@@ -1147,12 +1152,13 @@ export function createSessionController(
           gcliGeminiCompat
         });
         store.updateState((state) =>
-          setContextBudget(setStatusText(state, formatContextBudgetInline(initialBudget)), initialBudget)
+          setContextBudget(state, initialBudget)
         );
         store.updateState((state) => setStatusText(state, "Thinking..."));
         const reply = await runAgentTurn(client, runtime.messages, {
           model: currentModel,
           maxSteps: runtime.getSettings().maxSteps,
+          querySource: "main",
           gcliGeminiCompat,
           messageTimestampsEnabled: runtime.getSettings().messageTimestampsEnabled,
           abortSignal: controller.signal,
@@ -1183,16 +1189,17 @@ export function createSessionController(
             });
             return refreshedTools;
           },
-          preflightCompactConversation: ({ abortSignal }) =>
+          preflightCompactConversation: ({ abortSignal, querySource }) =>
             runtime.maybeCompactConversation({
               client,
               model: currentModel,
               force: true,
+              querySource,
               abortSignal
             }),
           onContextBudget: (snapshot) => {
             store.updateState((state) =>
-              setContextBudget(setStatusText(state, formatContextBudgetInline(snapshot)), snapshot)
+              setContextBudget(state, snapshot)
             );
           },
           onContextCompactionStart: (snapshot) => {
@@ -1207,7 +1214,7 @@ export function createSessionController(
 
             store.updateState((state) =>
               setContextBudget(
-                setStatusText(state, formatContextBudgetInline(event.after)),
+                setStatusText(state, "Thinking..."),
                 event.after
               )
             );
@@ -1266,73 +1273,7 @@ export function createSessionController(
           uiBaseMessageCount: checkpoint.uiMessageCount
         };
         throwIfAborted(controller.signal);
-        let summaryUpdated = false;
-        let compacted = false;
         const postResponseFailures: string[] = [];
-
-        try {
-          summaryUpdated = await runtime.memoryService.maybeRefreshAutoSummary({
-            client,
-            model: currentModel,
-            messages: runtime.messages,
-            abortSignal: controller.signal
-          });
-          throwIfAborted(controller.signal);
-        } catch (error) {
-          if (isTurnInterruptedError(error, controller.signal)) {
-            throw error;
-          }
-
-          postResponseFailures.push(formatPostResponseFailure("Auto session summary update failed", error));
-        }
-
-        try {
-          compacted = await runtime.maybeCompactConversation({
-            client,
-            model: currentModel,
-            abortSignal: controller.signal
-          });
-          if (compacted) {
-            conversationWasCompacted = true;
-            completedTurnHistoryPlan = {
-              mode: "snapshot",
-              apiMessages: runtime.messages.slice(1),
-              uiBaseMessageCount: checkpoint.uiMessageCount
-            };
-          }
-          throwIfAborted(controller.signal);
-        } catch (error) {
-          if (isTurnInterruptedError(error, controller.signal)) {
-            throw error;
-          }
-
-          postResponseFailures.push(formatPostResponseFailure("Conversation compaction failed", error));
-        }
-
-        if (summaryUpdated || compacted) {
-          try {
-            throwIfAborted(controller.signal);
-            await runtime.resetSystemMessage({
-              availableTools: tools.map((tool) => tool.function.name)
-            });
-          } catch (error) {
-            if (isTurnInterruptedError(error, controller.signal)) {
-              throw error;
-            }
-
-            postResponseFailures.push(formatPostResponseFailure("System prompt refresh failed", error));
-          }
-        }
-
-        if (summaryUpdated) {
-          appendUiMessage(createSystemMessage("Auto session summary updated.", "Memory"));
-        }
-
-        if (compacted) {
-          appendUiMessage(
-            createSystemMessage("Conversation was compacted to keep the prompt context bounded.", "Context")
-          );
-        }
 
         try {
           if (!completedTurnHistoryPlan) {
@@ -1341,6 +1282,12 @@ export function createSessionController(
 
           await recordCompletedTurnHistory(runtime, store, completedTurnHistoryPlan);
           turnRecorded = true;
+          runtime.scheduleSessionMemoryExtraction({
+            client,
+            model: currentModel,
+            querySource: "main",
+            abortSignal: controller.signal
+          });
         } catch (error) {
           postResponseFailures.push(formatPostResponseFailure("Session history save failed", error));
         }

@@ -1,16 +1,27 @@
 import readline from "node:readline";
 
+interface JsonRpcMessage {
+  id?: string | number | null;
+  method?: string;
+  params?: {
+    arguments?: {
+      text?: string;
+    };
+    uri?: string;
+  };
+}
+
 const rl = readline.createInterface({
   input: process.stdin,
   crlfDelay: Infinity
 });
 
-function send(message) {
+function send(message: unknown) {
   process.stdout.write(JSON.stringify(message) + "\n");
 }
 
 rl.on("line", (line) => {
-  const message = JSON.parse(line);
+  const message = JSON.parse(line) as JsonRpcMessage;
   if (!("id" in message)) {
     return;
   }
@@ -60,6 +71,7 @@ rl.on("line", (line) => {
   }
 
   if (message.method === "tools/call") {
+    const text = message.params?.arguments?.text ?? "";
     send({
       jsonrpc: "2.0",
       id: message.id,
@@ -67,11 +79,11 @@ rl.on("line", (line) => {
         content: [
           {
             type: "text",
-            text: `echo:${message.params.arguments.text}`
+            text: `echo:${text}`
           }
         ],
         structuredContent: {
-          echoed: message.params.arguments.text
+          echoed: text
         }
       }
     });
@@ -105,7 +117,8 @@ rl.on("line", (line) => {
   }
 
   if (message.method === "resources/read") {
-    if (message.params.uri === "mock://blob") {
+    const uri = message.params?.uri;
+    if (uri === "mock://blob") {
       send({
         jsonrpc: "2.0",
         id: message.id,

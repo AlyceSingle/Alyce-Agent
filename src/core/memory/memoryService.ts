@@ -1,26 +1,21 @@
-import OpenAI from "openai";
-import { isTurnInterruptedError, toTurnInterruptedError } from "../abort.js";
-import { buildAutoSessionSummary, getConversationMessageCount } from "./autoSummary.js";
 import { PersistentMemoryStore } from "./persistentMemoryStore.js";
 import { SessionMemoryStore } from "./sessionMemoryStore.js";
 import type {
-  MemoryAutoSummary,
   MemoryPromptContext,
   MemoryServiceConfig,
   MemorySnapshot,
   MemorySource,
-  MemoryVolatileSnapshot
+  MemoryVolatileSnapshot,
+  SessionMemoryFileState
 } from "./types.js";
-
-type MessageParam = OpenAI.Chat.Completions.ChatCompletionMessageParam;
 
 // MemoryService 统一封装会话记忆与持久记忆，提供单一接入点。
 export class MemoryService {
   private readonly sessionStore: SessionMemoryStore;
   private readonly persistentStore: PersistentMemoryStore;
-  private autoSummary: MemoryAutoSummary | null = null;
-  private autoSummaryUpdating = false;
-  private autoSummaryEnabled: boolean;
+  private sessionMemory: SessionMemoryFileState | null = null;
+  private sessionMemorySourcePath = "session history";
+  private sessionMemoryEnabled: boolean;
 
   constructor(private readonly config: MemoryServiceConfig) {
     this.sessionStore = new SessionMemoryStore(config.maxSessionEntries);
@@ -30,7 +25,7 @@ export class MemoryService {
       config.fileName,
       config.maxPersistentEntries
     );
-    this.autoSummaryEnabled = config.autoSummary.enabled;
+    this.sessionMemoryEnabled = config.sessionMemory.enabled;
   }
 
   async initialize() {
@@ -48,23 +43,21 @@ export class MemoryService {
     }
   }
 
-  clearSession() {
+  async clearSession() {
     this.sessionStore.clear();
-    this.autoSummary = null;
-    this.autoSummaryUpdating = false;
+    this.sessionMemory = null;
   }
 
   createVolatileSnapshot(): MemoryVolatileSnapshot {
     return {
       session: this.sessionStore.list(Number.MAX_SAFE_INTEGER).map((entry) => ({ ...entry })),
-      autoSummary: this.autoSummary ? { ...this.autoSummary } : null
+      sessionMemory: this.cloneSessionMemory()
     };
   }
 
   restoreVolatileSnapshot(snapshot: MemoryVolatileSnapshot) {
     this.sessionStore.replace(snapshot.session);
-    this.autoSummary = snapshot.autoSummary ? { ...snapshot.autoSummary } : null;
-    this.autoSummaryUpdating = false;
+    this.sessionMemory = cloneSessionMemory(snapshot.sessionMemory);
   }
 
   async clearPersistent() {
@@ -76,8 +69,9 @@ export class MemoryService {
     return {
       session: this.sessionStore.list(),
       persistent,
-      autoSummary: this.autoSummary,
-      autoSummaryEnabled: this.autoSummaryEnabled
+      sessionMemory: this.cloneSessionMemory(),
+      sessionMemoryPath: this.getSessionMemoryFilePath(),
+      sessionMemoryEnabled: this.sessionMemoryEnabled
     };
   }
 
@@ -86,85 +80,56 @@ export class MemoryService {
       Promise.resolve(this.sessionStore.list(this.config.maxPromptEntries)),
       this.persistentStore.list(this.config.maxPromptEntries)
     ]);
+    const sessionMemory = this.cloneSessionMemory();
 
     return {
       sessionSummary:
-        this.autoSummaryEnabled && this.autoSummary
-          ? trimSummaryForPrompt(this.autoSummary.markdown)
+        this.sessionMemoryEnabled && sessionMemory
+          ? trimSummaryForPrompt(sessionMemory.markdown)
           : undefined,
-      summaryUpdatedAt: this.autoSummary?.updatedAt,
+      summaryUpdatedAt: sessionMemory?.updatedAt,
+      sessionMemoryPath: sessionMemory ? this.getSessionMemoryFilePath() : undefined,
       sessionNotes: session.map((entry) => formatPromptNote(entry.createdAt, entry.content)),
       persistentNotes: persistent.map((entry) => formatPromptNote(entry.createdAt, entry.content))
     };
   }
 
-  // 按阈值更新会话自动摘要，不每轮都触发。
-  async maybeRefreshAutoSummary(options: {
-    client: OpenAI;
-    model: string;
-    messages: MessageParam[];
-    abortSignal?: AbortSignal;
-  }): Promise<boolean> {
-    if (!this.autoSummaryEnabled) {
-      return false;
-    }
+  updateSessionMemory(markdown: string) {
+    const normalized = normalizeSessionMemoryMarkdown(markdown);
+    this.sessionMemory = normalized
+      ? {
+          markdown: normalized,
+          updatedAt: new Date().toISOString()
+        }
+      : null;
+  }
 
-    if (this.autoSummaryUpdating) {
-      return false;
-    }
+  getSessionMemory() {
+    return this.cloneSessionMemory();
+  }
 
-    const messageCount = getConversationMessageCount(options.messages);
-    if (!this.shouldRefreshAutoSummary(messageCount)) {
-      return false;
-    }
-
-    this.autoSummaryUpdating = true;
-    try {
-      const markdown = await buildAutoSessionSummary(options.client, {
-        model: options.model,
-        existingSummary: this.autoSummary?.markdown,
-        messages: options.messages,
-        windowMessages: this.config.autoSummary.windowMessages,
-        maxCharsPerMessage: this.config.autoSummary.maxCharsPerMessage,
-        abortSignal: options.abortSignal
-      });
-
-      this.autoSummary = {
-        markdown,
-        updatedAt: new Date().toISOString(),
-        lastMessageCount: messageCount
-      };
-
-      return true;
-    } catch (error) {
-      if (isTurnInterruptedError(error, options.abortSignal)) {
-        throw toTurnInterruptedError(error, options.abortSignal);
-      }
-
-      return false;
-    } finally {
-      this.autoSummaryUpdating = false;
-    }
+  setSessionMemory(sessionMemory: SessionMemoryFileState | null | undefined) {
+    this.sessionMemory = cloneSessionMemory(sessionMemory);
   }
 
   getPersistentFilePath() {
     return this.persistentStore.getRelativeFilePath();
   }
 
-  setAutoSummaryEnabled(enabled: boolean) {
-    this.autoSummaryEnabled = enabled;
-    if (!enabled) {
-      this.autoSummaryUpdating = false;
-    }
+  getSessionMemoryFilePath() {
+    return this.sessionMemorySourcePath;
   }
 
-  private shouldRefreshAutoSummary(messageCount: number) {
-    if (!this.autoSummary) {
-      return messageCount >= this.config.autoSummary.minMessagesToInit;
-    }
+  setSessionMemorySourcePath(sourcePath: string) {
+    this.sessionMemorySourcePath = sourcePath.trim() || "session history";
+  }
 
-    const delta = messageCount - this.autoSummary.lastMessageCount;
-    return delta >= this.config.autoSummary.messagesBetweenUpdates;
+  setSessionMemoryEnabled(enabled: boolean) {
+    this.sessionMemoryEnabled = enabled;
+  }
+
+  private cloneSessionMemory() {
+    return cloneSessionMemory(this.sessionMemory);
   }
 }
 
@@ -180,4 +145,14 @@ function trimSummaryForPrompt(summary: string) {
     .slice(0, 18);
 
   return lines.join("\n");
+}
+
+function normalizeSessionMemoryMarkdown(markdown: string) {
+  return markdown.replace(/\r\n/g, "\n").replace(/\n{4,}/g, "\n\n\n").trim();
+}
+
+function cloneSessionMemory(
+  sessionMemory: SessionMemoryFileState | null | undefined
+): SessionMemoryFileState | null {
+  return sessionMemory ? { ...sessionMemory } : null;
 }

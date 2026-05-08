@@ -15,9 +15,9 @@ When the model receives a turn, the context isn't a single blob. It's assembled 
 1. **System prompt** — the core instructions: identity, working style, safety rules, available tools.
 2. **Live session messages** — the actual back-and-forth you've had this session.
 3. **Restored session history** — if you used `/resume`, the old conversation gets loaded here.
-4. **Session memory** — things you've told me with `/remember --session`. Dies when the session ends.
+4. **Session notes** — things you've told me with `/remember --session`. Dies when the session ends.
 5. **Persistent memory** — things you've told me with `/remember`. Survives across sessions.
-6. **Auto summary** — a periodically refreshed summary of recent work, injected automatically.
+6. **Session memory file** — an auto-managed markdown file for durable current-session state.
 7. **Compaction summary** — when the conversation gets too long, old turns are compressed into this.
 
 *The order matters. Later layers don't override earlier ones — they all coexist in the prompt, stacked one after another.*
@@ -39,7 +39,7 @@ Every successful turn gets written as a JSONL line. When you resume, the entire 
 
 *Session history is not memory. It doesn't inject facts into unrelated conversations — it reopens a specific old conversation. Think of it like opening a saved document, not like adding a note to a notebook.*
 
-## Session Memory
+## Session Notes
 
 Short-lived, session-scoped notes.
 
@@ -50,7 +50,7 @@ Short-lived, session-scoped notes.
 - It only lives as long as the current session.
 - `/clear` or `/memory clear` wipes it.
 
-*Session memory is for things like "we're working on branch X" or "the test is currently failing for this reason." It's context you need right now but won't need tomorrow.*
+*Session notes are for things like "we're working on branch X" or "the test is currently failing for this reason." It's context you need right now but won't need tomorrow.*
 
 ## Persistent Memory
 
@@ -67,18 +67,20 @@ Long-lived, cross-session notes.
 
 *Persistent memory is for reusable facts, user preferences, project knowledge. Things like "master prefers snake_case" or "this project's API keys are in a vault at X."*
 
-## Auto Summary
+## Session Memory File
 
-The background note-taker.
+The auto-managed session state file.
 
-**Triggers when** the conversation passes a threshold (configurable).
+**Storage:** `./.alyce/memory/SESSION_MEMORY.md` by default, configurable via `AGENT_SESSION_MEMORY_FILE`.
 
 **What it does:**
-- Doesn't update on every turn — that would be wasteful.
-- Periodically compresses recent work into a reusable summary block.
-- Helps the model keep track of what's been happening without rereading the whole conversation.
+- Keeps a structured markdown memory for the current session.
+- Gets injected as the session memory summary in the prompt.
+- Uses a real file so later extraction can update it like Claude Code's session memory path instead of keeping summary state only in process memory.
+- Automatic extraction is triggered Claude-style: first after the estimated context reaches `AGENT_SESSION_MEMORY_INIT_TOKENS`, then after `AGENT_SESSION_MEMORY_UPDATE_TOKENS` of context growth plus either enough tool calls or a natural assistant break.
+- The updater runs in the background with `querySource: session_memory` semantics: it does not mutate the main transcript, does not recurse into auto-compact, and only writes the managed session memory file after confirming the conversation has not been rewound or cleared.
 
-*Auto summary is like a progress report. It gives the model a sense of "here's what we've been doing" without making it reprocess every detail.*
+*Session memory is the durable progress report for the active session. It is separate from `/remember --session` notes and from persistent cross-session memory.*
 
 ## Conversation Compaction
 
@@ -93,6 +95,17 @@ The last line of defense against context overflow.
 - Everything older is collapsed into summary form.
 
 *The key insight: you don't need every word of a conversation from three hours ago. You need to know what was decided, what was tried, and what's still unresolved. Compaction preserves those signals while discarding the noise.*
+
+## Context Window Detection
+
+The status bar percentage is based on the estimated next request divided by the current model's context window. Alyce resolves that window in this order:
+
+1. `modelContextWindowOverrides` from settings.
+2. Explicit model-name suffixes such as `128k` or `1m`.
+3. Built-in loose matching for common providers, including OpenAI, Claude, Gemini, Kimi, DeepSeek, Qwen, Mistral, xAI, Llama, Cohere, GLM, and MiniMax.
+4. A conservative `128000` token fallback.
+
+Matching is intentionally loose: separators do not matter, so `gemini-2.5-pro`, `gemini 2.5 pro`, and `google/gemini_2_5_pro` match the same built-in rule. `/context` shows whether the window came from an override, the model name, the built-in table, or the fallback.
 
 ## Timestamp Injection
 

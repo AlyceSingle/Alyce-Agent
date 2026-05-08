@@ -13,6 +13,7 @@ import {
   type SessionHistoryUiMessage,
   type SessionId
 } from "./types.js";
+import type { SessionMemoryFileState } from "../memory/types.js";
 
 const SESSION_FILE_EXTENSION = ".jsonl";
 const MAX_TITLE_CHARS = 200;
@@ -26,6 +27,7 @@ interface SessionHistoryRewindCheckpoint {
   uiMessageCount: number;
   apiMessages: SessionHistoryApiMessage[];
   uiMessages: SessionHistoryUiMessage[];
+  sessionMemory: SessionMemoryFileState | null;
 }
 
 export class SessionHistoryStore {
@@ -109,6 +111,7 @@ export class SessionHistoryStore {
     apiMessages: SessionHistoryApiMessage[];
     uiMessages: SessionHistoryUiMessage[];
     uiBaseMessageCount: number;
+    sessionMemory?: SessionMemoryFileState | null;
   }): Promise<void> {
     const apiMessages = filterPersistableApiMessages(options.apiMessages);
     if (apiMessages.length === 0 && options.uiMessages.length === 0) {
@@ -137,7 +140,8 @@ export class SessionHistoryStore {
       sequence: this.nextSequence(),
       timestamp,
       apiMessageCount: 0,
-      uiMessageCount: Math.max(0, Math.trunc(options.uiBaseMessageCount))
+      uiMessageCount: Math.max(0, Math.trunc(options.uiBaseMessageCount)),
+      sessionMemory: cloneSessionMemory(options.sessionMemory ?? null)
     });
     entries.push(...this.buildTurnEntries(sessionId, timestamp, apiMessages, options.uiMessages));
 
@@ -150,6 +154,7 @@ export class SessionHistoryStore {
   async recordRewind(options: {
     apiMessageCount: number;
     uiMessageCount: number;
+    sessionMemory?: SessionMemoryFileState | null;
     restoredInput?: string;
     restoreMode?: SessionHistoryRewindMode;
   }): Promise<void> {
@@ -176,6 +181,7 @@ export class SessionHistoryStore {
       timestamp,
       apiMessageCount: Math.max(0, Math.trunc(options.apiMessageCount)),
       uiMessageCount: Math.max(0, Math.trunc(options.uiMessageCount)),
+      sessionMemory: cloneSessionMemory(options.sessionMemory ?? null),
       restoredInput: options.restoredInput,
       restoreMode: options.restoreMode
     });
@@ -276,6 +282,7 @@ export class SessionHistoryStore {
     let title = "";
     let lastSequence = 0;
     let lastApiRole: string | undefined;
+    let sessionMemory: SessionMemoryFileState | null = null;
     const rewindCheckpoints: SessionHistoryRewindCheckpoint[] = [];
 
     for (const line of raw.split(/\r?\n/)) {
@@ -327,7 +334,8 @@ export class SessionHistoryStore {
                 apiMessageCount: apiMessages.length,
                 uiMessageCount: uiMessages.length,
                 apiMessages: cloneApiMessages(apiMessages),
-                uiMessages: cloneUiMessages(uiMessages)
+                uiMessages: cloneUiMessages(uiMessages),
+                sessionMemory: cloneSessionMemory(sessionMemory)
               });
               trimRewindCheckpoints(rewindCheckpoints);
             }
@@ -351,10 +359,16 @@ export class SessionHistoryStore {
         continue;
       }
 
+      if (entry.type === "session-memory") {
+        sessionMemory = parseSessionMemoryEntry(entry.sessionMemory);
+        continue;
+      }
+
       if (entry.type === "session-rewind") {
         const apiMessageCount = asNumber(entry.apiMessageCount);
         const uiMessageCount = asNumber(entry.uiMessageCount);
         const restoredInput = asString(entry.restoredInput);
+        const rewindSessionMemory = parseSessionMemoryEntry(entry.sessionMemory);
         const checkpoint = restoredInput
           ? findRewindCheckpoint(
               rewindCheckpoints,
@@ -367,6 +381,7 @@ export class SessionHistoryStore {
         if (checkpoint) {
           apiMessages.splice(0, apiMessages.length, ...cloneApiMessages(checkpoint.apiMessages));
           uiMessages.splice(0, uiMessages.length, ...cloneUiMessages(checkpoint.uiMessages));
+          sessionMemory = cloneSessionMemory(checkpoint.sessionMemory);
           pruneRewindCheckpointsAfter(rewindCheckpoints, checkpoint);
         } else {
           if (apiMessageCount !== undefined) {
@@ -375,6 +390,7 @@ export class SessionHistoryStore {
           if (uiMessageCount !== undefined) {
             uiMessages.splice(Math.max(0, Math.trunc(uiMessageCount)));
           }
+          sessionMemory = rewindSessionMemory;
         }
         lastApiRole = apiMessages.at(-1)?.role;
         title = extractTitleFromApiMessages(apiMessages);
@@ -395,7 +411,8 @@ export class SessionHistoryStore {
       messageCount: apiMessages.filter((message) => message.role !== "system").length,
       lastSequence,
       apiMessages,
-      uiMessages
+      uiMessages,
+      sessionMemory
     };
   }
 
@@ -444,6 +461,37 @@ export class SessionHistoryStore {
     }
 
     return entries;
+  }
+
+  async recordSessionMemory(sessionMemory: SessionMemoryFileState | null): Promise<void> {
+    const sessionId = this.currentSessionId;
+    const timestamp = new Date().toISOString();
+    const entries: SessionHistoryEntry[] = [];
+    let wroteMetaEntry = false;
+
+    if (!this.materializedSessions.has(sessionId)) {
+      entries.push({
+        type: "session-meta",
+        schemaVersion: SESSION_HISTORY_SCHEMA_VERSION,
+        sessionId,
+        workspaceRoot: this.options.workspaceRoot,
+        createdAt: timestamp
+      });
+      wroteMetaEntry = true;
+    }
+
+    entries.push({
+      type: "session-memory",
+      sessionId,
+      sequence: this.nextSequence(),
+      timestamp,
+      sessionMemory: cloneSessionMemory(sessionMemory)
+    });
+
+    await this.appendEntries(sessionId, entries);
+    if (wroteMetaEntry) {
+      this.materializedSessions.add(sessionId);
+    }
   }
 
   private async appendEntries(sessionId: SessionId, entries: SessionHistoryEntry[]): Promise<void> {
@@ -587,6 +635,24 @@ function cloneApiMessages(messages: SessionHistoryApiMessage[]) {
 
 function cloneUiMessages(messages: SessionHistoryUiMessage[]) {
   return cloneJson(messages);
+}
+
+function cloneSessionMemory(
+  sessionMemory: SessionMemoryFileState | null | undefined
+): SessionMemoryFileState | null {
+  return sessionMemory ? { ...sessionMemory } : null;
+}
+
+function parseSessionMemoryEntry(value: unknown): SessionMemoryFileState | null {
+  const record = asRecord(value);
+  if (!record || typeof record.markdown !== "string" || record.markdown.trim().length === 0) {
+    return null;
+  }
+
+  return {
+    markdown: record.markdown,
+    ...(typeof record.updatedAt === "string" ? { updatedAt: record.updatedAt } : {})
+  };
 }
 
 function trimRewindCheckpoints(checkpoints: SessionHistoryRewindCheckpoint[]) {

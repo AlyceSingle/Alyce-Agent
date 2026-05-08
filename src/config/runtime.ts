@@ -10,6 +10,10 @@ import {
   getBuiltinPersonaPresetNames,
   resolveBuiltinPersonaPreset
 } from "../core/prompt/fragments/personaPresets.js";
+import {
+  normalizeModelContextWindowOverrides,
+  type ModelContextWindowOverrides
+} from "../core/context/modelContextWindows.js";
 
 export interface PromptOverrideConfig {
   languagePreference?: string;
@@ -21,14 +25,19 @@ export interface PromptOverrideConfig {
 export interface MemoryRuntimeConfig {
   directory: string;
   fileName: string;
+  sessionMemoryFileName: string;
   maxSessionEntries: number;
   maxPersistentEntries: number;
   maxPromptEntries: number;
-  autoSummary: {
+  sessionMemory: {
     enabled: boolean;
-    minMessagesToInit: number;
-    messagesBetweenUpdates: number;
-    windowMessages: number;
+    initialTokens: number;
+    updateTokens: number;
+    toolCallsBetweenUpdates: number;
+    timeoutMs: number;
+    maxFailures: number;
+    staleMs: number;
+    maxMessagesForExtraction: number;
     maxCharsPerMessage: number;
   };
 }
@@ -47,10 +56,13 @@ export interface SessionSettings extends PromptOverrideConfig {
   approvalMode: ApprovalMode;
   maxSteps: number;
   commandTimeoutMs: number;
-  autoSummaryEnabled: boolean;
+  sessionMemoryEnabled: boolean;
   messageTimestampsEnabled: boolean;
   markdownMessageRenderingEnabled: boolean;
   conversationCompactionEnabled: boolean;
+  autoCompactTimeoutMs: number;
+  autoCompactMaxFailures: number;
+  modelContextWindowOverrides: ModelContextWindowOverrides;
   additionalDirectories: string[];
 }
 
@@ -109,15 +121,25 @@ const ConnectionConfigFileSchema = z
   })
   .strict();
 
-const SessionSettingsFileSchema = z
+type SessionSettingsFile = Partial<SessionSettings> & {
+  autoSummaryEnabled?: boolean;
+  startupInstructionFiles?: string[];
+};
+
+const SessionSettingsFileSchema: z.ZodType<SessionSettingsFile> = z
   .object({
     approvalMode: z.union([z.literal("manual"), z.literal("auto")]).optional(),
     maxSteps: z.number().int().positive().optional(),
     commandTimeoutMs: z.number().int().positive().optional(),
+    sessionMemoryEnabled: z.boolean().optional(),
+    // Accept the retired setting as a compatibility alias.
     autoSummaryEnabled: z.boolean().optional(),
     messageTimestampsEnabled: z.boolean().optional(),
     markdownMessageRenderingEnabled: z.boolean().optional(),
     conversationCompactionEnabled: z.boolean().optional(),
+    autoCompactTimeoutMs: z.number().int().positive().optional(),
+    autoCompactMaxFailures: z.number().int().positive().optional(),
+    modelContextWindowOverrides: z.record(z.number().int().positive()).optional(),
     languagePreference: z.string().optional(),
     personaPreset: z.string().optional(),
     aiPersonalityPrompt: z.string().optional(),
@@ -126,8 +148,7 @@ const SessionSettingsFileSchema = z
     // Accept and discard the removed key so older settings files keep loading cleanly.
     startupInstructionFiles: z.array(z.string()).optional()
   })
-  .strict()
-  .transform(({ startupInstructionFiles: _removedStartupInstructionFiles, ...settings }) => settings);
+  .strict();
 
 export async function loadRuntimeConfig(
   argv: string[],
@@ -135,12 +156,15 @@ export async function loadRuntimeConfig(
 ): Promise<RuntimeConfig> {
   const workspaceRoot = path.resolve(getArgValue(argv, "--cwd") || env.AGENT_WORKSPACE || ".");
   const paths = getRuntimePaths(workspaceRoot);
-  const [projectConnection, userConnection, projectSettings, userSettings] = await Promise.all([
-    readJsonConfig(paths.connectionConfigPath, ConnectionConfigFileSchema),
-    readJsonConfig(paths.userConnectionConfigPath, ConnectionConfigFileSchema),
-    readJsonConfig(paths.settingsConfigPath, SessionSettingsFileSchema),
-    readJsonConfig(paths.userSettingsConfigPath, SessionSettingsFileSchema)
-  ]);
+  const [projectConnection, userConnection, projectSettingsFile, userSettingsFile] =
+    await Promise.all([
+      readJsonConfig(paths.connectionConfigPath, ConnectionConfigFileSchema),
+      readJsonConfig(paths.userConnectionConfigPath, ConnectionConfigFileSchema),
+      readJsonConfig(paths.settingsConfigPath, SessionSettingsFileSchema),
+      readJsonConfig(paths.userSettingsConfigPath, SessionSettingsFileSchema)
+    ]);
+  const projectSettings = normalizeSessionSettingsFile(projectSettingsFile);
+  const userSettings = normalizeSessionSettingsFile(userSettingsFile);
 
   const connectionState = buildConnectionConfigState(paths, {
     user: userConnection,
@@ -165,15 +189,23 @@ export async function loadRuntimeConfig(
     memory: {
       directory: env.AGENT_MEMORY_DIR || ".alyce/memory",
       fileName: env.AGENT_MEMORY_FILE || "MEMORY.md",
+      sessionMemoryFileName: env.AGENT_SESSION_MEMORY_FILE || "SESSION_MEMORY.md",
       maxSessionEntries: parsePositiveInt(env.AGENT_MEMORY_MAX_SESSION, 30),
       maxPersistentEntries: parsePositiveInt(env.AGENT_MEMORY_MAX_PERSISTENT, 200),
       maxPromptEntries: parsePositiveInt(env.AGENT_MEMORY_MAX_PROMPT, 20),
-      autoSummary: {
-        enabled: parseBoolean(env.AGENT_MEMORY_AUTO_SUMMARY, true),
-        minMessagesToInit: parsePositiveInt(env.AGENT_MEMORY_SUMMARY_MIN_MESSAGES, 8),
-        messagesBetweenUpdates: parsePositiveInt(env.AGENT_MEMORY_SUMMARY_INTERVAL_MESSAGES, 6),
-        windowMessages: parsePositiveInt(env.AGENT_MEMORY_SUMMARY_WINDOW_MESSAGES, 28),
-        maxCharsPerMessage: parsePositiveInt(env.AGENT_MEMORY_SUMMARY_MAX_CHARS_PER_MESSAGE, 1000)
+      sessionMemory: {
+        enabled: parseBoolean(
+          env.AGENT_SESSION_MEMORY_ENABLED ?? env.AGENT_MEMORY_AUTO_SUMMARY,
+          true
+        ),
+        initialTokens: parsePositiveInt(env.AGENT_SESSION_MEMORY_INIT_TOKENS, 10_000),
+        updateTokens: parsePositiveInt(env.AGENT_SESSION_MEMORY_UPDATE_TOKENS, 5_000),
+        toolCallsBetweenUpdates: parsePositiveInt(env.AGENT_SESSION_MEMORY_TOOL_CALLS, 3),
+        timeoutMs: parsePositiveInt(env.AGENT_SESSION_MEMORY_TIMEOUT_MS, 180_000),
+        maxFailures: parsePositiveInt(env.AGENT_SESSION_MEMORY_MAX_FAILURES, 3),
+        staleMs: parsePositiveInt(env.AGENT_SESSION_MEMORY_STALE_MS, 60_000),
+        maxMessagesForExtraction: parsePositiveInt(env.AGENT_SESSION_MEMORY_WINDOW_MESSAGES, 80),
+        maxCharsPerMessage: parsePositiveInt(env.AGENT_SESSION_MEMORY_MAX_CHARS_PER_MESSAGE, 1_500)
       }
     }
   };
@@ -489,6 +521,23 @@ function normalizeConnectionConfig(input: Partial<ConnectionConfig>): Connection
   };
 }
 
+function normalizeSessionSettingsFile(input: Partial<SessionSettingsFile>): Partial<SessionSettings> {
+  const {
+    autoSummaryEnabled,
+    startupInstructionFiles: _removedStartupInstructionFiles,
+    ...settings
+  } = input;
+  const normalized: Partial<SessionSettings> = { ...settings };
+
+  if (normalized.sessionMemoryEnabled === undefined && autoSummaryEnabled !== undefined) {
+    // autoSummaryEnabled is the retired name for session memory; accept it so
+    // old settings files keep loading while new writes use sessionMemoryEnabled.
+    normalized.sessionMemoryEnabled = autoSummaryEnabled;
+  }
+
+  return compactObject(normalized);
+}
+
 function serializeConnectionConfig(connection: Partial<ConnectionConfig>): Partial<ConnectionConfig> {
   return compactObject({
     apiKey: "apiKey" in connection ? connection.apiKey?.trim() ?? "" : undefined,
@@ -510,10 +559,13 @@ function normalizeSessionSettings(
     approvalMode: input.approvalMode === "auto" ? "auto" : "manual",
     maxSteps: clampPositiveInt(input.maxSteps, 8),
     commandTimeoutMs: clampPositiveInt(input.commandTimeoutMs, 120_000),
-    autoSummaryEnabled: input.autoSummaryEnabled ?? true,
+    sessionMemoryEnabled: input.sessionMemoryEnabled ?? true,
     messageTimestampsEnabled: input.messageTimestampsEnabled ?? false,
     markdownMessageRenderingEnabled: input.markdownMessageRenderingEnabled ?? true,
     conversationCompactionEnabled: input.conversationCompactionEnabled ?? true,
+    autoCompactTimeoutMs: clampPositiveInt(input.autoCompactTimeoutMs, 180_000),
+    autoCompactMaxFailures: clampPositiveInt(input.autoCompactMaxFailures, 3),
+    modelContextWindowOverrides: normalizeModelContextWindowOverrides(input.modelContextWindowOverrides),
     languagePreference: normalizeOptionalText(input.languagePreference),
     personaPreset: resolvePersonaPreset(normalizeOptionalText(input.personaPreset)),
     aiPersonalityPrompt: normalizeOptionalText(input.aiPersonalityPrompt),
@@ -526,12 +578,12 @@ function serializeSessionSettings(
   settings: Partial<SessionSettings>,
   workspaceRoot: string
 ): Partial<SessionSettings> {
-  return compactObject({
+  const serialized: Partial<SessionSettings> = {
     approvalMode: "approvalMode" in settings ? settings.approvalMode : undefined,
     maxSteps: "maxSteps" in settings ? settings.maxSteps : undefined,
     commandTimeoutMs: "commandTimeoutMs" in settings ? settings.commandTimeoutMs : undefined,
-    autoSummaryEnabled:
-      "autoSummaryEnabled" in settings ? settings.autoSummaryEnabled : undefined,
+    sessionMemoryEnabled:
+      "sessionMemoryEnabled" in settings ? settings.sessionMemoryEnabled : undefined,
     messageTimestampsEnabled:
       "messageTimestampsEnabled" in settings ? settings.messageTimestampsEnabled : undefined,
     markdownMessageRenderingEnabled:
@@ -541,6 +593,14 @@ function serializeSessionSettings(
     conversationCompactionEnabled:
       "conversationCompactionEnabled" in settings
         ? settings.conversationCompactionEnabled
+        : undefined,
+    autoCompactTimeoutMs:
+      "autoCompactTimeoutMs" in settings ? settings.autoCompactTimeoutMs : undefined,
+    autoCompactMaxFailures:
+      "autoCompactMaxFailures" in settings ? settings.autoCompactMaxFailures : undefined,
+    modelContextWindowOverrides:
+      "modelContextWindowOverrides" in settings
+        ? normalizeModelContextWindowOverrides(settings.modelContextWindowOverrides)
         : undefined,
     languagePreference:
       "languagePreference" in settings
@@ -562,6 +622,18 @@ function serializeSessionSettings(
       "additionalDirectories" in settings
         ? normalizeAdditionalDirectories(settings.additionalDirectories, workspaceRoot)
         : undefined
+  };
+
+  if ("modelContextWindowOverrides" in settings) {
+    // An empty override map is meaningful: it explicitly clears user-level
+    // overrides so project-level patterns do not silently reappear.
+    return compactObjectExcept(serialized, new Set<keyof SessionSettings>([
+      "modelContextWindowOverrides"
+    ]));
+  }
+
+  return compactObject({
+    ...serialized
   });
 }
 
@@ -600,13 +672,46 @@ function resolveSettingsFromEnv(env: NodeJS.ProcessEnv): Partial<SessionSettings
   return compactObject({
     maxSteps: parseOptionalPositiveInt(env.AGENT_MAX_STEPS),
     commandTimeoutMs: parseOptionalPositiveInt(env.AGENT_COMMAND_TIMEOUT_MS),
-    autoSummaryEnabled: parseOptionalBoolean(env.AGENT_MEMORY_AUTO_SUMMARY),
+    sessionMemoryEnabled: parseOptionalBoolean(
+      env.AGENT_SESSION_MEMORY_ENABLED ?? env.AGENT_MEMORY_AUTO_SUMMARY
+    ),
+    autoCompactTimeoutMs: parseOptionalPositiveInt(env.AGENT_AUTO_COMPACT_TIMEOUT_MS),
+    autoCompactMaxFailures: parseOptionalPositiveInt(env.AGENT_AUTO_COMPACT_MAX_FAILURES),
     languagePreference: env.AGENT_LANGUAGE,
     personaPreset: resolvePersonaPreset(env.AGENT_PERSONA_PRESET),
     aiPersonalityPrompt: env.AGENT_AI_PERSONALITY,
     appendSystemPrompt: env.AGENT_APPEND_SYSTEM_PROMPT,
+    modelContextWindowOverrides: parseModelContextWindowOverridesFromEnv(
+      env.AGENT_MODEL_CONTEXT_WINDOW_OVERRIDES
+    ),
     additionalDirectories: parsePathListFromEnv(env.AGENT_ADDITIONAL_DIRECTORIES)
   });
+}
+
+function parseModelContextWindowOverridesFromEnv(
+  value: string | undefined
+): ModelContextWindowOverrides | undefined {
+  if (!value) {
+    return undefined;
+  }
+
+  const parsed: ModelContextWindowOverrides = {};
+  for (const entry of value.split(",")) {
+    const separatorIndex = entry.lastIndexOf("=");
+    if (separatorIndex <= 0) {
+      continue;
+    }
+
+    const pattern = normalizeOptionalText(entry.slice(0, separatorIndex));
+    const tokens = parseOptionalPositiveInt(entry.slice(separatorIndex + 1));
+    if (!pattern || tokens === undefined) {
+      continue;
+    }
+
+    parsed[pattern] = tokens;
+  }
+
+  return Object.keys(parsed).length > 0 ? parsed : undefined;
 }
 
 function resolveSettingsFromCli(argv: string[]): Partial<SessionSettings> {
@@ -727,6 +832,17 @@ function parsePathListFromEnv(value: string | undefined): string[] | undefined {
 function compactObject<T extends object>(value: Partial<T>): Partial<T> {
   return Object.fromEntries(
     Object.entries(value).filter(([, entryValue]) => entryValue !== undefined)
+  ) as Partial<T>;
+}
+
+function compactObjectExcept<T extends object>(
+  value: Partial<T>,
+  keepKeys: ReadonlySet<keyof T>
+): Partial<T> {
+  return Object.fromEntries(
+    (Object.entries(value) as Array<[keyof T, unknown]>).filter(
+      ([entryKey, entryValue]) => entryValue !== undefined || keepKeys.has(entryKey)
+    )
   ) as Partial<T>;
 }
 

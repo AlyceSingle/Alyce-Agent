@@ -9,6 +9,8 @@ export interface ConversationCompactionConfig {
   keepRecentTurns: number;
   maxMessagesForSummary: number;
   maxCharsPerMessage: number;
+  timeoutMs: number;
+  maxAutoFailures: number;
 }
 
 export interface ConversationCompactionState {
@@ -16,11 +18,19 @@ export interface ConversationCompactionState {
   updatedAt: string;
 }
 
+export interface ConversationCompactionTrackingState {
+  consecutiveFailures: number;
+  lastFailureAt?: string;
+  disabledForSession: boolean;
+}
+
 export const DEFAULT_CONVERSATION_COMPACTION_CONFIG: ConversationCompactionConfig = {
   triggerMessageCount: 24,
   keepRecentTurns: 3,
   maxMessagesForSummary: 40,
-  maxCharsPerMessage: 1_200
+  maxCharsPerMessage: 1_200,
+  timeoutMs: 180_000,
+  maxAutoFailures: 3
 };
 
 const COMPACTION_SUMMARY_TEMPLATE = [
@@ -40,11 +50,22 @@ const COMPACTION_UPDATED_AT_PREFIX = "Updated at:";
 
 export class ConversationCompactor {
   private state: ConversationCompactionState | null = null;
+  private tracking: ConversationCompactionTrackingState = {
+    consecutiveFailures: 0,
+    disabledForSession: false
+  };
 
-  constructor(private readonly config: ConversationCompactionConfig) {}
+  constructor(private config: ConversationCompactionConfig) {}
+
+  updateConfig(config: ConversationCompactionConfig) {
+    this.config = config;
+    this.tracking.disabledForSession =
+      this.tracking.consecutiveFailures >= this.config.maxAutoFailures;
+  }
 
   clear() {
     this.state = null;
+    this.resetAutoFailureTracking();
   }
 
   createSnapshot(): ConversationCompactionState | null {
@@ -62,6 +83,10 @@ export class ConversationCompactor {
     force?: boolean;
     abortSignal?: AbortSignal;
   }): Promise<boolean> {
+    if (this.tracking.disabledForSession) {
+      return false;
+    }
+
     const firstConversationIndex = getFirstConversationMessageIndex(options.messages);
     const conversationMessages = options.messages.slice(firstConversationIndex);
     if (!options.force && conversationMessages.length < this.config.triggerMessageCount) {
@@ -88,6 +113,7 @@ export class ConversationCompactor {
       this.state = existingState;
     }
 
+    let abortSource: "parent" | "timeout" | undefined;
     try {
       markdown = await buildConversationCompactionSummary(options.client, {
         model: options.model,
@@ -95,13 +121,20 @@ export class ConversationCompactor {
         messages: archivedMessages,
         maxMessagesForSummary: this.config.maxMessagesForSummary,
         maxCharsPerMessage: this.config.maxCharsPerMessage,
-        abortSignal: options.abortSignal
+        timeoutMs: this.config.timeoutMs,
+        abortSignal: options.abortSignal,
+        onAbortSource: (source) => {
+          abortSource = source;
+        }
       });
     } catch (error) {
-      if (isTurnInterruptedError(error, options.abortSignal)) {
+      // Parent aborts are user interrupts and should bubble up; internal timeouts
+      // are automatic compaction failures so the circuit breaker can trip.
+      if (abortSource !== "timeout" && isTurnInterruptedError(error, options.abortSignal)) {
         throw toTurnInterruptedError(error, options.abortSignal);
       }
 
+      this.recordAutoFailure();
       return false;
     }
 
@@ -117,7 +150,24 @@ export class ConversationCompactor {
     ];
     options.messages.splice(0, options.messages.length, ...rebuiltMessages);
 
+    this.resetAutoFailureTracking();
     return true;
+  }
+
+  private recordAutoFailure() {
+    const nextFailures = this.tracking.consecutiveFailures + 1;
+    this.tracking = {
+      consecutiveFailures: nextFailures,
+      lastFailureAt: new Date().toISOString(),
+      disabledForSession: nextFailures >= this.config.maxAutoFailures
+    };
+  }
+
+  private resetAutoFailureTracking() {
+    this.tracking = {
+      consecutiveFailures: 0,
+      disabledForSession: false
+    };
   }
 }
 
@@ -172,7 +222,9 @@ async function buildConversationCompactionSummary(
     messages: MessageParam[];
     maxMessagesForSummary: number;
     maxCharsPerMessage: number;
+    timeoutMs: number;
     abortSignal?: AbortSignal;
+    onAbortSource?: (source: "parent" | "timeout") => void;
   }
 ) {
   const conversationWindow = formatConversationWindow(
@@ -180,43 +232,64 @@ async function buildConversationCompactionSummary(
     options.maxMessagesForSummary,
     options.maxCharsPerMessage
   );
-  const response = await client.chat.completions.create(
-    {
-      model: options.model,
-      temperature: 0.1,
-      messages: [
-        {
-          role: "system",
-          content: [
-            "You summarize older coding-agent conversation during context compaction.",
-            "Merge the existing summary with the archived conversation segment.",
-            "Output markdown only.",
-            "Preserve the exact section headers in the template.",
-            "Prefer durable engineering context over chatter.",
-            "Do not hallucinate; say unknown when necessary."
-          ].join(" ")
-        },
-        {
-          role: "user",
-          content: [
-            "Update the compacted conversation summary with the archived conversation segment.",
-            "",
-            "## Existing Summary",
-            options.existingSummary?.trim() || "(none)",
-            "",
-            "## Required Template",
-            COMPACTION_SUMMARY_TEMPLATE,
-            "",
-            "## Archived Conversation Segment",
-            conversationWindow || "(empty)"
-          ].join("\n")
-        }
-      ]
-    },
-    {
-      signal: options.abortSignal
-    }
-  );
+  const scopedAbort = createScopedAbortSignal({
+    parentSignal: options.abortSignal,
+    timeoutMs: options.timeoutMs,
+    onAbortSource: options.onAbortSource
+  });
+  let response: OpenAI.Chat.Completions.ChatCompletion;
+  try {
+    response = await client.chat.completions.create(
+      {
+        model: options.model,
+        temperature: 0.1,
+        messages: [
+          {
+            role: "system",
+            content: [
+              "You summarize older coding-agent conversation during context compaction.",
+              "Merge the existing summary with the archived conversation segment.",
+              "Output markdown only.",
+              "Preserve the exact section headers in the template.",
+              "Prefer durable engineering context over chatter.",
+              "Do not hallucinate; say unknown when necessary."
+            ].join(" ")
+          },
+          {
+            role: "user",
+            content: [
+              "Update the compacted conversation summary with the archived conversation segment.",
+              "",
+              "## Existing Summary",
+              options.existingSummary?.trim() || "(none)",
+              "",
+              "## Required Template",
+              COMPACTION_SUMMARY_TEMPLATE,
+              "",
+              "## Archived Conversation Segment",
+              conversationWindow || "(empty)"
+            ].join("\n")
+          }
+        ]
+      },
+      {
+        signal: scopedAbort.signal
+      }
+    );
+  } finally {
+    scopedAbort.cleanup();
+  }
+
+  const abortSource = scopedAbort.getAbortSource();
+  if (abortSource === "timeout") {
+    throw new Error(`Conversation compaction timed out after ${options.timeoutMs}ms`);
+  }
+  if (abortSource === "parent") {
+    throw toTurnInterruptedError(
+      scopedAbort.signal?.reason,
+      options.abortSignal
+    );
+  }
 
   const content = response.choices[0]?.message?.content;
   if (typeof content !== "string" || content.trim().length === 0) {
@@ -224,6 +297,70 @@ async function buildConversationCompactionSummary(
   }
 
   return content.replace(/\r\n/g, "\n").replace(/\n{3,}/g, "\n\n").trim();
+}
+
+function createScopedAbortSignal(options: {
+  parentSignal: AbortSignal | undefined;
+  timeoutMs: number;
+  onAbortSource?: (source: "parent" | "timeout") => void;
+}) {
+  const { parentSignal, timeoutMs, onAbortSource } = options;
+  if (!parentSignal && timeoutMs <= 0) {
+    return {
+      signal: undefined,
+      getAbortSource: () => undefined,
+      cleanup: () => undefined
+    };
+  }
+
+  const controller = new AbortController();
+  let timeout: ReturnType<typeof setTimeout> | undefined;
+  let abortSource: "parent" | "timeout" | undefined;
+  const clearAbortTimeout = () => {
+    if (timeout) {
+      clearTimeout(timeout);
+      timeout = undefined;
+    }
+  };
+  const abortFromParent = () => {
+    if (controller.signal.aborted) {
+      return;
+    }
+
+    // Once the parent cancelled the turn, the timeout must not later reclassify
+    // that same request as an automatic compaction failure.
+    clearAbortTimeout();
+    abortSource = "parent";
+    onAbortSource?.(abortSource);
+    controller.abort(parentSignal?.reason ?? "aborted");
+  };
+
+  if (parentSignal?.aborted) {
+    abortFromParent();
+  } else if (parentSignal) {
+    parentSignal.addEventListener("abort", abortFromParent, { once: true });
+  }
+
+  if (timeoutMs > 0 && !controller.signal.aborted) {
+    timeout = setTimeout(() => {
+      if (controller.signal.aborted) {
+        return;
+      }
+
+      abortSource = "timeout";
+      onAbortSource?.(abortSource);
+      controller.abort(new Error(`Conversation compaction timed out after ${timeoutMs}ms`));
+    }, timeoutMs);
+  }
+
+  return {
+    signal: controller.signal,
+    getAbortSource: () => abortSource,
+    cleanup: () => {
+      clearAbortTimeout();
+      parentSignal?.removeEventListener("abort", abortFromParent);
+    }
+  };
 }
 
 function readCompactionStateFromMessages(messages: MessageParam[]): ConversationCompactionState | null {

@@ -91,7 +91,11 @@ function getMemorySection(runtimeContext: PromptRuntimeContext) {
   ];
 
   if (sessionSummary) {
-    lines.push("", "## Auto Session Summary", sessionSummary);
+    lines.push("", "## Session Memory Summary");
+    if (runtimeContext.memory?.sessionMemoryPath) {
+      lines.push(`Source: ${runtimeContext.memory.sessionMemoryPath}`);
+    }
+    lines.push(sessionSummary);
   }
 
   if (sessionNotes.length > 0) {

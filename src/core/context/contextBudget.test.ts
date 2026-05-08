@@ -5,6 +5,7 @@ import {
   ContextBudgetService,
   snipOversizedToolOutputs
 } from "./contextBudget.js";
+import { resolveModelContextWindow } from "./modelContextWindows.js";
 
 function createRequest(content: string): OpenAI.Chat.Completions.ChatCompletionCreateParamsNonStreaming {
   return {
@@ -24,10 +25,54 @@ function createLongText(char: string, length = 24_000) {
 }
 
 function runTests() {
+  testModelContextWindowResolutionUsesLooseTokens();
+  testModelContextWindowResolutionAvoidsVersionSkipping();
+  testModelContextWindowOverridesWin();
+  testModelNameContextSuffixWinsBeforeBuiltin();
   testPreviewEstimatesDoNotCalibrateUsage();
   testRecordedEstimatesCalibrateUsage();
   testLatestToolOutputsAreProtectedAcrossGeneratedContextMessages();
   console.log("contextBudget tests passed");
+}
+
+function testModelContextWindowResolutionUsesLooseTokens() {
+  assert.equal(resolveModelContextWindow("google/gemini-2.5-pro-preview").contextWindow, 1_048_576);
+  assert.equal(resolveModelContextWindow("gemini2.5pro").contextWindow, 1_048_576);
+  assert.equal(resolveModelContextWindow("google/gemini2.5pro-preview").contextWindow, 1_048_576);
+  assert.equal(resolveModelContextWindow("gemini_2_5_pro").contextWindow, 1_048_576);
+  assert.equal(resolveModelContextWindow("anthropic.claude-sonnet-4-20250514").contextWindow, 200_000);
+  assert.equal(resolveModelContextWindow("claude3.7sonnet").contextWindow, 200_000);
+  assert.equal(resolveModelContextWindow("openai/gpt_5.2").contextWindow, 400_000);
+  assert.equal(resolveModelContextWindow("gpt5mini").contextWindow, 400_000);
+  assert.equal(resolveModelContextWindow("moonshot/kimi-k2-0905-preview").contextWindow, 262_144);
+  assert.equal(resolveModelContextWindow("deepseek-reasoner").contextWindow, 1_000_000);
+  assert.equal(resolveModelContextWindow("qwen3-max-preview").contextWindow, 262_144);
+  assert.equal(resolveModelContextWindow("qwen3max").contextWindow, 262_144);
+  assert.equal(resolveModelContextWindow("mistral-large-latest").contextWindow, 256_000);
+  assert.equal(resolveModelContextWindow("x-ai/grok-code-fast-1").contextWindow, 256_000);
+}
+
+function testModelContextWindowResolutionAvoidsVersionSkipping() {
+  const resolved = resolveModelContextWindow("gemini25pro");
+
+  assert.equal(resolved.contextWindow, 128_000);
+  assert.equal(resolved.source, "fallback");
+}
+
+function testModelContextWindowOverridesWin() {
+  const resolved = resolveModelContextWindow("provider/custom-fast-model", {
+    "custom fast": 512_000
+  });
+
+  assert.equal(resolved.contextWindow, 512_000);
+  assert.equal(resolved.source, "override");
+}
+
+function testModelNameContextSuffixWinsBeforeBuiltin() {
+  const resolved = resolveModelContextWindow("provider/claude-sonnet-4-1m");
+
+  assert.equal(resolved.contextWindow, 1_000_000);
+  assert.equal(resolved.source, "model_name");
 }
 
 function testPreviewEstimatesDoNotCalibrateUsage() {

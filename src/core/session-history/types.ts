@@ -1,4 +1,5 @@
 import OpenAI from "openai";
+import type { SessionMemoryFileState } from "../memory/types.js";
 import type {
   UiMessageBlock,
   UiMessageBlockStyle,
@@ -73,6 +74,13 @@ export type SessionHistoryEntry =
       title: string;
     }
   | {
+      type: "session-memory";
+      sessionId: SessionId;
+      sequence: number;
+      timestamp: string;
+      sessionMemory: SessionMemoryFileState | null;
+    }
+  | {
       type: "session-rewind";
       sessionId: SessionId;
       sequence: number;
@@ -81,6 +89,7 @@ export type SessionHistoryEntry =
       uiMessageCount: number;
       restoredInput?: string;
       restoreMode?: SessionHistoryRewindMode;
+      sessionMemory?: SessionMemoryFileState | null;
     };
 
 export interface LoadedSessionHistory {
@@ -94,6 +103,7 @@ export interface LoadedSessionHistory {
   lastSequence: number;
   apiMessages: SessionHistoryApiMessage[];
   uiMessages: SessionHistoryUiMessage[];
+  sessionMemory: SessionMemoryFileState | null;
 }
 
 export interface SessionHistoryListItem {
@@ -112,4 +122,5 @@ export interface SessionResumePayload {
   apiMessages: SessionHistoryApiMessage[];
   uiMessages: SessionHistoryUiMessage[];
   messageCount: number;
+  sessionMemory: SessionMemoryFileState | null;
 }

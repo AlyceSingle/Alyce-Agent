@@ -52,14 +52,24 @@ Loaded in this priority order — **again, earlier wins**:
 - `AGENT_ADDITIONAL_DIRECTORIES` — comma-separated extra paths
 - `AGENT_MEMORY_DIR` — override memory storage directory
 - `AGENT_MEMORY_FILE` — override memory file name
+- `AGENT_SESSION_MEMORY_FILE` — override the auto-managed session memory file name, default `SESSION_MEMORY.md`
+- `AGENT_SESSION_MEMORY_ENABLED` — enable/disable automatic session memory extraction, default `true`
+- `AGENT_SESSION_MEMORY_INIT_TOKENS` — estimated context tokens before session memory initializes, default `10000`
+- `AGENT_SESSION_MEMORY_UPDATE_TOKENS` — estimated token growth required between session memory updates, default `5000`
+- `AGENT_SESSION_MEMORY_TOOL_CALLS` — tool calls required between updates when the last assistant turn still has tool calls, default `3`
+- `AGENT_SESSION_MEMORY_TIMEOUT_MS` — timeout for the background session memory model call, default `180000`
+- `AGENT_SESSION_MEMORY_MAX_FAILURES` — consecutive background session memory failures before circuit breaking, default `3`
+- `AGENT_SESSION_MEMORY_STALE_MS` — age after which an in-flight extraction is considered stale, default `60000`
+- `AGENT_SESSION_MEMORY_WINDOW_MESSAGES` — max recent messages included in a session memory extraction request, default `80`
+- `AGENT_SESSION_MEMORY_MAX_CHARS_PER_MESSAGE` — per-message truncation for extraction prompts, default `1500`
 - `AGENT_MEMORY_MAX_SESSION` — max session memory entries
 - `AGENT_MEMORY_MAX_PERSISTENT` — max persistent memory entries
 - `AGENT_MEMORY_MAX_PROMPT` — max memory chars injected into prompt
-- `AGENT_MEMORY_AUTO_SUMMARY` — enable/disable auto summary
-- `AGENT_MEMORY_SUMMARY_MIN_MESSAGES` — messages before summary starts
-- `AGENT_MEMORY_SUMMARY_INTERVAL_MESSAGES` — how often summary updates
-- `AGENT_MEMORY_SUMMARY_WINDOW_MESSAGES` — how many messages per summary
-- `AGENT_MEMORY_SUMMARY_MAX_CHARS_PER_MESSAGE` — truncation per message
+- `AGENT_AUTO_COMPACT_TIMEOUT_MS` — timeout for automatic compaction model calls, default `180000`
+- `AGENT_AUTO_COMPACT_MAX_FAILURES` — consecutive automatic compaction failures before circuit breaking, default `3`
+- `AGENT_MODEL_CONTEXT_WINDOW_OVERRIDES` — comma-separated model context overrides, for example `custom fast=512000,my alias=1000000`
+
+Compatibility note: `AGENT_MEMORY_AUTO_SUMMARY` is still accepted as an alias for `AGENT_SESSION_MEMORY_ENABLED`, but the old message-count summary variables are retired.
 
 ### Optional Web Search Settings
 
@@ -196,9 +206,24 @@ These appear in the **Session** tab of settings.
 
 ### Memory & Context
 
-- `autoSummaryEnabled` — whether auto-summarization of recent work is active.
+- `sessionMemoryEnabled` — whether the session memory file is injected and automatically maintained. Older `autoSummaryEnabled` settings files are read as a compatibility alias.
 - `messageTimestampsEnabled` — whether the model sees the current system time in each turn.
 - `conversationCompactionEnabled` — whether long conversations get compressed to stay within context limits.
+- `autoCompactTimeoutMs` — timeout for automatic compaction model calls.
+- `autoCompactMaxFailures` — consecutive automatic compaction failures before Alyce stops retrying for the current session.
+- Session memory extraction uses Claude-style thresholds: initialize after `AGENT_SESSION_MEMORY_INIT_TOKENS`, then update only after `AGENT_SESSION_MEMORY_UPDATE_TOKENS` of estimated context growth and either enough tool calls or a natural assistant break. The updater runs in the background with timeout, stale-task cancellation, and a circuit breaker.
+- `modelContextWindowOverrides` — optional context window overrides for custom model aliases or proxy-specific model names. Use loose model patterns as keys and token counts as values, for example:
+
+```json
+{
+  "modelContextWindowOverrides": {
+    "company gemini pro": 1048576,
+    "custom fast": 512000
+  }
+}
+```
+
+Alyce first checks these overrides, then explicit suffixes in the model name such as `128k` or `1m`, then its built-in provider table. Unknown models fall back to `128000` tokens.
 
 ### Paths
 
@@ -212,7 +237,7 @@ When turned on, each API request includes a small `# Current System Time` block 
 
 ### `conversationCompactionEnabled`
 
-When turned on, long conversations get compacted after they cross a threshold. Recent raw turns stay untouched; older turns get rewritten into a structured summary. The goal is to keep useful information present without carrying the full transcript indefinitely.
+When turned on, Alyce compacts older conversation only when the estimated request is close to the model context limit. Recent raw turns stay untouched; older turns get rewritten into a structured summary. Automatic compaction has a timeout and a circuit breaker, so repeated failures stop further automatic attempts for the current session instead of blocking every turn.
 
 ---
 

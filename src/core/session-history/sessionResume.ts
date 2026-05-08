@@ -6,6 +6,7 @@ export function prepareSessionResume(history: LoadedSessionHistory): SessionResu
     title: history.title,
     apiMessages: history.apiMessages,
     uiMessages: history.uiMessages,
-    messageCount: history.messageCount
+    messageCount: history.messageCount,
+    sessionMemory: history.sessionMemory
   };
 }

@@ -12,34 +12,39 @@ export interface MemoryEntry {
 export interface MemoryPromptContext {
   sessionSummary?: string;
   summaryUpdatedAt?: string;
+  sessionMemoryPath?: string;
   sessionNotes: string[];
   persistentNotes: string[];
 }
 
-export interface MemoryAutoSummary {
+export interface SessionMemoryFileState {
   markdown: string;
-  updatedAt: string;
-  lastMessageCount: number;
+  updatedAt?: string;
 }
 
 export interface MemoryVolatileSnapshot {
   session: MemoryEntry[];
-  autoSummary: MemoryAutoSummary | null;
+  sessionMemory: SessionMemoryFileState | null;
 }
 
 // 用于命令行展示的完整记忆快照。
 export interface MemorySnapshot {
   session: MemoryEntry[];
   persistent: MemoryEntry[];
-  autoSummary: MemoryAutoSummary | null;
-  autoSummaryEnabled: boolean;
+  sessionMemory: SessionMemoryFileState | null;
+  sessionMemoryPath: string;
+  sessionMemoryEnabled: boolean;
 }
 
-export interface MemoryAutoSummaryConfig {
+export interface SessionMemoryRuntimeConfig {
   enabled: boolean;
-  minMessagesToInit: number;
-  messagesBetweenUpdates: number;
-  windowMessages: number;
+  initialTokens: number;
+  updateTokens: number;
+  toolCallsBetweenUpdates: number;
+  timeoutMs: number;
+  maxFailures: number;
+  staleMs: number;
+  maxMessagesForExtraction: number;
   maxCharsPerMessage: number;
 }
 
@@ -48,8 +53,9 @@ export interface MemoryServiceConfig {
   workspaceRoot: string;
   directory: string;
   fileName: string;
+  sessionMemoryFileName: string;
   maxSessionEntries: number;
   maxPersistentEntries: number;
   maxPromptEntries: number;
-  autoSummary: MemoryAutoSummaryConfig;
+  sessionMemory: SessionMemoryRuntimeConfig;
 }

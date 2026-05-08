@@ -45,8 +45,11 @@ export function StatusBar(props: {
       : props.contextBudget?.state === "warning" || props.contextBudget?.state === "auto_compact"
         ? terminalUiTheme.colors.warning
         : terminalUiTheme.colors.subtle;
+  const normalizedStatusText = props.statusText.trim();
   const inlineStatusText =
-    props.statusText.trim().length > 0 ? ` | ${props.statusText}` : "";
+    normalizedStatusText.length > 0 && !isContextStatusText(normalizedStatusText, Boolean(props.contextBudget))
+      ? ` | ${normalizedStatusText}`
+      : "";
 
   return (
     <Box width="100%">
@@ -65,4 +68,8 @@ export function StatusBar(props: {
       </Text>
     </Box>
   );
+}
+
+function isContextStatusText(value: string, hasContextBudget: boolean) {
+  return hasContextBudget && /^Context\b/i.test(value);
 }

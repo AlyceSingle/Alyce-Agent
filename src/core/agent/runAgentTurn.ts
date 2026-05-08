@@ -9,6 +9,7 @@ import {
   type ChatCompletionReconnectEvent
 } from "../api/sendChatCompletion.js";
 import type { RequestPatchOperation } from "../api/requestPatch.js";
+import type { AgentQuerySource } from "./querySource.js";
 import {
   ContextOverflowError,
   formatContextOverflowMessage,
@@ -31,6 +32,7 @@ export interface AgentTurnOptions {
   model: string;
   maxSteps: number;
   context: ToolExecutionContext;
+  querySource?: AgentQuerySource;
   gcliGeminiCompat?: boolean;
   requestPatches?: RequestPatchOperation[];
   abortSignal?: AbortSignal;
@@ -48,7 +50,10 @@ export interface AgentTurnOptions {
     snipResult?: ToolOutputSnipResult;
   }) => void;
   contextBudgetService?: ContextBudgetService;
-  preflightCompactConversation?: (options: { abortSignal?: AbortSignal }) => Promise<boolean>;
+  preflightCompactConversation?: (options: {
+    abortSignal?: AbortSignal;
+    querySource: AgentQuerySource;
+  }) => Promise<boolean>;
   refreshTools?: (options: { abortSignal?: AbortSignal }) => Promise<OpenAI.Chat.Completions.ChatCompletionTool[]>;
   messageTimestampsEnabled?: boolean;
 }
@@ -138,6 +143,11 @@ async function preflightContextBudget(
   options: AgentTurnOptions,
   tools: OpenAI.Chat.Completions.ChatCompletionTool[]
 ) {
+  const querySource = options.querySource ?? "main";
+  if (querySource === "compact" || querySource === "session_memory") {
+    return;
+  }
+
   const budgetService = options.contextBudgetService;
   if (!budgetService) {
     return;
@@ -173,7 +183,8 @@ async function preflightContextBudget(
   if (options.preflightCompactConversation) {
     options.onContextCompactionStart?.(beforeCompaction);
     compacted = await options.preflightCompactConversation({
-      abortSignal: options.abortSignal
+      abortSignal: options.abortSignal,
+      querySource
     });
     request = buildAgentTurnRequest(messages, options, tools);
     snapshot = budgetService.estimateRequest(request);

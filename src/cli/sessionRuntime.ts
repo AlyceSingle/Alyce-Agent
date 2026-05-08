@@ -23,21 +23,36 @@ import {
 import {
   ConversationCompactor,
   DEFAULT_CONVERSATION_COMPACTION_CONFIG,
+  type ConversationCompactionConfig,
   type ConversationCompactionState
 } from "../core/conversation/conversationCompactor.js";
 import {
   ContextBudgetService,
   type ContextBudgetSnapshot
 } from "../core/context/contextBudget.js";
+import { normalizeModelContextWindowOverrides } from "../core/context/modelContextWindows.js";
 import { MemoryService } from "../core/memory/memoryService.js";
+import {
+  SessionMemoryExtractor,
+  type SessionMemoryExtractorState
+} from "../core/memory/sessionMemoryExtractor.js";
+import {
+  SessionMemoryTrigger,
+  type SessionMemoryTriggerState
+} from "../core/memory/sessionMemoryTrigger.js";
 import { FileHistoryManager, type FileHistoryRestoreResult } from "../core/file-history/fileHistoryManager.js";
 import { isTurnInterruptedError, throwIfAborted, TurnInterruptedError } from "../core/abort.js";
-import type { MemorySnapshot, MemoryVolatileSnapshot } from "../core/memory/types.js";
+import type {
+  MemorySnapshot,
+  MemoryVolatileSnapshot,
+  SessionMemoryFileState
+} from "../core/memory/types.js";
 import { buildPatchedChatCompletionRequest } from "../core/api/sendChatCompletion.js";
 import { cloneJson } from "../core/json/clone.js";
 import { buildEffectiveSystemPrompt } from "../core/prompt/builder.js";
 import { PromptSectionResolver } from "../core/prompt/sectionResolver.js";
 import { runAgentTurn } from "../core/agent/runAgentTurn.js";
+import type { AgentQuerySource } from "../core/agent/querySource.js";
 import { prepareSessionResume } from "../core/session-history/sessionResume.js";
 import { SessionHistoryStore } from "../core/session-history/sessionStorage.js";
 import type {
@@ -90,6 +105,8 @@ export interface VolatileConversationSnapshot {
   fileReadState: FileReadStateSnapshot;
   memory: MemoryVolatileSnapshot;
   compaction: ConversationCompactionState | null;
+  sessionMemoryTrigger: SessionMemoryTriggerState | null;
+  sessionMemoryExtractor: SessionMemoryExtractorState | null;
 }
 
 interface SubagentSession {
@@ -200,9 +217,11 @@ export interface SessionRuntime {
     uiMessages: SessionHistoryUiMessage[];
     uiBaseMessageCount: number;
   }) => Promise<void>;
+  recordSessionMemory: (sessionMemory?: SessionMemoryFileState | null) => Promise<void>;
   recordSessionRewind: (options: {
     apiMessageCount: number;
     uiMessageCount: number;
+    sessionMemory?: SessionMemoryFileState | null;
     restoredInput?: string;
     restoreMode?: SessionHistoryRewindMode;
   }) => Promise<void>;
@@ -227,8 +246,15 @@ export interface SessionRuntime {
     client: OpenAI;
     model: string;
     force?: boolean;
+    querySource?: AgentQuerySource;
     abortSignal?: AbortSignal;
   }) => Promise<boolean>;
+  scheduleSessionMemoryExtraction: (options: {
+    client: OpenAI;
+    model: string;
+    querySource?: AgentQuerySource;
+    abortSignal?: AbortSignal;
+  }) => void;
   createVolatileConversationSnapshot: () => VolatileConversationSnapshot;
   restoreVolatileConversationSnapshot: (snapshot: VolatileConversationSnapshot) => Promise<void>;
   beginTurn: (turnId: string) => void;
@@ -268,7 +294,7 @@ export function getHelpText(currentModel: string) {
     "  /resume [id|text]  Resume a previous project session",
     "  /sessions          List saved project sessions",
     "  /remember <text>   Save note to session and persistent memory",
-    "  /remember --session <text>  Save note to session memory only",
+    "  /remember --session <text>  Save note to session notes only",
     "  /memory            Show memory snapshot",
     "  /memory clear      Clear session memory",
     "  /memory clear --all  Clear session and persistent memory",
@@ -287,19 +313,24 @@ export function getHelpText(currentModel: string) {
 export function formatMemorySnapshot(snapshot: MemorySnapshot, persistentPath: string) {
   const lines: string[] = ["=== Memory Snapshot ===", "Persistent file: " + persistentPath];
 
-  if (!snapshot.autoSummaryEnabled) {
-    lines.push("Auto summary: (disabled)");
-  } else if (!snapshot.autoSummary) {
-    lines.push("Auto summary: (not initialized yet)");
+  lines.push("Session memory source: " + snapshot.sessionMemoryPath);
+  if (!snapshot.sessionMemoryEnabled) {
+    lines.push("Session memory summary: (disabled)");
+  } else if (!snapshot.sessionMemory) {
+    lines.push("Session memory summary: (not initialized yet)");
   } else {
-    lines.push("Auto summary (updated at " + snapshot.autoSummary.updatedAt + "):");
-    lines.push(snapshot.autoSummary.markdown);
+    lines.push(
+      "Session memory summary" +
+        (snapshot.sessionMemory.updatedAt ? " (updated at " + snapshot.sessionMemory.updatedAt + ")" : "") +
+        ":"
+    );
+    lines.push(snapshot.sessionMemory.markdown);
   }
 
   if (snapshot.session.length === 0) {
-    lines.push("Session memory: (empty)");
+    lines.push("Session notes: (empty)");
   } else {
-    lines.push("Session memory:");
+    lines.push("Session notes:");
     for (const entry of snapshot.session) {
       lines.push(`- [${entry.createdAt.slice(0, 10)}] (${entry.source}) ${entry.content}`);
     }
@@ -335,18 +366,28 @@ export async function createSessionRuntime(
   const promptResolver = new PromptSectionResolver();
   const fileHistoryManager = new FileHistoryManager();
   const conversationCompactor = new ConversationCompactor(
-    DEFAULT_CONVERSATION_COMPACTION_CONFIG
+    createConversationCompactionConfig(settings)
   );
-  const contextBudgetService = new ContextBudgetService();
+  const contextBudgetService = createContextBudgetService(settings);
+  const sessionMemoryTrigger = new SessionMemoryTrigger(
+    createSessionMemoryTriggerConfig(config, settings)
+  );
+  const sessionMemoryExtractor = new SessionMemoryExtractor(
+    createSessionMemoryExtractorConfig(config, settings)
+  );
   const sessionHistory = new SessionHistoryStore({
     sessionsDirectory: path.join(config.paths.alyceDirectory, "sessions"),
     workspaceRoot: config.paths.workspaceRoot
   });
+  const getSessionMemorySourcePath = () =>
+    "session history: " +
+    path.relative(config.paths.workspaceRoot, sessionHistory.getCurrentSessionFilePath());
   const memoryService = new MemoryService({
     workspaceRoot: config.paths.workspaceRoot,
     ...config.memory
   });
-  memoryService.setAutoSummaryEnabled(settings.autoSummaryEnabled);
+  memoryService.setSessionMemoryEnabled(settings.sessionMemoryEnabled);
+  memoryService.setSessionMemorySourcePath(getSessionMemorySourcePath());
   await memoryService.initialize();
   const mcpRuntime = await createProjectMcpRuntime(config.paths.workspaceRoot);
   const fileReadState = new Map<string, FileReadState>();
@@ -463,12 +504,14 @@ export async function createSessionRuntime(
 
   const resetVolatileConversationState = async () => {
     const interruptedSubagents = abortRunningSubagentTasks();
-    memoryService.clearSession();
+    await memoryService.clearSession();
     conversationCompactor.clear();
     promptResolver.clearSessionCache();
     fileHistoryManager.clearAll();
     fileReadState.clear();
     sessionAdditionalDirectories = [];
+    sessionMemoryTrigger.clear();
+    sessionMemoryExtractor.clear();
     if (interruptedSubagents) {
       await persistSubagentTasks();
     }
@@ -493,7 +536,9 @@ export async function createSessionRuntime(
     messages: cloneJson(messages),
     fileReadState: createFileReadStateSnapshot(),
     memory: memoryService.createVolatileSnapshot(),
-    compaction: conversationCompactor.createSnapshot()
+    compaction: conversationCompactor.createSnapshot(),
+    sessionMemoryTrigger: sessionMemoryTrigger.createSnapshot(),
+    sessionMemoryExtractor: sessionMemoryExtractor.createSnapshot()
   });
 
   const restoreVolatileConversationSnapshot = async (snapshot: VolatileConversationSnapshot) => {
@@ -501,6 +546,8 @@ export async function createSessionRuntime(
     restoreFileReadStateSnapshot(snapshot.fileReadState);
     memoryService.restoreVolatileSnapshot(snapshot.memory);
     conversationCompactor.restoreSnapshot(snapshot.compaction);
+    sessionMemoryTrigger.restoreSnapshot(snapshot.sessionMemoryTrigger);
+    sessionMemoryExtractor.restoreSnapshot(snapshot.sessionMemoryExtractor);
     promptResolver.clearSessionCache();
     await resetSystemMessage();
   };
@@ -615,7 +662,15 @@ export async function createSessionRuntime(
         cli: settingsState.cli
       });
       settings = settingsState.effective;
-      memoryService.setAutoSummaryEnabled(settings.autoSummaryEnabled);
+      contextBudgetService.setModelContextWindowOverrides(settings.modelContextWindowOverrides);
+      conversationCompactor.updateConfig(createConversationCompactionConfig(settings));
+      sessionMemoryTrigger.updateConfig(createSessionMemoryTriggerConfig(config, settings));
+      sessionMemoryExtractor.updateConfig(createSessionMemoryExtractorConfig(config, settings));
+      for (const session of subagentSessions.values()) {
+        session.contextBudgetService.setModelContextWindowOverrides(settings.modelContextWindowOverrides);
+        session.conversationCompactor.updateConfig(createConversationCompactionConfig(settings));
+      }
+      memoryService.setSessionMemoryEnabled(settings.sessionMemoryEnabled);
       promptResolver.clearSessionCache();
       await persistSettings();
       await resetSystemMessage();
@@ -626,6 +681,7 @@ export async function createSessionRuntime(
       await sessionHistory.flush();
       sessionHistory.startNewSession();
       await resetVolatileConversationState();
+      memoryService.setSessionMemorySourcePath(getSessionMemorySourcePath());
       messages.splice(1);
       await resetSystemMessage();
     },
@@ -637,8 +693,14 @@ export async function createSessionRuntime(
       await sessionHistory.recordConversationSnapshot({
         apiMessages,
         uiMessages,
-        uiBaseMessageCount
+        uiBaseMessageCount,
+        sessionMemory: memoryService.getSessionMemory()
       });
+    },
+    recordSessionMemory: async (sessionMemory) => {
+      await sessionHistory.recordSessionMemory(
+        sessionMemory === undefined ? memoryService.getSessionMemory() : sessionMemory
+      );
     },
     recordSessionRewind: async (options) => {
       await sessionHistory.recordRewind(options);
@@ -662,6 +724,8 @@ export async function createSessionRuntime(
       const resume = prepareSessionResume(loaded);
       sessionHistory.adoptExistingSession(resume.sessionId, loaded.lastSequence);
       await resetVolatileConversationState();
+      memoryService.setSessionMemory(resume.sessionMemory);
+      memoryService.setSessionMemorySourcePath(getSessionMemorySourcePath());
       messages.splice(
         0,
         messages.length,
@@ -719,8 +783,11 @@ export async function createSessionRuntime(
         requestPatches: config.requestPatches
       }));
     },
-    maybeCompactConversation: async ({ client: compactClient, model, force, abortSignal }) => {
+    maybeCompactConversation: async ({ client: compactClient, model, force, querySource = "main", abortSignal }) => {
       if (!settings.conversationCompactionEnabled) {
+        return false;
+      }
+      if (querySource === "compact" || querySource === "session_memory") {
         return false;
       }
 
@@ -735,6 +802,72 @@ export async function createSessionRuntime(
         fileReadState.clear();
       }
       return compacted;
+    },
+    scheduleSessionMemoryExtraction: ({ client: extractionClient, model, querySource = "main", abortSignal }) => {
+      if (querySource !== "main") {
+        return;
+      }
+
+      const snapshot = contextBudgetService.estimateRequest(buildPatchedChatCompletionRequest({
+        model,
+        messages,
+        tools: TOOL_SCHEMAS,
+        temperature: 0.2,
+        toolChoice: "auto",
+        gcliGeminiCompat: shouldUseGcliGeminiCompat(connection.baseURL, model),
+        messageTimestampsEnabled: settings.messageTimestampsEnabled,
+        requestPatches: config.requestPatches
+      }));
+      const decision = sessionMemoryTrigger.shouldExtract({
+        messages,
+        currentTokens: snapshot.estimatedInputTokens
+      });
+      if (!decision.shouldExtract) {
+        return;
+      }
+
+      const extractionMessages = cloneJson(messages);
+      const expectedSessionId = sessionHistory.getCurrentSessionId();
+      const expectedMessageCount = messages.length;
+      const currentTokens = decision.currentTokens;
+      void (async () => {
+        const currentMemory = memoryService.getSessionMemory();
+        const extraction = sessionMemoryExtractor.schedule({
+          client: extractionClient,
+          model,
+          messages: extractionMessages,
+          currentMemory: currentMemory?.markdown ?? "",
+          memoryPath: memoryService.getSessionMemoryFilePath(),
+          requestPatches: config.requestPatches,
+          abortSignal,
+          shouldCommit: () =>
+            sessionHistory.getCurrentSessionId() === expectedSessionId &&
+            messages.length >= expectedMessageCount
+        });
+        if (!extraction) {
+          return;
+        }
+
+        const result = await extraction;
+        if (result.status === "updated" && result.markdown) {
+          // Background extraction can finish after rewind/resume; commit only
+          // when the live conversation still has the exact scheduled prefix.
+          if (
+            sessionHistory.getCurrentSessionId() !== expectedSessionId ||
+            messages.length < expectedMessageCount ||
+            !messagesContainPrefix(messages, extractionMessages)
+          ) {
+            return;
+          }
+
+          memoryService.updateSessionMemory(result.markdown);
+          await sessionHistory.recordSessionMemory(memoryService.getSessionMemory());
+          sessionMemoryTrigger.recordExtraction({
+            messages: extractionMessages,
+            currentTokens
+          });
+        }
+      })().catch(() => undefined);
     },
     createVolatileConversationSnapshot,
     restoreVolatileConversationSnapshot,
@@ -1060,12 +1193,16 @@ export async function createSessionRuntime(
       return await runAgentTurn(clientForSubagent, session.messages, {
         model: session.model,
         maxSteps: session.maxSteps,
+        querySource: "subagent",
         context: subagentContext,
         tools: getToolSchemasByName(getAllowedToolNamesForSubagent(agent)),
         requestPatches: config.requestPatches,
         contextBudgetService: session.contextBudgetService,
         refreshTools: async () => getToolSchemasByName(getAllowedToolNamesForSubagent(agent)),
-        preflightCompactConversation: async ({ abortSignal }) => {
+        preflightCompactConversation: async ({ abortSignal, querySource }) => {
+          if (querySource === "compact" || querySource === "session_memory") {
+            return false;
+          }
           return session.conversationCompactor.maybeCompact({
             client: clientForSubagent,
             model: session.model,
@@ -1152,8 +1289,8 @@ export async function createSessionRuntime(
         },
         ...(input.forkContext ? buildForkContextMessages() : [])
       ],
-      contextBudgetService: new ContextBudgetService(),
-      conversationCompactor: new ConversationCompactor(DEFAULT_CONVERSATION_COMPACTION_CONFIG)
+      contextBudgetService: createContextBudgetService(settings),
+      conversationCompactor: new ConversationCompactor(createConversationCompactionConfig(settings))
     };
     subagentSessions.set(taskId, session);
     await persistSubagentTasks();
@@ -1320,8 +1457,8 @@ export async function createSessionRuntime(
         isolateWorktree: task.isolateWorktree,
         baseWorkspaceRoot: task.baseWorkspaceRoot,
         messages: task.messages,
-        contextBudgetService: new ContextBudgetService(),
-        conversationCompactor: new ConversationCompactor(DEFAULT_CONVERSATION_COMPACTION_CONFIG)
+        contextBudgetService: createContextBudgetService(settings),
+        conversationCompactor: new ConversationCompactor(createConversationCompactionConfig(settings))
       };
 
       if (wasRunning) {
@@ -1633,6 +1770,42 @@ function createClientFromConnection(connection: ConnectionConfig): OpenAI | null
   });
 }
 
+function createContextBudgetService(settings: SessionSettings): ContextBudgetService {
+  return new ContextBudgetService({
+    modelContextWindowOverrides: settings.modelContextWindowOverrides
+  });
+}
+
+function createConversationCompactionConfig(
+  settings: SessionSettings
+): ConversationCompactionConfig {
+  return {
+    ...DEFAULT_CONVERSATION_COMPACTION_CONFIG,
+    timeoutMs: settings.autoCompactTimeoutMs,
+    maxAutoFailures: settings.autoCompactMaxFailures
+  };
+}
+
+function createSessionMemoryTriggerConfig(
+  config: RuntimeConfig,
+  settings: SessionSettings
+) {
+  return {
+    ...config.memory.sessionMemory,
+    enabled: config.memory.sessionMemory.enabled && settings.sessionMemoryEnabled
+  };
+}
+
+function createSessionMemoryExtractorConfig(
+  config: RuntimeConfig,
+  settings: SessionSettings
+) {
+  return {
+    ...config.memory.sessionMemory,
+    enabled: config.memory.sessionMemory.enabled && settings.sessionMemoryEnabled
+  };
+}
+
 function shouldUseGcliGeminiCompat(baseURL: string | undefined, model: string): boolean {
   if (!baseURL) {
     return false;
@@ -1688,8 +1861,8 @@ function normalizeSettingsPatch(
     normalized.commandTimeoutMs = Math.max(1, Math.trunc(patch.commandTimeoutMs));
   }
 
-  if ("autoSummaryEnabled" in patch) {
-    normalized.autoSummaryEnabled = patch.autoSummaryEnabled;
+  if ("sessionMemoryEnabled" in patch) {
+    normalized.sessionMemoryEnabled = patch.sessionMemoryEnabled;
   }
 
   if ("messageTimestampsEnabled" in patch) {
@@ -1702,6 +1875,20 @@ function normalizeSettingsPatch(
 
   if ("conversationCompactionEnabled" in patch) {
     normalized.conversationCompactionEnabled = patch.conversationCompactionEnabled;
+  }
+
+  if ("autoCompactTimeoutMs" in patch) {
+    normalized.autoCompactTimeoutMs = patch.autoCompactTimeoutMs;
+  }
+
+  if ("autoCompactMaxFailures" in patch) {
+    normalized.autoCompactMaxFailures = patch.autoCompactMaxFailures;
+  }
+
+  if ("modelContextWindowOverrides" in patch) {
+    normalized.modelContextWindowOverrides = normalizeModelContextWindowOverrides(
+      patch.modelContextWindowOverrides
+    );
   }
 
   if ("languagePreference" in patch) {
@@ -1754,4 +1941,21 @@ function resolveAllowedRoots(
   }
 
   return [...deduped];
+}
+
+function messagesContainPrefix(
+  currentMessages: readonly SessionMessage[],
+  expectedPrefix: readonly SessionMessage[]
+) {
+  if (currentMessages.length < expectedPrefix.length) {
+    return false;
+  }
+
+  for (let index = 0; index < expectedPrefix.length; index += 1) {
+    if (JSON.stringify(currentMessages[index]) !== JSON.stringify(expectedPrefix[index])) {
+      return false;
+    }
+  }
+
+  return true;
 }

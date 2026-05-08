@@ -10,6 +10,10 @@ const SESSION_ID = "rewind-compat";
 async function runTests() {
   await testGeneratedContextMessagesAreNotPersisted();
   await testGeneratedContextMessagesAreIgnoredWhenLoading();
+  await testSessionMemoryEntryPersistsInSessionHistory();
+  await testConversationSnapshotPreservesSessionMemory();
+  await testRewindRestoresSessionMemoryFromEntry();
+  await testRestoredInputRewindRestoresCheckpointSessionMemory();
   await testRestoredInputRewindUsesOriginalCheckpoint();
   await testRewindDropsCheckpointsFromPrunedBranches();
   await testRewindCheckpointPreservesNestedMessages();
@@ -58,6 +62,124 @@ async function testGeneratedContextMessagesAreIgnoredWhenLoading() {
   const loaded = await store.loadSession(SESSION_ID);
   assert.deepEqual(loaded.apiMessages.map((message) => message.role), ["user", "assistant"]);
   assert.equal(loaded.title, "first");
+}
+
+async function testSessionMemoryEntryPersistsInSessionHistory() {
+  const directory = await fs.mkdtemp(path.join(os.tmpdir(), "alyce-session-history-memory-"));
+  const store = new SessionHistoryStore({
+    sessionsDirectory: directory,
+    workspaceRoot: process.cwd(),
+    sessionId: SESSION_ID
+  });
+
+  await store.recordSessionMemory({
+    markdown: "## Session\nremember this session only",
+    updatedAt: "2026-05-07T00:00:00.000Z"
+  });
+
+  const loaded = await store.loadSession(SESSION_ID);
+  assert.deepEqual(loaded.sessionMemory, {
+    markdown: "## Session\nremember this session only",
+    updatedAt: "2026-05-07T00:00:00.000Z"
+  });
+}
+
+async function testConversationSnapshotPreservesSessionMemory() {
+  const directory = await fs.mkdtemp(path.join(os.tmpdir(), "alyce-session-history-memory-snapshot-"));
+  const store = new SessionHistoryStore({
+    sessionsDirectory: directory,
+    workspaceRoot: process.cwd(),
+    sessionId: SESSION_ID
+  });
+
+  await store.recordConversationSnapshot({
+    apiMessages: [
+      { role: "user", content: "compacted request" },
+      { role: "assistant", content: "compacted answer" }
+    ],
+    uiMessages: [],
+    uiBaseMessageCount: 0,
+    sessionMemory: {
+      markdown: "snapshot memory",
+      updatedAt: "2026-05-07T00:00:00.000Z"
+    }
+  });
+
+  const loaded = await store.loadSession(SESSION_ID);
+  assert.deepEqual(
+    loaded.apiMessages.map((message) => message.content),
+    ["compacted request", "compacted answer"]
+  );
+  assert.deepEqual(loaded.sessionMemory, {
+    markdown: "snapshot memory",
+    updatedAt: "2026-05-07T00:00:00.000Z"
+  });
+}
+
+async function testRewindRestoresSessionMemoryFromEntry() {
+  const directory = await fs.mkdtemp(path.join(os.tmpdir(), "alyce-session-history-memory-rewind-"));
+  const store = new SessionHistoryStore({
+    sessionsDirectory: directory,
+    workspaceRoot: process.cwd(),
+    sessionId: SESSION_ID
+  });
+
+  const filePath = store.getCurrentSessionFilePath();
+  const entries = [
+    meta(),
+    api(1, "user", "first"),
+    api(2, "assistant", "first answer"),
+    sessionMemory(3, "first branch memory"),
+    api(4, "user", "leaked branch"),
+    api(5, "assistant", "leaked answer"),
+    sessionMemory(6, "leaked branch memory"),
+    rewind(7, 2, 0, undefined, "conversation", "first branch memory")
+  ];
+  await fs.writeFile(filePath, entries.map((entry) => JSON.stringify(entry)).join("\n") + "\n");
+
+  const loaded = await store.loadSession(SESSION_ID);
+  assert.deepEqual(
+    loaded.apiMessages.map((message) => message.content),
+    ["first", "first answer"]
+  );
+  assert.deepEqual(loaded.sessionMemory, {
+    markdown: "first branch memory",
+    updatedAt: "2026-05-07T00:00:00.000Z"
+  });
+}
+
+async function testRestoredInputRewindRestoresCheckpointSessionMemory() {
+  const directory = await fs.mkdtemp(path.join(os.tmpdir(), "alyce-session-history-memory-checkpoint-"));
+  const store = new SessionHistoryStore({
+    sessionsDirectory: directory,
+    workspaceRoot: process.cwd(),
+    sessionId: SESSION_ID
+  });
+
+  const filePath = store.getCurrentSessionFilePath();
+  const entries = [
+    meta(),
+    api(1, "user", "root"),
+    api(2, "assistant", "root answer"),
+    sessionMemory(3, "target checkpoint memory"),
+    api(4, "user", "target"),
+    api(5, "assistant", "pruned target"),
+    sessionMemory(6, "leaked branch memory"),
+    rewind(7, 2, 0, "target", "conversation", "wrong rewind memory"),
+    api(8, "user", "target"),
+    api(9, "assistant", "restored target")
+  ];
+  await fs.writeFile(filePath, entries.map((entry) => JSON.stringify(entry)).join("\n") + "\n");
+
+  const loaded = await store.loadSession(SESSION_ID);
+  assert.deepEqual(
+    loaded.apiMessages.map((message) => message.content),
+    ["root", "root answer", "target", "restored target"]
+  );
+  assert.deepEqual(loaded.sessionMemory, {
+    markdown: "target checkpoint memory",
+    updatedAt: "2026-05-07T00:00:00.000Z"
+  });
 }
 
 async function testRestoredInputRewindUsesOriginalCheckpoint() {
@@ -216,11 +338,26 @@ function generatedApi(sequence: number, content: string) {
   };
 }
 
+function sessionMemory(sequence: number, markdown: string) {
+  return {
+    type: "session-memory",
+    sessionId: SESSION_ID,
+    sequence,
+    timestamp: "2026-05-07T00:00:00.000Z",
+    sessionMemory: {
+      markdown,
+      updatedAt: "2026-05-07T00:00:00.000Z"
+    }
+  };
+}
+
 function rewind(
   sequence: number,
   apiMessageCount: number,
   uiMessageCount: number,
-  restoredInput?: string
+  restoredInput?: string,
+  restoreMode: "conversation" | "code-and-conversation" = "conversation",
+  memoryMarkdown?: string
 ) {
   return {
     type: "session-rewind",
@@ -230,7 +367,15 @@ function rewind(
     apiMessageCount,
     uiMessageCount,
     restoredInput,
-    restoreMode: "conversation"
+    restoreMode,
+    ...(memoryMarkdown === undefined
+      ? {}
+      : {
+          sessionMemory: {
+            markdown: memoryMarkdown,
+            updatedAt: "2026-05-07T00:00:00.000Z"
+          }
+        })
   };
 }
 

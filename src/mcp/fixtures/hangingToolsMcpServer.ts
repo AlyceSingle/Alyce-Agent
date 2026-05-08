@@ -1,16 +1,21 @@
 import readline from "node:readline";
 
+interface JsonRpcMessage {
+  id?: string | number | null;
+  method?: string;
+}
+
 const rl = readline.createInterface({
   input: process.stdin,
   crlfDelay: Infinity
 });
 
-function send(message) {
+function send(message: unknown) {
   process.stdout.write(JSON.stringify(message) + "\n");
 }
 
 rl.on("line", (line) => {
-  const message = JSON.parse(line);
+  const message = JSON.parse(line) as JsonRpcMessage;
   if (!("id" in message)) {
     return;
   }

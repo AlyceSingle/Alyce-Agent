@@ -6,6 +6,8 @@ import { loadProjectMcpConfig } from "./config.js";
 import { createProjectMcpRuntime } from "./runtime.js";
 import { decodeMcpToolName, encodeMcpToolName } from "./toolNames.js";
 
+type McpFixtureName = "mockMcpServer" | "hangingToolsMcpServer";
+
 async function runTests() {
   await testLoadsProjectMcpConfig();
   await testLoadsRemoteMcpConfig();
@@ -114,15 +116,15 @@ function testTruncatesToolNamesWithoutLosingShape() {
 
 async function testRuntimeUsesStdioServerTools() {
   const root = await fs.mkdtemp(path.join(os.tmpdir(), "alyce-mcp-runtime-"));
-  const fixturePath = path.resolve("src", "mcp", "fixtures", "mockMcpServer.js");
+  const fixture = getMcpFixtureCommand("mockMcpServer");
   await fs.mkdir(path.join(root, ".alyce"), { recursive: true });
   await fs.writeFile(
     path.join(root, ".alyce", "mcp.json"),
     JSON.stringify({
       mcpServers: {
         mock: {
-          command: process.execPath,
-          args: [fixturePath],
+          command: fixture.command,
+          args: fixture.args,
           startup_timeout_ms: 5000
         }
       }
@@ -153,15 +155,15 @@ async function testRuntimeUsesStdioServerTools() {
 
 async function testRuntimeStatusDoesNotInitializeServersByDefault() {
   const root = await fs.mkdtemp(path.join(os.tmpdir(), "alyce-mcp-status-lazy-"));
-  const fixturePath = path.resolve("src", "mcp", "fixtures", "mockMcpServer.js");
+  const fixture = getMcpFixtureCommand("mockMcpServer");
   await fs.mkdir(path.join(root, ".alyce"), { recursive: true });
   await fs.writeFile(
     path.join(root, ".alyce", "mcp.json"),
     JSON.stringify({
       mcpServers: {
         mock: {
-          command: process.execPath,
-          args: [fixturePath],
+          command: fixture.command,
+          args: fixture.args,
           startup_timeout_ms: 5000
         }
       }
@@ -185,15 +187,15 @@ async function testRuntimeStatusDoesNotInitializeServersByDefault() {
 
 async function testRuntimeToolSchemasDoNotInitializeServersByDefault() {
   const root = await fs.mkdtemp(path.join(os.tmpdir(), "alyce-mcp-schemas-lazy-"));
-  const fixturePath = path.resolve("src", "mcp", "fixtures", "mockMcpServer.js");
+  const fixture = getMcpFixtureCommand("mockMcpServer");
   await fs.mkdir(path.join(root, ".alyce"), { recursive: true });
   await fs.writeFile(
     path.join(root, ".alyce", "mcp.json"),
     JSON.stringify({
       mcpServers: {
         mock: {
-          command: process.execPath,
-          args: [fixturePath],
+          command: fixture.command,
+          args: fixture.args,
           startup_timeout_ms: 5000
         }
       }
@@ -216,15 +218,15 @@ async function testRuntimeToolSchemasDoNotInitializeServersByDefault() {
 
 async function testRuntimeClearsToolIndexOnClose() {
   const root = await fs.mkdtemp(path.join(os.tmpdir(), "alyce-mcp-close-index-"));
-  const fixturePath = path.resolve("src", "mcp", "fixtures", "mockMcpServer.js");
+  const fixture = getMcpFixtureCommand("mockMcpServer");
   await fs.mkdir(path.join(root, ".alyce"), { recursive: true });
   await fs.writeFile(
     path.join(root, ".alyce", "mcp.json"),
     JSON.stringify({
       mcpServers: {
         mock: {
-          command: process.execPath,
-          args: [fixturePath],
+          command: fixture.command,
+          args: fixture.args,
           startup_timeout_ms: 5000
         }
       }
@@ -244,15 +246,15 @@ async function testRuntimeClearsToolIndexOnClose() {
 
 async function testRuntimeTimesOutHangingToolDiscovery() {
   const root = await fs.mkdtemp(path.join(os.tmpdir(), "alyce-mcp-hanging-tools-"));
-  const fixturePath = path.resolve("src", "mcp", "fixtures", "hangingToolsMcpServer.js");
+  const fixture = getMcpFixtureCommand("hangingToolsMcpServer");
   await fs.mkdir(path.join(root, ".alyce"), { recursive: true });
   await fs.writeFile(
     path.join(root, ".alyce", "mcp.json"),
     JSON.stringify({
       mcpServers: {
         hanging: {
-          command: process.execPath,
-          args: [fixturePath],
+          command: fixture.command,
+          args: fixture.args,
           startup_timeout_ms: 1_000
         }
       }
@@ -277,15 +279,15 @@ async function testRuntimeTimesOutHangingToolDiscovery() {
 
 async function testRuntimeCloseClearsInitializingState() {
   const root = await fs.mkdtemp(path.join(os.tmpdir(), "alyce-mcp-close-initializing-"));
-  const fixturePath = path.resolve("src", "mcp", "fixtures", "hangingToolsMcpServer.js");
+  const fixture = getMcpFixtureCommand("hangingToolsMcpServer");
   await fs.mkdir(path.join(root, ".alyce"), { recursive: true });
   await fs.writeFile(
     path.join(root, ".alyce", "mcp.json"),
     JSON.stringify({
       mcpServers: {
         hanging: {
-          command: process.execPath,
-          args: [fixturePath],
+          command: fixture.command,
+          args: fixture.args,
           startup_timeout_ms: 5_000
         }
       }
@@ -307,15 +309,15 @@ async function testRuntimeCloseClearsInitializingState() {
 
 async function testRuntimeCanAbortToolDiscovery() {
   const root = await fs.mkdtemp(path.join(os.tmpdir(), "alyce-mcp-abort-tools-"));
-  const fixturePath = path.resolve("src", "mcp", "fixtures", "hangingToolsMcpServer.js");
+  const fixture = getMcpFixtureCommand("hangingToolsMcpServer");
   await fs.mkdir(path.join(root, ".alyce"), { recursive: true });
   await fs.writeFile(
     path.join(root, ".alyce", "mcp.json"),
     JSON.stringify({
       mcpServers: {
         hanging: {
-          command: process.execPath,
-          args: [fixturePath],
+          command: fixture.command,
+          args: fixture.args,
           startup_timeout_ms: 5_000
         }
       }
@@ -338,15 +340,15 @@ async function testRuntimeCanAbortToolDiscovery() {
 
 async function testRuntimeCanRetryAfterAbortedToolDiscovery() {
   const root = await fs.mkdtemp(path.join(os.tmpdir(), "alyce-mcp-retry-after-abort-"));
-  const fixturePath = path.resolve("src", "mcp", "fixtures", "mockMcpServer.js");
+  const fixture = getMcpFixtureCommand("mockMcpServer");
   await fs.mkdir(path.join(root, ".alyce"), { recursive: true });
   await fs.writeFile(
     path.join(root, ".alyce", "mcp.json"),
     JSON.stringify({
       mcpServers: {
         mock: {
-          command: process.execPath,
-          args: [fixturePath],
+          command: fixture.command,
+          args: fixture.args,
           startup_timeout_ms: 5_000
         }
       }
@@ -375,15 +377,15 @@ async function testRuntimeCanRetryAfterAbortedToolDiscovery() {
 
 async function testRuntimeListsAndReadsResources() {
   const root = await fs.mkdtemp(path.join(os.tmpdir(), "alyce-mcp-resources-"));
-  const fixturePath = path.resolve("src", "mcp", "fixtures", "mockMcpServer.js");
+  const fixture = getMcpFixtureCommand("mockMcpServer");
   await fs.mkdir(path.join(root, ".alyce"), { recursive: true });
   await fs.writeFile(
     path.join(root, ".alyce", "mcp.json"),
     JSON.stringify({
       mcpServers: {
         mock: {
-          command: process.execPath,
-          args: [fixturePath],
+          command: fixture.command,
+          args: fixture.args,
           startup_timeout_ms: 5000
         }
       }
@@ -422,6 +424,16 @@ async function testRuntimeListsAndReadsResources() {
   } finally {
     await runtime.close();
   }
+}
+
+function getMcpFixtureCommand(name: McpFixtureName) {
+  return {
+    command: process.execPath,
+    args: [
+      path.resolve("node_modules", "tsx", "dist", "cli.mjs"),
+      path.resolve("src", "mcp", "fixtures", `${name}.ts`)
+    ]
+  };
 }
 
 void runTests();

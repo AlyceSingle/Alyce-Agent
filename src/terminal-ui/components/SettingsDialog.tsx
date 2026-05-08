@@ -40,7 +40,7 @@ const FIELD_DEFINITIONS: FieldDefinition[] = [
   },
   { key: "maxSteps", label: "Max Steps", type: "number", section: "session" },
   { key: "commandTimeoutMs", label: "Command Timeout", type: "number", section: "session" },
-  { key: "autoSummaryEnabled", label: "Auto Summary", type: "toggle", section: "session" },
+  { key: "sessionMemoryEnabled", label: "Session Memory", type: "toggle", section: "session" },
   {
     key: "messageTimestampsEnabled",
     label: "Current System Time",
@@ -57,6 +57,14 @@ const FIELD_DEFINITIONS: FieldDefinition[] = [
     key: "conversationCompactionEnabled",
     label: "Conversation Compaction",
     type: "toggle",
+    section: "session"
+  },
+  { key: "autoCompactTimeoutMs", label: "Auto Compact Timeout", type: "number", section: "session" },
+  { key: "autoCompactMaxFailures", label: "Auto Compact Max Failures", type: "number", section: "session" },
+  {
+    key: "modelContextWindowOverrides",
+    label: "Context Window Overrides",
+    type: "text",
     section: "session"
   },
   { key: "languagePreference", label: "Language", type: "text", section: "session" },
@@ -93,6 +101,37 @@ function decodeTextValue(value: string) {
   return normalized ? normalized.replace(/\\n/g, "\n") : undefined;
 }
 
+function encodeContextWindowOverrides(value: SessionSettings["modelContextWindowOverrides"]) {
+  return Object.entries(value)
+    .map(([pattern, tokens]) => `${pattern}=${tokens}`)
+    .join(", ");
+}
+
+function decodeContextWindowOverrides(value: string): SessionSettings["modelContextWindowOverrides"] {
+  const overrides: SessionSettings["modelContextWindowOverrides"] = {};
+  const normalized = value.trim();
+  if (!normalized) {
+    return overrides;
+  }
+
+  for (const entry of normalized.split(",")) {
+    const separatorIndex = entry.lastIndexOf("=");
+    if (separatorIndex <= 0) {
+      throw new Error("Context Window Overrides must use pattern=tokens entries separated by commas.");
+    }
+
+    const pattern = entry.slice(0, separatorIndex).trim();
+    const tokens = Number(entry.slice(separatorIndex + 1).trim());
+    if (!pattern || !Number.isFinite(tokens) || tokens <= 0) {
+      throw new Error("Context Window Overrides entries must have a non-empty pattern and positive token count.");
+    }
+
+    overrides[pattern] = Math.trunc(tokens);
+  }
+
+  return overrides;
+}
+
 function getFieldValue(config: EditableConfig, field: FieldDefinition): string {
   const value = config[field.key];
   if (field.type === "toggle") {
@@ -105,6 +144,14 @@ function getFieldValue(config: EditableConfig, field: FieldDefinition): string {
 
   if (field.type === "select") {
     return String(value ?? "");
+  }
+
+  if (field.key === "modelContextWindowOverrides") {
+    return encodeContextWindowOverrides(
+      value && typeof value === "object" && !Array.isArray(value)
+        ? value as SessionSettings["modelContextWindowOverrides"]
+        : {}
+    );
   }
 
   return encodeTextValue(typeof value === "string" ? value : undefined);
@@ -149,12 +196,28 @@ function buildPatch<T extends object>(
     const nextValue = currentConfig[field.key];
     const initialValue = initialConfig[field.key];
 
-    if (!Object.is(initialValue, nextValue)) {
+    if (!areFieldValuesEqual(field, initialValue, nextValue)) {
       patch[key] = nextValue as T[keyof T];
     }
   }
 
   return patch;
+}
+
+function areFieldValuesEqual(field: FieldDefinition, left: unknown, right: unknown): boolean {
+  if (field.key === "modelContextWindowOverrides") {
+    return encodeContextWindowOverrides(
+      left && typeof left === "object" && !Array.isArray(left)
+        ? left as SessionSettings["modelContextWindowOverrides"]
+        : {}
+    ) === encodeContextWindowOverrides(
+      right && typeof right === "object" && !Array.isArray(right)
+        ? right as SessionSettings["modelContextWindowOverrides"]
+        : {}
+    );
+  }
+
+  return Object.is(left, right);
 }
 
 export function SettingsDialog(props: {
@@ -447,7 +510,9 @@ export function SettingsDialog(props: {
             <Text color={terminalUiTheme.colors.subtle} wrap="truncate-end">
               {currentField.section === "connection"
                 ? "Text fields accept \\n for line breaks. Press P to switch the connection save scope."
-                : currentField.type === "text"
+                : currentField.key === "modelContextWindowOverrides"
+                  ? "Use comma-separated pattern=tokens entries, for example custom fast=512000."
+                  : currentField.type === "text"
                   ? "Text fields accept \\n for line breaks."
                   : currentField.type === "number"
                     ? "Number fields are persisted as positive integers."
@@ -509,6 +574,13 @@ export function SettingsDialog(props: {
           return {
             ...current,
             [field.key]: draftValue.trim().toLowerCase() === "on"
+          };
+        }
+
+        if (field.key === "modelContextWindowOverrides") {
+          return {
+            ...current,
+            [field.key]: decodeContextWindowOverrides(draftValue)
           };
         }
 

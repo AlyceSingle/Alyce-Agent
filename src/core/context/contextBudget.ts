@@ -4,6 +4,11 @@ import {
   ALYCE_SKILL_CONTEXT_MESSAGE_NAME,
   isGeneratedContextMessage
 } from "../api/generatedMessages.js";
+import {
+  resolveModelContextWindow,
+  type ContextWindowSource,
+  type ModelContextWindowOverrides
+} from "./modelContextWindows.js";
 
 export type MessageParam = OpenAI.Chat.Completions.ChatCompletionMessageParam;
 export type ChatCreateParams = OpenAI.Chat.Completions.ChatCompletionCreateParamsNonStreaming;
@@ -26,6 +31,9 @@ export type ContextBudgetBreakdown = Record<ContextBudgetCategoryName, number>;
 export interface ContextBudgetSnapshot {
   model: string;
   contextWindow: number;
+  contextWindowSource: ContextWindowSource;
+  contextWindowLabel: string;
+  contextWindowMatchedPattern?: string;
   estimatedInputTokens: number;
   rawEstimatedInputTokens: number;
   reservedOutputTokens: number;
@@ -58,6 +66,10 @@ export interface ContextBudgetEstimateOptions {
   recordForUsage?: boolean;
 }
 
+export interface ContextBudgetServiceOptions {
+  modelContextWindowOverrides?: ModelContextWindowOverrides;
+}
+
 export class ContextOverflowError extends Error {
   readonly code = "CONTEXT_OVERFLOW";
 
@@ -71,7 +83,6 @@ export class ContextOverflowError extends Error {
   }
 }
 
-const DEFAULT_CONTEXT_WINDOW_TOKENS = 128_000;
 const DEFAULT_AUTO_COMPACT_BUFFER_TOKENS = 13_000;
 const TOOL_OUTPUT_SNIP_MARKER = "[Alyce context snip]";
 const TOOL_OUTPUT_MAX_CHARS = 18_000;
@@ -81,12 +92,25 @@ const TOOL_OUTPUT_TAIL_CHARS = 4_000;
 export class ContextBudgetService {
   private calibrationScale = 1;
   private lastRawEstimateForUsage = 0;
+  private modelContextWindowOverrides: ModelContextWindowOverrides;
+
+  constructor(options: ContextBudgetServiceOptions = {}) {
+    this.modelContextWindowOverrides = options.modelContextWindowOverrides ?? {};
+  }
+
+  setModelContextWindowOverrides(overrides: ModelContextWindowOverrides | undefined) {
+    this.modelContextWindowOverrides = overrides ?? {};
+  }
 
   estimateRequest(
     request: ChatCreateParams,
     options: ContextBudgetEstimateOptions = {}
   ): ContextBudgetSnapshot {
-    const contextWindow = inferContextWindowTokens(request.model);
+    const contextWindowResolution = resolveModelContextWindow(
+      request.model,
+      this.modelContextWindowOverrides
+    );
+    const contextWindow = contextWindowResolution.contextWindow;
     const reservedOutputTokens = resolveReservedOutputTokens(contextWindow);
     const autoCompactBufferTokens = resolveAutoCompactBufferTokens(contextWindow);
     const hardLimitTokens = Math.max(1, contextWindow - reservedOutputTokens);
@@ -109,6 +133,9 @@ export class ContextBudgetService {
     return {
       model: request.model,
       contextWindow,
+      contextWindowSource: contextWindowResolution.source,
+      contextWindowLabel: contextWindowResolution.label,
+      contextWindowMatchedPattern: contextWindowResolution.matchedPattern,
       estimatedInputTokens,
       rawEstimatedInputTokens,
       reservedOutputTokens,
@@ -227,27 +254,11 @@ function getLatestUnansweredToolCallIds(messages: MessageParam[]): Set<string> {
   return protectedIds;
 }
 
-export function formatContextBudgetInline(snapshot: ContextBudgetSnapshot): string {
-  const used = `${Math.round(snapshot.usedPercent)}%`;
-  if (snapshot.state === "blocking") {
-    return `Context over limit (${used} used)`;
-  }
-
-  if (snapshot.state === "auto_compact") {
-    return `Context ${used} used, compacting`;
-  }
-
-  if (snapshot.state === "warning") {
-    return `Context ${used} used, ${Math.round(snapshot.untilAutoCompactPercent)}% until auto-compact`;
-  }
-
-  return `Context ${used} used`;
-}
-
 export function formatContextBudgetReport(snapshot: ContextBudgetSnapshot): string {
   const lines = [
     "=== Context Budget ===",
     `Model: ${snapshot.model}`,
+    `Context window: ${formatTokenCount(snapshot.contextWindow)} (${formatContextWindowSource(snapshot)})`,
     `State: ${snapshot.state}`,
     `Estimated input: ${formatTokenCount(snapshot.estimatedInputTokens)} / ${formatTokenCount(snapshot.contextWindow)} (${snapshot.usedPercent.toFixed(1)}%)`,
     `Hard limit: ${formatTokenCount(snapshot.hardLimitTokens)} (reserved output ${formatTokenCount(snapshot.reservedOutputTokens)})`,
@@ -464,39 +475,6 @@ function estimateJsonTokens(value: unknown): number {
   }
 }
 
-function inferContextWindowTokens(model: string): number {
-  const normalized = model.toLowerCase();
-  if (normalized.includes("gemini")) {
-    return 1_048_576;
-  }
-
-  if (normalized.includes("gpt-4.1") || normalized.includes("gpt-4.5")) {
-    return 1_047_576;
-  }
-
-  if (normalized.includes("gpt-5")) {
-    return 400_000;
-  }
-
-  if (normalized.includes("o3") || normalized.includes("o4")) {
-    return 200_000;
-  }
-
-  if (normalized.includes("gpt-4o") || normalized.includes("gpt-4-turbo")) {
-    return 128_000;
-  }
-
-  if (normalized.includes("claude-3-7") || normalized.includes("claude-3.7")) {
-    return 200_000;
-  }
-
-  if (normalized.includes("claude")) {
-    return 200_000;
-  }
-
-  return DEFAULT_CONTEXT_WINDOW_TOKENS;
-}
-
 function resolveReservedOutputTokens(contextWindow: number): number {
   if (contextWindow <= 16_000) {
     return 2_000;
@@ -595,6 +573,13 @@ function formatTokenCount(value: number): string {
   }
 
   return String(value);
+}
+
+function formatContextWindowSource(snapshot: ContextBudgetSnapshot): string {
+  const matched = snapshot.contextWindowMatchedPattern
+    ? `, matched "${snapshot.contextWindowMatchedPattern}"`
+    : "";
+  return `${snapshot.contextWindowSource}: ${snapshot.contextWindowLabel}${matched}`;
 }
 
 function percentage(value: number, total: number): number {

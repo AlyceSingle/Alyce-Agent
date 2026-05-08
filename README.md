@@ -1,6 +1,12 @@
 <h1 align="center">Alyce</h1>
 
 <p align="center">
+  <a href="https://www.npmjs.com/package/alyce"><img src="https://img.shields.io/npm/v/alyce.svg" alt="npm version"></a>
+  <a href="https://opensource.org/licenses/MIT"><img src="https://img.shields.io/badge/License-MIT-yellow.svg" alt="License: MIT"></a>
+  <a href="https://github.com/AlyceSingle/Alyce-Agent/stargazers"><img src="https://img.shields.io/github/stars/AlyceSingle/Alyce-Agent.svg?style=social" alt="GitHub stars"></a>
+</p>
+
+<p align="center">
   A careful terminal coding companion for local, tool-using workflows.
 </p>
 

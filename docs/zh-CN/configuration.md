@@ -30,9 +30,24 @@ Alyce 的配置采用分层加载机制，优先级从高到低排列如下（�
 - `OPENAI_MODEL`：使用的模型标识符。
 
 ### 搜索与抓取（可选）
+- `AGENT_SESSION_MEMORY_FILE`：自动管理的会话记忆文件名，默认 `SESSION_MEMORY.md`。
+- `AGENT_SESSION_MEMORY_ENABLED`：是否启用自动会话记忆提取，默认 `true`。
+- `AGENT_SESSION_MEMORY_INIT_TOKENS`：首次初始化会话记忆所需的估算上下文 token 数，默认 `10000`。
+- `AGENT_SESSION_MEMORY_UPDATE_TOKENS`：两次会话记忆更新之间需要增长的估算 token 数，默认 `5000`。
+- `AGENT_SESSION_MEMORY_TOOL_CALLS`：最后一轮 assistant 仍有工具调用时，触发更新所需的工具调用数，默认 `3`。
+- `AGENT_SESSION_MEMORY_TIMEOUT_MS`：后台会话记忆模型调用超时时间，默认 `180000` 毫秒。
+- `AGENT_SESSION_MEMORY_MAX_FAILURES`：后台会话记忆连续失败多少次后本会话熔断，默认 `3`。
+- `AGENT_SESSION_MEMORY_STALE_MS`：进行中的提取任务超过多久视为陈旧，默认 `60000` 毫秒。
+- `AGENT_SESSION_MEMORY_WINDOW_MESSAGES`：每次提取最多带入的最近消息数，默认 `80`。
+- `AGENT_SESSION_MEMORY_MAX_CHARS_PER_MESSAGE`：提取 prompt 中单条消息的截断字符数，默认 `1500`。
 - `ALYCE_WEB_SEARCH_PROVIDER`：搜索服务商（`auto`、`brave`、`exa`、`duckduckgo`）。
 - `ALYCE_BRAVE_SEARCH_API_KEY`：Brave Search API 密钥。
 - `ALYCE_WEB_FETCH_MAX_BYTES`：单次网页抓取的最大字节数。
+- `AGENT_AUTO_COMPACT_TIMEOUT_MS`：自动压缩模型调用超时时间，默认 `180000` 毫秒。
+- `AGENT_AUTO_COMPACT_MAX_FAILURES`：自动压缩连续失败多少次后本会话熔断，默认 `3`。
+- `AGENT_MODEL_CONTEXT_WINDOW_OVERRIDES`：模型上下文窗口覆盖项，使用逗号分隔，例如 `custom fast=512000,my alias=1000000`。
+
+兼容说明：`AGENT_MEMORY_AUTO_SUMMARY` 仍会作为 `AGENT_SESSION_MEMORY_ENABLED` 的旧别名读取，但旧的按消息数摘要变量已经废弃。
 
 ## 文件位置速查
 
@@ -146,9 +161,24 @@ description: 用于重复项目任务的流程。
 - **自定义人格提示词**：在预设基础上叠加的自定义指令。
 
 ### 记忆与上下文
-- **自动摘要**：是否开启近期对话的自动摘要功能。
+- **会话记忆**：是否注入并自动维护会话记忆文件。旧设置文件里的 `autoSummaryEnabled` 会作为兼容别名读取。
 - **系统时间注入**：是否让模型在每轮对话中感知当前的系统时间。
-- **对话压缩**：当对话接近上下文上限时，是否自动压缩旧消息。
+- **对话压缩**：当请求接近模型上下文上限时，是否自动压缩旧消息。自动压缩带有超时和连续失败熔断，避免每轮重复卡住。
+- **自动压缩超时**：自动压缩模型调用的最长等待时间，单位毫秒。
+- **自动压缩失败阈值**：自动压缩连续失败达到该次数后，本会话停止自动重试。
+- **会话记忆提取阈值**：自动会话记忆采用 Claude 风格触发方式：先达到初始化 token 阈值，之后必须满足 token 增量阈值，并且达到工具调用阈值或处于无工具调用的自然断点。更新任务在后台运行，带超时、陈旧任务取消和连续失败熔断。
+- **上下文窗口覆盖**：为自定义模型别名或代理商模型名指定上下文窗口，写在 `modelContextWindowOverrides` 中。key 是宽松匹配模式，value 是 token 数，例如：
+
+```json
+{
+  "modelContextWindowOverrides": {
+    "company gemini pro": 1048576,
+    "custom fast": 512000
+  }
+}
+```
+
+Alyce 会先使用这些覆盖项，再读取模型名里的 `128k`、`1m` 等显式后缀，然后匹配内置模型表。完全未知的模型会回退到 `128000` tokens。
 
 ---
 
