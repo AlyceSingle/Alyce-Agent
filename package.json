@@ -1,6 +1,23 @@
 {
   "name": "alyce",
   "version": "0.1.11",
+  "description": "An interactive terminal assistant that helps users complete various tasks.",
+  "author": "AlyceSingle",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/AlyceSingle/Alyce-Agent.git"
+  },
+  "homepage": "https://github.com/AlyceSingle/Alyce-Agent#readme",
+  "bugs": {
+    "url": "https://github.com/AlyceSingle/Alyce-Agent/issues"
+  },
+  "keywords": [
+    "ai",
+    "agent",
+    "terminal",
+    "assistant",
+    "cli"
+  ],
   "license": "MIT",
   "bin": {
     "alyce": "./dist/index.js",
