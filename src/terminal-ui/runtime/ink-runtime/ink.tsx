@@ -10,6 +10,7 @@ import { onExit } from 'signal-exit';
 import { flushInteractionTime } from '../bootstrap/state.js';
 import { getYogaCounters } from '../native-ts/yoga-layout/index.js';
 import { logForDebugging } from '../utils/debug.js';
+import { logLayoutTrace } from '../utils/layoutTrace.js';
 import { logError } from '../utils/log.js';
 import { format } from 'util';
 import { colorize } from './colorize.js';
@@ -346,6 +347,12 @@ export default class Ink {
   private handleResize = () => {
     const cols = this.options.stdout.columns || 80;
     const rows = this.options.stdout.rows || 24;
+    logLayoutTrace('ink:resize-event', {
+      previous: `${this.terminalColumns}x${this.terminalRows}`,
+      next: `${cols}x${rows}`,
+      altScreenActive: this.altScreenActive,
+      isPaused: this.isPaused
+    });
     // Terminals often emit 2+ resize events for one user action (window
     // settling). Same-dimension events are no-ops; skip to avoid redundant
     // frame resets and renders.
@@ -378,6 +385,9 @@ export default class Ink {
     // We don't call scheduleRender() here because that would render before the
     // layout is updated, causing a mismatch between viewport and content dimensions.
     if (this.currentNode !== null) {
+      logLayoutTrace('ink:resize-rerender', {
+        terminal: `${this.terminalColumns}x${this.terminalRows}`
+      });
       this.render(this.currentNode);
     }
   };
@@ -391,6 +401,13 @@ export default class Ink {
     if (nextCols === this.terminalColumns && nextRows === this.terminalRows) {
       return;
     }
+
+    logLayoutTrace('ink:viewport-override', {
+      previous: `${this.terminalColumns}x${this.terminalRows}`,
+      next: `${nextCols}x${nextRows}`,
+      altScreenActive: this.altScreenActive,
+      isPaused: this.isPaused
+    });
 
     logForDebugging(
       `terminal viewport override: ${this.terminalColumns}x${this.terminalRows} -> ${nextCols}x${nextRows}`,
@@ -408,6 +425,9 @@ export default class Ink {
     }
 
     if (this.currentNode !== null) {
+      logLayoutTrace('ink:viewport-rerender', {
+        terminal: `${this.terminalColumns}x${this.terminalRows}`
+      });
       this.render(this.currentNode);
     }
   };
@@ -504,6 +524,11 @@ export default class Ink {
     const renderStart = performance.now();
     const terminalWidth = this.terminalColumns;
     const terminalRows = this.terminalRows;
+    logLayoutTrace('ink:render-start', {
+      terminal: `${terminalWidth}x${terminalRows}`,
+      altScreenActive: this.altScreenActive,
+      prevFrameContaminated: this.prevFrameContaminated
+    });
     const frame = this.renderer({
       frontFrame: this.frontFrame,
       backFrame: this.backFrame,
@@ -802,6 +827,17 @@ export default class Ink {
     const tWrite = performance.now();
     writeDiffToTerminal(this.terminal, optimized, this.altScreenActive && !SYNC_OUTPUT_SUPPORTED);
     const writeMs = performance.now() - tWrite;
+    logLayoutTrace('ink:render-write', {
+      terminal: `${terminalWidth}x${terminalRows}`,
+      hasDiff,
+      rawPatches: diff.length,
+      optimizedPatches: optimized.length,
+      scrollDrainPending: frame.scrollDrainPending,
+      rendererMs: Number(rendererMs.toFixed(2)),
+      diffMs: Number(diffMs.toFixed(2)),
+      optimizeMs: Number(optimizeMs.toFixed(2)),
+      writeMs: Number(writeMs.toFixed(2))
+    });
 
     // Update blit safety for the NEXT frame. The frame just rendered
     // becomes frontFrame (= next frame's prevScreen). If we applied the

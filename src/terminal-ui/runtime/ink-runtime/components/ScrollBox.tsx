@@ -3,6 +3,7 @@ import type { Except } from 'type-fest';
 import { markScrollActivity } from '../../bootstrap/state.js';
 import type { DOMElement } from '../dom.js';
 import { markDirty, scheduleRenderFrom } from '../dom.js';
+import { LayoutEdge } from '../layout/node.js';
 import { markCommitStart } from '../reconciler.js';
 import type { Styles } from '../styles.js';
 import Box from './Box.js';
@@ -173,7 +174,19 @@ const ScrollBox = React.forwardRef<ScrollBoxHandle, PropsWithChildren<ScrollBoxP
       return content?.yogaNode?.getComputedHeight() ?? domRef.current?.scrollHeight ?? 0;
     },
     getViewportHeight() {
-      return domRef.current?.scrollViewportHeight ?? 0;
+      const el = domRef.current;
+      if (!el) return 0;
+      const yogaNode = el.yogaNode;
+      if (yogaNode) {
+        const innerHeight =
+          yogaNode.getComputedHeight() -
+          yogaNode.getComputedBorder(LayoutEdge.Top) -
+          yogaNode.getComputedBorder(LayoutEdge.Bottom) -
+          yogaNode.getComputedPadding(LayoutEdge.Top) -
+          yogaNode.getComputedPadding(LayoutEdge.Bottom);
+        return Math.max(0, Math.floor(innerHeight));
+      }
+      return el.scrollViewportHeight ?? 0;
     },
     getViewportTop() {
       return domRef.current?.scrollViewportTop ?? 0;

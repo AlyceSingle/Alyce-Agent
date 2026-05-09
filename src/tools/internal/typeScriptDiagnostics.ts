@@ -234,7 +234,7 @@ function loadCompilerConfig(
     return {
       currentDirectory: path.dirname(configPath),
       fileNames: parsed.fileNames,
-      options: parsed.options
+      options: ensureCompilerOptionsForTarget(parsed.options, fileName)
     };
   }
 
@@ -252,6 +252,32 @@ function loadCompilerConfig(
       target: ts.ScriptTarget.ES2022
     } satisfies ts.CompilerOptions
   };
+}
+
+function ensureCompilerOptionsForTarget(
+  options: ts.CompilerOptions,
+  fileName: string
+): ts.CompilerOptions {
+  if (!isJavaScriptLikeFile(fileName) || options.allowJs) {
+    return options;
+  }
+
+  return {
+    ...options,
+    allowJs: true
+  };
+}
+
+function isJavaScriptLikeFile(fileName: string) {
+  switch (path.extname(fileName).toLowerCase()) {
+    case ".js":
+    case ".jsx":
+    case ".mjs":
+    case ".cjs":
+      return true;
+    default:
+      return false;
+  }
 }
 
 function ensureRootFile(fileNames: string[], fileName: string, allowedRoots: readonly string[]) {

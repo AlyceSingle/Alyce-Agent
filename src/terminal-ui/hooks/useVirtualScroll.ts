@@ -185,10 +185,34 @@ export function useVirtualScroll(options: UseVirtualScrollOptions): VirtualScrol
       return;
     }
 
+    let lastViewportHeight = handle.getViewportHeight();
+    let lastScrollHeight = Math.max(handle.getScrollHeight(), handle.getFreshScrollHeight());
+    const viewportWatchdog = setInterval(() => {
+      const currentHandle = options.scrollHandleRef.current;
+      if (!currentHandle) {
+        return;
+      }
+
+      const nextViewportHeight = currentHandle.getViewportHeight();
+      const nextScrollHeight = Math.max(
+        currentHandle.getScrollHeight(),
+        currentHandle.getFreshScrollHeight()
+      );
+      if (
+        nextViewportHeight !== lastViewportHeight ||
+        nextScrollHeight !== lastScrollHeight
+      ) {
+        lastViewportHeight = nextViewportHeight;
+        lastScrollHeight = nextScrollHeight;
+        notify();
+      }
+    }, 100);
+
     const timeout = setTimeout(notify, 0);
     const unsubscribe = handle.subscribe(notify);
     return () => {
       clearTimeout(timeout);
+      clearInterval(viewportWatchdog);
       unsubscribe();
     };
   }, [

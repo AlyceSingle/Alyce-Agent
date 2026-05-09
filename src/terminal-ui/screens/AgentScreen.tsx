@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
-import { Box, useApp, useStdout, Text } from "../runtime/ink.js";
+import { Box, useApp, useStdout, useTerminalSize, Text } from "../runtime/ink.js";
 import { FullscreenLayout } from "../components/FullscreenLayout.js";
 import { MessageList, type MessageListHandle } from "../components/MessageList.js";
 import { PromptInput } from "../components/PromptInput.js";
@@ -17,7 +17,8 @@ import { useKeybindings } from "../keybindings/useKeybindings.js";
 import { getBindingDisplayText } from "../keybindings/shortcutDisplay.js";
 import { useSelection } from "../runtime/ink-runtime/hooks/use-selection.js";
 import { useTerminalInput } from "../runtime/input.js";
-import { invalidateInkPrevFrame } from "../runtime/instances.js";
+import { forceInkRedraw, invalidateInkPrevFrame } from "../runtime/instances.js";
+import { logLayoutTrace } from "../runtime/utils/layoutTrace.js";
 import { selectRelativeMessage, setTranscriptSticky } from "../state/actions.js";
 import { useTerminalUiSelector, useTerminalUiStore } from "../state/store.js";
 import { terminalUiTheme } from "../theme/theme.js";
@@ -36,7 +37,6 @@ function resolveAssistantLabel(personaPreset?: string) {
 }
 
 const ConversationPane = React.memo(React.forwardRef<MessageListHandle, {
-  terminalWidth: number;
   unseenDividerMessageId: string | null;
   unseenMessageCount: number;
   maxMessagesWithoutVirtualization: number;
@@ -44,6 +44,7 @@ const ConversationPane = React.memo(React.forwardRef<MessageListHandle, {
   onStickyChange: (sticky: boolean) => void;
   onNearTop: (visibleMessageId: string | null) => void;
 }>(function ConversationPane(props, ref) {
+  const terminalSize = useTerminalSize();
   const messages = useTerminalUiSelector((value) => value.messages);
   const selectedMessageId = useTerminalUiSelector((value) => value.selectedMessageId);
   const markdownEnabled = useTerminalUiSelector(
@@ -64,7 +65,7 @@ const ConversationPane = React.memo(React.forwardRef<MessageListHandle, {
       ref={ref}
       messages={messages}
       selectedMessageId={selectedMessageId}
-      viewportWidth={props.terminalWidth}
+      viewportWidth={terminalSize.columns}
       markdownEnabled={markdownEnabled}
       markdownToolMessageRenderingEnabled={markdownToolMessageRenderingEnabled}
       markdownRenderMaxChars={markdownRenderMaxChars}
@@ -82,6 +83,7 @@ const ConversationPane = React.memo(React.forwardRef<MessageListHandle, {
 export function AgentScreen(props: { controller: SessionController }) {
   const { exit } = useApp();
   const { stdout } = useStdout();
+  const terminalSize = useTerminalSize();
   const selection = useSelection();
   const store = useTerminalUiStore();
   const dialogQueue = useTerminalUiSelector((value) => value.dialogQueue);
@@ -123,8 +125,8 @@ export function AgentScreen(props: { controller: SessionController }) {
   const copyStatusTimerRef = useRef<NodeJS.Timeout | null>(null);
   const [copyStatusText, setCopyStatusText] = useState<string | null>(null);
   const [historyEscPending, setHistoryEscPending] = useState(false);
-  const terminalWidth = stdout.columns || 120;
-  const terminalHeight = stdout.rows || 36;
+  const terminalWidth = terminalSize.columns;
+  const terminalHeight = terminalSize.rows;
   const activeDialog = dialogQueue[0] ?? null;
   const hasDialog = activeDialog !== null;
   const hasActiveOverlay = useIsOverlayActive();
@@ -134,6 +136,8 @@ export function AgentScreen(props: { controller: SessionController }) {
       ? "conversation"
       : `${activeDialog.layer}:${activeDialog.type}`;
   const layoutSurfaceKeyRef = useRef(layoutSurfaceKey);
+  const terminalSizeKey = `${terminalWidth}x${terminalHeight}`;
+  const terminalSizeKeyRef = useRef(terminalSizeKey);
 
   useEffect(() => {
     props.controller.setExitHandler(() => exit());
@@ -144,10 +148,46 @@ export function AgentScreen(props: { controller: SessionController }) {
 
   useLayoutEffect(() => {
     if (layoutSurfaceKeyRef.current !== layoutSurfaceKey) {
+      logLayoutTrace("agent-screen:surface", {
+        previous: layoutSurfaceKeyRef.current,
+        next: layoutSurfaceKey,
+        terminal: `${terminalWidth}x${terminalHeight}`,
+        hasDialog,
+        activeDialog: activeDialog?.type ?? null
+      });
       layoutSurfaceKeyRef.current = layoutSurfaceKey;
       invalidateInkPrevFrame(stdout as NodeJS.WriteStream);
+      queueMicrotask(() => {
+        transcriptRef.current?.refreshViewport();
+      });
     }
-  }, [layoutSurfaceKey, stdout]);
+  }, [activeDialog?.type, hasDialog, layoutSurfaceKey, stdout, terminalHeight, terminalWidth]);
+
+  useLayoutEffect(() => {
+    if (terminalSizeKeyRef.current === terminalSizeKey) {
+      return;
+    }
+
+    logLayoutTrace("agent-screen:terminal-change", {
+      previous: terminalSizeKeyRef.current,
+      next: terminalSizeKey,
+      surface: layoutSurfaceKey
+    });
+    terminalSizeKeyRef.current = terminalSizeKey;
+    queueMicrotask(() => {
+      forceInkRedraw(stdout as NodeJS.WriteStream);
+      transcriptRef.current?.refreshViewport();
+    });
+  }, [layoutSurfaceKey, stdout, terminalSizeKey]);
+
+  useEffect(() => {
+    logLayoutTrace("agent-screen:size", {
+      terminal: `${terminalWidth}x${terminalHeight}`,
+      surface: layoutSurfaceKey,
+      hasDialog,
+      hasActiveOverlay
+    });
+  }, [hasActiveOverlay, hasDialog, layoutSurfaceKey, terminalHeight, terminalWidth]);
 
   const setCtrlCCapture = useCallback((capture: boolean) => {
     clearOnCtrlCRef.current = capture;
@@ -450,7 +490,6 @@ export function AgentScreen(props: { controller: SessionController }) {
       transcript={
         <ConversationPane
           ref={transcriptRef}
-          terminalWidth={terminalWidth}
           unseenDividerMessageId={unseenDividerMessageId}
           unseenMessageCount={unseenMessageCount}
           maxMessagesWithoutVirtualization={maxMessagesWithoutVirtualization}
@@ -464,6 +503,7 @@ export function AgentScreen(props: { controller: SessionController }) {
       modal={modal}
       bottom={
         <PromptInput
+          key={`prompt-${terminalSizeKey}`}
           value={draftInput}
           viewportWidth={terminalWidth}
           disabled={isLoading || hasDialog}

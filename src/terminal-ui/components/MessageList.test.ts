@@ -71,7 +71,7 @@ function runTests() {
   testRenderBlockLinesForPatchSkipsDiffMetaAndHunkHeaders();
   testBuildCollapsedMessageBlocksTruncatesWithEllipsis();
   testCombineShellOutputVariants();
-  testEditLikeToolMessagesDefaultToExpandedAndCanCollapse(renderPolicy);
+  testWriteToolMessagesDefaultToCollapsedAndCanExpand(renderPolicy);
   testMarkdownFriendlyToolUsesMarkdownWhenExpanded(renderPolicy);
   testMarkdownFriendlyToolStillUsesMarkdownWhenMessageContentOverBudget();
   testShellToolStaysCodeFirst(renderPolicy);
@@ -153,7 +153,7 @@ function testCombineShellOutputVariants() {
   assert.equal(testing.combineShellOutput("", ""), null);
 }
 
-function testEditLikeToolMessagesDefaultToExpandedAndCanCollapse(
+function testWriteToolMessagesDefaultToCollapsedAndCanExpand(
   renderPolicy: ReturnType<typeof createRenderPolicy>
 ) {
   const message = createMessage({
@@ -184,7 +184,7 @@ function testEditLikeToolMessagesDefaultToExpandedAndCanCollapse(
     }
   });
 
-  const expandedEntry = testing.buildRenderedMessageEntries(
+  const collapsedEntry = testing.buildRenderedMessageEntries(
     [message],
     null,
     80,
@@ -194,7 +194,7 @@ function testEditLikeToolMessagesDefaultToExpandedAndCanCollapse(
     null,
     null
   )[0];
-  const collapsedEntry = testing.buildRenderedMessageEntries(
+  const expandedEntry = testing.buildRenderedMessageEntries(
     [message],
     null,
     80,
@@ -207,8 +207,8 @@ function testEditLikeToolMessagesDefaultToExpandedAndCanCollapse(
 
   assert.ok(expandedEntry);
   assert.ok(collapsedEntry);
-  assert.match(expandedEntry?.metadataLine ?? "", /Click to collapse/);
   assert.match(collapsedEntry?.metadataLine ?? "", /Click to expand/);
+  assert.match(expandedEntry?.metadataLine ?? "", /Click to collapse/);
 
   const expandedLines = flattenSections(expandedEntry!);
   const collapsedLines = flattenSections(collapsedEntry!);

@@ -5,6 +5,7 @@ export { default as useApp } from "./ink-runtime/hooks/use-app.js";
 export { default as useInput } from "./ink-runtime/hooks/use-input.js";
 export { default as useStdout } from "./ink-runtime/hooks/use-stdout.js";
 export { default as useStdin } from "./ink-runtime/hooks/use-stdin.js";
+export { default as useTerminalSize } from "./ink-runtime/hooks/use-terminal-size.js";
 export { AlternateScreen } from "./ink-runtime/components/AlternateScreen.js";
 export { default as ScrollBox } from "./ink-runtime/components/ScrollBox.js";
 export type { ScrollBoxHandle } from "./ink-runtime/components/ScrollBox.js";

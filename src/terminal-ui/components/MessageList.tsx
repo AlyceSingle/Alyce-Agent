@@ -39,6 +39,7 @@ import {
 } from "../utils/renderPolicy.js";
 import { wrapText, wrapTextClamped } from "../utils/text.js";
 import { logForDebugging } from "../runtime/utils/debug.js";
+import { logLayoutTrace } from "../runtime/utils/layoutTrace.js";
 import { isEnvTruthy } from "../runtime/utils/envUtils.js";
 import { useVirtualScroll, type VirtualScrollRange } from "../hooks/useVirtualScroll.js";
 
@@ -154,6 +155,7 @@ export type MessageListHandle = {
   scrollPage: (delta: -1 | 1) => void;
   scrollToTop: () => void;
   scrollToBottom: () => void;
+  refreshViewport: () => void;
   getVisibleMessageId: () => string | null;
 };
 
@@ -413,13 +415,8 @@ function shouldDisplaySectionLabel(section: RenderedSection) {
   return Boolean(section.label) && !section.isDiff;
 }
 
-function isDefaultExpandedToolMessage(message: TerminalUiMessage) {
-  return (
-    message.kind === "tool" &&
-    message.toolData?.phase === "result" &&
-    isEditLikeToolResult(message.toolData.resultKind) &&
-    message.toolData.ok === true
-  );
+function isDefaultExpandedToolMessage(_message: TerminalUiMessage) {
+  return false;
 }
 
 function isMessageExpanded(message: TerminalUiMessage, expandedMessageIds: ReadonlySet<string>) {
@@ -1320,6 +1317,20 @@ const MessageListImpl = forwardRef<MessageListHandle, {
   });
 
   useEffect(() => {
+    const handle = scrollRef.current;
+    logLayoutTrace("message-list:layout", {
+      viewportWidth: props.viewportWidth,
+      contentWidth,
+      messages: props.messages.length,
+      totalRowCount,
+      sticky: stickySnapshotRef.current,
+      scrollTop: handle?.getScrollTop() ?? null,
+      viewportHeight: handle?.getViewportHeight() ?? null,
+      scrollHeight: handle ? Math.max(handle.getScrollHeight(), handle.getFreshScrollHeight()) : null
+    });
+  }, [contentWidth, props.messages.length, props.viewportWidth, totalRowCount]);
+
+  useEffect(() => {
     const previousIds = previousMessageIdsRef.current;
     const nextIds = props.messages.map((message) => message.id);
     const prependedIds = resolvePrependedMessageIds(previousIds, nextIds);
@@ -1630,6 +1641,21 @@ const MessageListImpl = forwardRef<MessageListHandle, {
       const scrollHeight = Math.max(handle.getScrollHeight(), handle.getFreshScrollHeight());
       scrollManuallyTo(Math.max(0, scrollHeight - viewportHeight));
     },
+    refreshViewport: () => {
+      const handle = scrollRef.current;
+      if (!handle) {
+        return;
+      }
+
+      const shouldStick =
+        stickySnapshotRef.current || handle.isSticky() || isHandleAtBottom(handle);
+      if (shouldStick) {
+        handle.scrollToBottom();
+        return;
+      }
+
+      handle.scrollTo(handle.getScrollTop());
+    },
     getVisibleMessageId: () =>
       visibleMessageIdRef.current ??
       props.selectedMessageId ??
@@ -1658,6 +1684,16 @@ const MessageListImpl = forwardRef<MessageListHandle, {
       );
       const isAtBottom = isHandleAtBottom(currentHandle);
       const effectiveSticky = currentHandle.isSticky() || isAtBottom;
+
+      logLayoutTrace("message-list:scroll-sync", {
+        contentWidth,
+        scrollTop,
+        viewportHeight,
+        scrollHeight,
+        isAtBottom,
+        effectiveSticky,
+        totalRowCount
+      });
 
       stickySnapshotRef.current = effectiveSticky;
       props.onStickyChange(effectiveSticky);
@@ -1833,8 +1869,42 @@ const MessageListImpl = forwardRef<MessageListHandle, {
       return;
     }
 
+    logLayoutTrace("message-list:layout-change", {
+      previousContentWidth: previousSignature.contentWidth,
+      nextContentWidth: nextSignature.contentWidth,
+      previousMessages: previousSignature.messageCount,
+      nextMessages: nextSignature.messageCount,
+      previousRows: previousSignature.totalRowCount,
+      nextRows: nextSignature.totalRowCount,
+      viewportChanged,
+      contentChanged,
+      sticky: stickySnapshotRef.current,
+      handleSticky: handle.isSticky(),
+      isAtBottom: isHandleAtBottom(handle),
+      scrollTop: handle.getScrollTop(),
+      viewportHeight: handle.getViewportHeight(),
+      scrollHeight: Math.max(handle.getScrollHeight(), handle.getFreshScrollHeight())
+    });
+
     if (stickySnapshotRef.current || handle.isSticky() || isHandleAtBottom(handle)) {
+      logLayoutTrace("message-list:resize-action", {
+        action: "scrollToBottom",
+        contentWidth,
+        scrollTop: handle.getScrollTop()
+      });
       handle.scrollToBottom();
+      return;
+    }
+
+    if (viewportChanged) {
+      // Resize after overlay close can leave ScrollBox viewport metrics one
+      // frame behind. Trigger a no-op scroll mutation to force a fresh sync.
+      logLayoutTrace("message-list:resize-action", {
+        action: "scrollToSamePosition",
+        contentWidth,
+        scrollTop: handle.getScrollTop()
+      });
+      handle.scrollTo(handle.getScrollTop());
     }
   }, [contentWidth, props.messages.length, totalRowCount]);
 

@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { Box, Text } from "../runtime/ink.js";
+import { Box, Text, useTerminalSize } from "../runtime/ink.js";
+import { logLayoutTrace } from "../runtime/utils/layoutTrace.js";
 import { terminalUiTheme } from "../theme/theme.js";
 import TextInput from "./TextInput.js";
 
@@ -15,11 +16,14 @@ export function PromptInput(props: {
   onCtrlCCaptureChange: (capture: boolean) => void;
   onSubmit: (value: string) => Promise<void> | void;
 }) {
+  const terminalSize = useTerminalSize();
   const [cursorOffset, setCursorOffset] = useState(props.value.length);
   const [escClearPending, setEscClearPending] = useState(false);
   const previousValueRef = useRef(props.value);
   const pendingLocalValueChangeRef = useRef(false);
   const pendingLocalCursorOffsetRef = useRef<number | null>(null);
+  const viewportWidth = terminalSize.columns > 0 ? terminalSize.columns : props.viewportWidth;
+  const inputColumns = Math.max(20, viewportWidth - PROMPT_INPUT_VIEWPORT_OFFSET);
 
   useEffect(() => {
     props.onCtrlCCaptureChange(!props.disabled && props.value.length > 0);
@@ -71,6 +75,16 @@ export function PromptInput(props: {
     }
   }, [props.value.length]);
 
+  useEffect(() => {
+    logLayoutTrace("prompt-input:layout", {
+      terminal: `${terminalSize.columns}x${terminalSize.rows}`,
+      viewportWidth,
+      columns: inputColumns,
+      disabled: props.disabled,
+      valueLength: props.value.length
+    });
+  }, [inputColumns, props.disabled, props.value.length, terminalSize.columns, terminalSize.rows, viewportWidth]);
+
   const handleChange = useCallback((value: string) => {
     pendingLocalValueChangeRef.current = true;
     props.onChange(value);
@@ -110,7 +124,7 @@ export function PromptInput(props: {
           focus={!props.disabled}
           multiline
           showCursor={!props.disabled}
-          columns={Math.max(20, props.viewportWidth - PROMPT_INPUT_VIEWPORT_OFFSET)}
+          columns={inputColumns}
           maxVisibleLines={4}
           cursorOffset={cursorOffset}
           onChangeCursorOffset={handleCursorOffsetChange}

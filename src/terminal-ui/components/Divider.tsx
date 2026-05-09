@@ -1,4 +1,4 @@
-import { Text, useStdout } from "../runtime/ink.js";
+import { Text, useTerminalSize } from "../runtime/ink.js";
 import { terminalUiTheme } from "../theme/theme.js";
 
 const DEFAULT_DIVIDER_CHAR = "─";
@@ -8,8 +8,8 @@ export function Divider(props: {
   char?: string;
   color?: string;
 }) {
-  const { stdout } = useStdout();
-  const width = Math.max(1, stdout.columns || 80);
+  const terminalSize = useTerminalSize();
+  const width = Math.max(1, terminalSize.columns || 80);
   const char =
     props.char && SINGLE_WIDTH_ASCII_CHAR_PATTERN.test(props.char)
       ? props.char
