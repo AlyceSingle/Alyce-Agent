@@ -107,6 +107,7 @@ npm start
 - 项目级运行时状态保存在 `./.alyce/`
 - 用户级运行时状态保存在 `~/.alyce/`
 - 本地技能放在 `.alyce/skills/**/SKILL.md`，MCP server 配置在 `.alyce/mcp.json`
+- 旧的 workspace 级 `.alyce/tasks/tasks.json` 已废弃；子 agent 历史现统一持久化到 `.alyce/sessions/<sessionId>/`
 - `User_Info/` 被视为用户资料目录，不属于项目说明文档
 
 ## 最低验证

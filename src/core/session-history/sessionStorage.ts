@@ -10,6 +10,9 @@ import {
   type SessionHistoryEntry,
   type SessionHistoryListItem,
   type SessionHistoryRewindMode,
+  type SessionHistorySubagentEvent,
+  type SessionHistorySubagentEventType,
+  type SessionHistorySubagentTaskIndexItem,
   type SessionHistoryUiMessage,
   type SessionId
 } from "./types.js";
@@ -28,6 +31,13 @@ interface SessionHistoryRewindCheckpoint {
   apiMessages: SessionHistoryApiMessage[];
   uiMessages: SessionHistoryUiMessage[];
   sessionMemory: SessionMemoryFileState | null;
+}
+
+interface SessionHistorySubagentEventWithSequence {
+  type: SessionHistorySubagentEventType;
+  sequence: number;
+  timestamp: string;
+  event: SessionHistorySubagentEvent;
 }
 
 export class SessionHistoryStore {
@@ -284,6 +294,7 @@ export class SessionHistoryStore {
     let lastApiRole: string | undefined;
     let sessionMemory: SessionMemoryFileState | null = null;
     const rewindCheckpoints: SessionHistoryRewindCheckpoint[] = [];
+    let subagentEvents: SessionHistorySubagentEventWithSequence[] = [];
 
     for (const line of raw.split(/\r?\n/)) {
       if (!line.trim()) {
@@ -394,6 +405,24 @@ export class SessionHistoryStore {
         }
         lastApiRole = apiMessages.at(-1)?.role;
         title = extractTitleFromApiMessages(apiMessages);
+        subagentEvents = pruneSubagentEventsForRewind(
+          subagentEvents,
+          apiMessages.length,
+          uiMessages.length
+        );
+        continue;
+      }
+
+      if (isSubagentEventEntryType(entry.type)) {
+        const event = parseSubagentEvent(entry.type, entry.event);
+        if (event) {
+          subagentEvents.push({
+            type: entry.type,
+            sequence: sequence ?? 0,
+            timestamp: timestamp ?? new Date().toISOString(),
+            event
+          });
+        }
       }
     }
 
@@ -412,7 +441,9 @@ export class SessionHistoryStore {
       lastSequence,
       apiMessages,
       uiMessages,
-      sessionMemory
+      sessionMemory,
+      subagentTaskIndex: buildSubagentTaskIndex(subagentEvents),
+      subagentEvents: subagentEvents.map((item) => item.event)
     };
   }
 
@@ -486,6 +517,37 @@ export class SessionHistoryStore {
       sequence: this.nextSequence(),
       timestamp,
       sessionMemory: cloneSessionMemory(sessionMemory)
+    });
+
+    await this.appendEntries(sessionId, entries);
+    if (wroteMetaEntry) {
+      this.materializedSessions.add(sessionId);
+    }
+  }
+
+  async recordSubagentEvent(event: SessionHistorySubagentEvent): Promise<void> {
+    const sessionId = this.currentSessionId;
+    const timestamp = new Date().toISOString();
+    const entries: SessionHistoryEntry[] = [];
+    let wroteMetaEntry = false;
+
+    if (!this.materializedSessions.has(sessionId)) {
+      entries.push({
+        type: "session-meta",
+        schemaVersion: SESSION_HISTORY_SCHEMA_VERSION,
+        sessionId,
+        workspaceRoot: this.options.workspaceRoot,
+        createdAt: timestamp
+      });
+      wroteMetaEntry = true;
+    }
+
+    entries.push({
+      type: event.type,
+      sessionId,
+      sequence: this.nextSequence(),
+      timestamp,
+      event
     });
 
     await this.appendEntries(sessionId, entries);
@@ -653,6 +715,124 @@ function parseSessionMemoryEntry(value: unknown): SessionMemoryFileState | null 
     markdown: record.markdown,
     ...(typeof record.updatedAt === "string" ? { updatedAt: record.updatedAt } : {})
   };
+}
+
+function isSubagentEventEntryType(value: unknown): value is SessionHistorySubagentEventType {
+  return value === "subagent-started" ||
+    value === "subagent-notification" ||
+    value === "subagent-stopped" ||
+    value === "subagent-retrieved";
+}
+
+function parseSubagentEvent(
+  type: SessionHistorySubagentEventType,
+  value: unknown
+): SessionHistorySubagentEvent | null {
+  const record = asRecord(value);
+  if (!record) {
+    return null;
+  }
+
+  const taskId = asString(record.taskId);
+  const agentType = asString(record.agentType);
+  const description = asString(record.description);
+  const model = asString(record.model);
+  const maxSteps = asNumber(record.maxSteps);
+  const status = asSubagentTaskStatus(record.status);
+  if (!taskId || !agentType || !description || !model || maxSteps === undefined || !status) {
+    return null;
+  }
+
+  return {
+    type,
+    taskId,
+    agentType,
+    description,
+    model,
+    maxSteps,
+    status,
+    ...(typeof record.message === "string" ? { message: record.message } : {}),
+    ...(typeof record.error === "string" ? { error: record.error } : {}),
+    ...(typeof record.outputPath === "string" ? { outputPath: record.outputPath } : {}),
+    ...(typeof record.startedAt === "string" ? { startedAt: record.startedAt } : {}),
+    ...(typeof record.completedAt === "string" ? { completedAt: record.completedAt } : {}),
+    ...(typeof record.apiMessageCount === "number" ? { apiMessageCount: record.apiMessageCount } : {}),
+    ...(typeof record.uiMessageCount === "number" ? { uiMessageCount: record.uiMessageCount } : {})
+  };
+}
+
+function asSubagentTaskStatus(value: unknown): SessionHistorySubagentEvent["status"] | null {
+  return value === "running" ||
+    value === "completed" ||
+    value === "failed" ||
+    value === "stopped"
+    ? value
+    : null;
+}
+
+function pruneSubagentEventsForRewind(
+  events: SessionHistorySubagentEventWithSequence[],
+  apiMessageCount: number,
+  uiMessageCount: number
+): SessionHistorySubagentEventWithSequence[] {
+  return events.filter((entry) => {
+    const eventApiCount = entry.event.apiMessageCount;
+    if (typeof eventApiCount === "number" && eventApiCount > apiMessageCount) {
+      return false;
+    }
+
+    const eventUiCount = entry.event.uiMessageCount;
+    if (typeof eventUiCount === "number" && eventUiCount > uiMessageCount) {
+      return false;
+    }
+
+    return true;
+  });
+}
+
+function buildSubagentTaskIndex(
+  events: SessionHistorySubagentEventWithSequence[]
+): SessionHistorySubagentTaskIndexItem[] {
+  const index = new Map<string, SessionHistorySubagentTaskIndexItem>();
+
+  for (const entry of events) {
+    const event = entry.event;
+    const existing = index.get(event.taskId);
+    const createdAt = existing?.createdAt ??
+      event.startedAt ??
+      entry.timestamp;
+    const next: SessionHistorySubagentTaskIndexItem = {
+      taskId: event.taskId,
+      agentType: event.agentType,
+      description: event.description,
+      model: event.model,
+      maxSteps: event.maxSteps,
+      status: event.status,
+      createdAt,
+      updatedAt: entry.timestamp,
+      ...(event.startedAt ? { startedAt: event.startedAt } : {}),
+      ...(event.completedAt ? { completedAt: event.completedAt } : {}),
+      ...(event.error ? { error: event.error } : {}),
+      ...(event.outputPath ? { outputPath: event.outputPath } : {})
+    };
+
+    if (!next.startedAt && existing?.startedAt) {
+      next.startedAt = existing.startedAt;
+    }
+    if (!next.completedAt && existing?.completedAt) {
+      next.completedAt = existing.completedAt;
+    }
+    if (!next.error && existing?.error) {
+      next.error = existing.error;
+    }
+    if (!next.outputPath && existing?.outputPath) {
+      next.outputPath = existing.outputPath;
+    }
+
+    index.set(event.taskId, next);
+  }
+
+  return [...index.values()].sort((left, right) => right.updatedAt.localeCompare(left.updatedAt));
 }
 
 function trimRewindCheckpoints(checkpoints: SessionHistoryRewindCheckpoint[]) {

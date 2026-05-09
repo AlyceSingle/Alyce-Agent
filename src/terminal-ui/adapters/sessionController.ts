@@ -964,6 +964,29 @@ export function createSessionController(
       return true;
     }
 
+    if (parsedCommand.type === "tasks-cleanup") {
+      const report = await runtime.runSubagentStorageCleanup({
+        apply: parsedCommand.apply
+      });
+      appendUiMessage(
+        createSystemMessage(
+          [
+            parsedCommand.apply
+              ? "Subagent storage cleanup finished."
+              : "Subagent storage cleanup dry run finished.",
+            `Mode: ${report.mode}`,
+            `Scanned sessions: ${report.scannedSessionCount}`,
+            `Orphan outputs: ${report.orphanOutputFilesFound} found, ${report.orphanOutputFilesRemoved} removed`,
+            `Empty transcripts without metadata: ${report.emptyTranscriptsWithoutMetadataFound} found, ${report.emptyTranscriptsWithoutMetadataRemoved} removed`,
+            `Legacy archive: ${report.migratedLegacyArchiveFound ? "found" : "not found"}, ${report.migratedLegacyArchiveRemoved ? "removed" : "kept"}`,
+            `Migrated legacy fallback files: ${report.migratedLegacyFallbackFilesFound} found, ${report.migratedLegacyFallbackFilesRemoved} removed`
+          ].join("\n"),
+          "Subagent Cleanup"
+        )
+      );
+      return true;
+    }
+
     if (parsedCommand.type === "context-preview") {
       const controller = new AbortController();
       appendUiMessage(

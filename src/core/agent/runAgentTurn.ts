@@ -40,6 +40,7 @@ export interface AgentTurnOptions {
   onThinking?: (content: string) => void;
   onToolCallStart?: (toolName: string, rawArguments: string) => void;
   onToolCallResult?: (toolName: string, result: string, rawArguments: string) => void;
+  onMessagesAppended?: (messages: MessageParam[]) => void | Promise<void>;
   onReconnect?: (event: ChatCompletionReconnectEvent) => void;
   onContextBudget?: (snapshot: ContextBudgetSnapshot) => void;
   onContextCompactionStart?: (snapshot: ContextBudgetSnapshot) => void;
@@ -110,7 +111,9 @@ export async function runAgentTurn(
           throw new Error("Model returned no text output");
         }
 
-        messages.push(buildAssistantHistoryMessage(next));
+        const assistantMessage = buildAssistantHistoryMessage(next);
+        messages.push(assistantMessage);
+        await options.onMessagesAppended?.([assistantMessage]);
         return reply;
       }
 
@@ -123,7 +126,9 @@ export async function runAgentTurn(
       supplementalMessages.push(...executedToolCalls.supplementalMessages);
 
       // 只在全部工具结果都准备好后写入上下文，避免中断时留下没有 tool 结果的 assistant tool_calls。
-      messages.push(assistantHistoryMessage, ...toolMessages, ...supplementalMessages);
+      const committedMessages = [assistantHistoryMessage, ...toolMessages, ...supplementalMessages];
+      messages.push(...committedMessages);
+      await options.onMessagesAppended?.(committedMessages);
 
       if (options.refreshTools && shouldRefreshToolsAfterToolCalls(executedToolCalls.toolNames)) {
         activeTools = await options.refreshTools({

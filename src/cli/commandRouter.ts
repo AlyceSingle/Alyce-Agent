@@ -15,6 +15,7 @@ export type ParsedCommand =
   | { type: "memory-clear"; clearPersistent: boolean }
   | { type: "add-directory"; directory: string; persist: boolean }
   | { type: "switch-model"; model: string }
+  | { type: "tasks-cleanup"; apply: boolean }
   | { type: "context-preview"; nextUserInput?: string };
 
 // 统一解析 REPL 命令，避免在主循环堆积条件分支。
@@ -76,6 +77,11 @@ export function parseReplCommand(input: string): ParsedCommand {
   const memoryCommand = parseMemoryCommand(input);
   if (memoryCommand) {
     return memoryCommand;
+  }
+
+  const tasksCommand = parseTasksCommand(input);
+  if (tasksCommand) {
+    return tasksCommand;
   }
 
   if (input === "/remember") {
@@ -242,5 +248,50 @@ function parseMemoryCommand(
     type: "command-error",
     input,
     message: "不支持的 /memory clear 参数。"
+  };
+}
+
+function parseTasksCommand(
+  input: string
+): Extract<ParsedCommand, { type: "tasks-cleanup" | "command-error" }> | null {
+  if (input !== "/tasks" && !input.startsWith("/tasks ")) {
+    return null;
+  }
+
+  const tokens = input.split(/\s+/).filter(Boolean);
+  if (tokens.length === 1) {
+    return {
+      type: "command-error",
+      input,
+      message: "缺少 /tasks 子命令。"
+    };
+  }
+
+  if (tokens[1] !== "cleanup") {
+    return {
+      type: "command-error",
+      input,
+      message: "不支持的 /tasks 子命令。"
+    };
+  }
+
+  if (tokens.length === 2) {
+    return {
+      type: "tasks-cleanup",
+      apply: false
+    };
+  }
+
+  if (tokens.length === 3 && tokens[2] === "--apply") {
+    return {
+      type: "tasks-cleanup",
+      apply: true
+    };
+  }
+
+  return {
+    type: "command-error",
+    input,
+    message: "不支持的 /tasks cleanup 参数。"
   };
 }

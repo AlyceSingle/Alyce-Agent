@@ -10,6 +10,7 @@ interface TestSettings {
 function runTests() {
   testSubagentAllowedRootsInheritDefaultWhenUnset();
   testSubagentAllowedRootsRestrictWhenSet();
+  testSubagentAllowedRootsDeduplicateConfiguredValues();
   testPersistedSubagentProgressIsSanitized();
   testPersistedSubagentProgressIsLimited();
   console.log("sessionRuntime tests passed");
@@ -65,6 +66,22 @@ function testSubagentAllowedRootsRestrictWhenSet() {
   );
 
   assert.deepEqual(roots, [subagentRoot]);
+}
+
+function testSubagentAllowedRootsDeduplicateConfiguredValues() {
+  const workspaceRoot = path.resolve("workspace");
+  const roots = resolveSubagentAllowedRoots(
+    workspaceRoot,
+    {
+      policy: {
+        allowedRoots: ["src", "./src", " src "]
+      }
+    },
+    createSettings(),
+    []
+  );
+
+  assert.deepEqual(roots, [path.resolve(workspaceRoot, "src")]);
 }
 
 function testPersistedSubagentProgressIsSanitized() {

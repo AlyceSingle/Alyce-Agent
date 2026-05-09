@@ -27,6 +27,7 @@ async function runTests() {
   await testStopsTask();
   await testRecordsOnlyWhenStopRequested();
   await testDoesNotRecordWhenTaskAlreadyFinished();
+  await testReturnsHistoricalInterruptedState();
   await testReturnsNotFound();
   await testRequiresRuntimeHook();
   console.log("TaskStop tests passed");
@@ -88,6 +89,33 @@ async function testDoesNotRecordWhenTaskAlreadyFinished() {
   assert.deepEqual(recorded, []);
 }
 
+async function testReturnsHistoricalInterruptedState() {
+  const recorded: string[] = [];
+  const result = await executeTaskStopTool({
+    task_id: "task-historical-running"
+  }, createTestContext({
+    recordToolActivity: (toolName) => {
+      recorded.push(toolName);
+    },
+    stopSubagentTask: async (taskId) => ({
+      taskId,
+      status: "failed",
+      message: "Task is no longer running in this process; treating it as interrupted.",
+      task: createTask(taskId, "failed", {
+        completedAt: "2026-05-06T00:02:00.000Z",
+        error: "Interrupted after restart."
+      })
+    })
+  }));
+
+  assert.equal(result.status, "failed");
+  assert.equal(result.task_id, "task-historical-running");
+  assert.equal(result.task.status, "failed");
+  assert.equal(result.task.error, "Interrupted after restart.");
+  assert.equal(result.task.completed_at, "2026-05-06T00:02:00.000Z");
+  assert.deepEqual(recorded, []);
+}
+
 async function testReturnsNotFound() {
   const result = await executeTaskStopTool({
     task_id: "missing"
@@ -114,7 +142,8 @@ async function testRequiresRuntimeHook() {
 
 function createTask(
   taskId: string,
-  status: SubagentTaskInfo["status"]
+  status: SubagentTaskInfo["status"],
+  patch: Partial<SubagentTaskInfo> = {}
 ): SubagentTaskInfo {
   return {
     taskId,
@@ -125,7 +154,8 @@ function createTask(
     status,
     createdAt: "2026-05-06T00:00:00.000Z",
     updatedAt: "2026-05-06T00:01:00.000Z",
-    progress: []
+    progress: [],
+    ...patch
   };
 }
 

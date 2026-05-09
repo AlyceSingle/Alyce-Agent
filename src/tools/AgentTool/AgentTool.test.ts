@@ -30,6 +30,7 @@ async function runTests() {
   await testUnknownSubagentType();
   await testRunsDefaultGeneralSubagent();
   await testPassesTaskIdForResume();
+  await testBackgroundPassesTaskIdForResume();
   await testUnknownTaskIdReturnsStructuredError();
   await testMismatchedTaskIdReturnsStructuredError();
   await testBatchRunsReadOnlyTasks();
@@ -167,6 +168,34 @@ async function testPassesTaskIdForResume() {
   assert.equal(result.status, "completed");
   assert.equal(result.task_id, "existing-task");
   assert.equal((result as { agent_type: string }).agent_type, "explore");
+}
+
+async function testBackgroundPassesTaskIdForResume() {
+  let observedTaskId: string | undefined;
+  const result = await executeAgentTool({
+    description: "Resume in background",
+    prompt: "Continue later.",
+    subagent_type: "explore",
+    run_in_background: true,
+    task_id: "background-existing-task"
+  }, createTestContext({
+    launchSubagentTask: async (input) => {
+      observedTaskId = input.taskId;
+      return {
+        taskId: input.taskId ?? "missing",
+        agentType: input.agentType,
+        description: input.description,
+        status: "running",
+        model: "test-model",
+        maxSteps: 4,
+        startedAt: "2026-05-06T00:00:00.000Z"
+      };
+    }
+  }));
+
+  assert.equal(observedTaskId, "background-existing-task");
+  assert.equal(result.status, "async_launched");
+  assert.equal(result.task_id, "background-existing-task");
 }
 
 async function testUnknownTaskIdReturnsStructuredError() {

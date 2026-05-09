@@ -58,10 +58,25 @@ import { SessionHistoryStore } from "../core/session-history/sessionStorage.js";
 import type {
   SessionHistoryListItem,
   SessionHistoryRewindMode,
+  SessionHistorySubagentEvent,
+  SessionHistorySubagentTaskIndexItem,
   SessionHistoryUiMessage,
   SessionId,
   SessionResumePayload
 } from "../core/session-history/types.js";
+import { SubagentHistoryStore } from "../core/subagent-history/historyStore.js";
+import { migrateLegacySubagentTasks } from "../core/subagent-history/legacyMigration.js";
+import {
+  cleanupSubagentStorageArtifacts,
+  type SubagentStorageCleanupReport
+} from "../core/subagent-history/storageCleanup.js";
+import { SubagentTaskStorage } from "../core/subagent-history/storagePaths.js";
+import {
+  SUBAGENT_METADATA_VERSION,
+  type SubagentMetadataV1,
+  type SubagentTranscriptEntry,
+  type SubagentTranscriptToolEvent
+} from "../core/subagent-history/types.js";
 import { formatCurrentDateLabel, formatSystemDateTime, getSystemTimeZone } from "../core/time/systemTime.js";
 import { createProjectMcpRuntime } from "../mcp/runtime.js";
 import { getRegisteredToolNames, getToolSchemasByName } from "../tools/registry.js";
@@ -80,6 +95,7 @@ import type {
   SubagentProgressEvent,
   SubagentTaskInfo,
   SubagentTaskLaunchResult,
+  SubagentTaskStatus,
   SubagentTaskStopResult,
   SubagentRunInput,
   SubagentRunResult,
@@ -93,9 +109,9 @@ import {
   MAX_SUBAGENT_PROGRESS_DETAIL_CHARS,
   MAX_SUBAGENT_PROGRESS_EVENTS,
   MAX_SUBAGENT_PROGRESS_MESSAGE_CHARS,
-  normalizePersistedSubagentProgress,
   truncateProgressText
 } from "./subagentProgress.js";
+import { prepareResumableSubagentMessages } from "./subagentResumeMessages.js";
 
 export type SessionMessage = OpenAI.Chat.Completions.ChatCompletionMessageParam;
 export type FileReadStateSnapshot = Map<string, FileReadState>;
@@ -115,11 +131,16 @@ interface SubagentSession {
   description: string;
   model: string;
   maxSteps: number;
+  parentSessionId: SessionId;
+  transcriptPath: string;
+  metadataPath: string;
+  outputPath: string;
   createdAt: string;
   updatedAt: string;
   status: SubagentTaskInfo["status"];
   startedAt?: string;
   completedAt?: string;
+  evictAfter?: number;
   output?: string;
   error?: string;
   controller?: AbortController;
@@ -133,35 +154,9 @@ interface SubagentSession {
   hasChanges?: boolean;
   baseWorkspaceRoot?: string;
   messages: SessionMessage[];
+  transcriptSyncedMessageCount: number;
   contextBudgetService: ContextBudgetService;
   conversationCompactor: ConversationCompactor;
-}
-
-interface PersistedSubagentTaskFile {
-  version: 1;
-  tasks: PersistedSubagentTask[];
-}
-
-interface PersistedSubagentTask {
-  taskId: string;
-  agentType: string;
-  description: string;
-  model: string;
-  maxSteps: number;
-  createdAt: string;
-  updatedAt: string;
-  status: SubagentSession["status"];
-  startedAt?: string;
-  completedAt?: string;
-  output?: string;
-  error?: string;
-  progress?: SubagentProgressEvent[];
-  worktreePath?: string;
-  diffSummary?: string;
-  hasChanges?: boolean;
-  isolateWorktree?: boolean;
-  baseWorkspaceRoot?: string;
-  messages: SessionMessage[];
 }
 
 interface PromptRuntimeContextOptions {
@@ -218,6 +213,7 @@ export interface SessionRuntime {
     uiBaseMessageCount: number;
   }) => Promise<void>;
   recordSessionMemory: (sessionMemory?: SessionMemoryFileState | null) => Promise<void>;
+  recordSessionSubagentEvent: (event: SessionHistorySubagentEvent) => Promise<void>;
   recordSessionRewind: (options: {
     apiMessageCount: number;
     uiMessageCount: number;
@@ -234,6 +230,7 @@ export interface SessionRuntime {
     excludeCurrent?: boolean;
   }) => Promise<SessionHistoryListItem[]>;
   resumeSessionHistory: (sessionId: SessionId) => Promise<SessionResumePayload>;
+  runSubagentStorageCleanup: (options?: { apply?: boolean }) => Promise<SubagentStorageCleanupReport>;
   buildContextPreview: (nextUserInput?: string, options?: { abortSignal?: AbortSignal }) => Promise<string>;
   getContextBudgetService: () => ContextBudgetService;
   estimateContextBudget: (options?: {
@@ -278,6 +275,10 @@ export interface SessionRuntime {
   }) => ToolExecutionContext;
 }
 
+const SUBAGENT_TERMINAL_MEMORY_RETENTION_MS = 30_000;
+const SUBAGENT_MEMORY_GC_INTERVAL_MS = 5_000;
+const HISTORICAL_SUBAGENT_RUNNING_ERROR = "Task is not running in this process.";
+
 function getCurrentDateLabel(now = new Date()) {
   // 不用 UTC 截日，避免本地时间接近零点时把 prompt 里的日期算错一天。
   return formatCurrentDateLabel(now);
@@ -298,6 +299,7 @@ export function getHelpText(currentModel: string) {
     "  /memory            Show memory snapshot",
     "  /memory clear      Clear session memory",
     "  /memory clear --all  Clear session and persistent memory",
+    "  /tasks cleanup [--apply]  Scan or clean stale subagent storage artifacts",
     "  /context [text]    Show full next-turn AI context payload",
     "  /model <name>      Switch model and persist it (current: " + currentModel + ")",
     "  /exit              Quit",
@@ -392,12 +394,26 @@ export async function createSessionRuntime(
   const mcpRuntime = await createProjectMcpRuntime(config.paths.workspaceRoot);
   const fileReadState = new Map<string, FileReadState>();
   const subagentSessions = new Map<string, SubagentSession>();
-  const tasksDirectory = path.join(config.paths.alyceDirectory, "tasks");
-  const tasksFilePath = path.join(tasksDirectory, "tasks.json");
+  // 只缓存“当前主会话”的轻量任务索引，用于 TaskList/TaskGet 的跨重启恢复。
+  const currentSessionTaskIndex = new Map<string, SessionHistorySubagentTaskIndexItem>();
+  const subagentTaskStorage = new SubagentTaskStorage({
+    alyceDirectory: config.paths.alyceDirectory,
+    getCurrentSessionId: () => sessionHistory.getCurrentSessionId()
+  });
+  const subagentHistoryStore = new SubagentHistoryStore();
   const getWorktreesDirectory = () =>
     path.join(os.tmpdir(), "alyce-agent-worktrees", sessionHistory.getCurrentSessionId());
-  let subagentTaskPersistQueue: Promise<void> = Promise.resolve();
-  await loadPersistedSubagentTasks();
+  await migrateLegacySubagentTasks({
+    storage: subagentTaskStorage,
+    historyStore: subagentHistoryStore
+  }).catch(() => undefined);
+  const subagentMemoryGcTimer = setInterval(
+    () => {
+      evictExpiredSubagentSessionsFromMemory();
+    },
+    SUBAGENT_MEMORY_GC_INTERVAL_MS
+  );
+  subagentMemoryGcTimer.unref?.();
 
   const getAllowedRootsSnapshot = () =>
     resolveAllowedRoots(config.paths.workspaceRoot, settings, sessionAdditionalDirectories);
@@ -503,7 +519,7 @@ export async function createSessionRuntime(
   };
 
   const resetVolatileConversationState = async () => {
-    const interruptedSubagents = abortRunningSubagentTasks();
+    abortRunningSubagentTasks();
     await memoryService.clearSession();
     conversationCompactor.clear();
     promptResolver.clearSessionCache();
@@ -512,9 +528,7 @@ export async function createSessionRuntime(
     sessionAdditionalDirectories = [];
     sessionMemoryTrigger.clear();
     sessionMemoryExtractor.clear();
-    if (interruptedSubagents) {
-      await persistSubagentTasks();
-    }
+    evictExpiredSubagentSessionsFromMemory();
   };
 
   const createFileReadStateSnapshot = (): FileReadStateSnapshot =>
@@ -680,6 +694,7 @@ export async function createSessionRuntime(
       // 清空会话时保留连接与设置，仅重置对话、记忆缓存和文件回滚历史。
       await sessionHistory.flush();
       sessionHistory.startNewSession();
+      currentSessionTaskIndex.clear();
       await resetVolatileConversationState();
       memoryService.setSessionMemorySourcePath(getSessionMemorySourcePath());
       messages.splice(1);
@@ -702,10 +717,14 @@ export async function createSessionRuntime(
         sessionMemory === undefined ? memoryService.getSessionMemory() : sessionMemory
       );
     },
+    recordSessionSubagentEvent: async (event) => {
+      await sessionHistory.recordSubagentEvent(event);
+    },
     recordSessionRewind: async (options) => {
       await sessionHistory.recordRewind(options);
     },
     flushSessionHistory: async () => {
+      clearInterval(subagentMemoryGcTimer);
       await sessionHistory.flush();
       await mcpRuntime.close();
     },
@@ -724,6 +743,7 @@ export async function createSessionRuntime(
       const resume = prepareSessionResume(loaded);
       sessionHistory.adoptExistingSession(resume.sessionId, loaded.lastSequence);
       await resetVolatileConversationState();
+      applySubagentTaskIndex(resume.sessionId, resume.subagentTaskIndex);
       memoryService.setSessionMemory(resume.sessionMemory);
       memoryService.setSessionMemorySourcePath(getSessionMemorySourcePath());
       messages.splice(
@@ -736,6 +756,14 @@ export async function createSessionRuntime(
         ...resume.apiMessages
       );
       return resume;
+    },
+    runSubagentStorageCleanup: async (options = {}) => {
+      const report = await cleanupSubagentStorageArtifacts({
+        storage: subagentTaskStorage,
+        apply: options.apply === true
+      });
+      evictExpiredSubagentSessionsFromMemory(true);
+      return report;
     },
     buildContextPreview: async (nextUserInput, options = {}) => {
       const previewTimestamp = formatSystemDateTime(new Date());
@@ -933,11 +961,367 @@ export async function createSessionRuntime(
       }),
       listSubagentTasks: () => listSubagentTasks(),
       getSubagentTask: (taskId) => getSubagentTask(taskId),
+      recordSubagentTaskRetrieved: async (taskId) => {
+        const session = subagentSessions.get(taskId);
+        if (!session || !isCurrentSessionSubagent(session)) {
+          return;
+        }
+
+        try {
+          await recordSubagentSessionEvent(session, "subagent-retrieved", "Task output retrieved via TaskGet.");
+        } catch {
+          // Retrieval logging is best-effort and must not fail TaskGet.
+        }
+      },
       stopSubagentTask: (taskId) => stopSubagentTask(taskId),
       getSubagentDefinition: (type) => loadSubagentDefinition(config.paths.workspaceRoot, type),
       listSubagentDefinitions: () => loadSubagentDefinitions(config.paths.workspaceRoot)
     })
   };
+
+  function isCurrentSessionSubagent(session: SubagentSession) {
+    return session.parentSessionId === sessionHistory.getCurrentSessionId();
+  }
+
+  function isTerminalSubagentStatus(status: SubagentTaskStatus): boolean {
+    return status === "completed" || status === "failed" || status === "stopped";
+  }
+
+  function scheduleTerminalSubagentEviction(
+    session: SubagentSession,
+    nowMs = Date.now()
+  ) {
+    if (!isTerminalSubagentStatus(session.status)) {
+      session.evictAfter = undefined;
+      return;
+    }
+
+    if (session.evictAfter === undefined) {
+      session.evictAfter = nowMs + SUBAGENT_TERMINAL_MEMORY_RETENTION_MS;
+    }
+  }
+
+  function evictExpiredSubagentSessionsFromMemory(force = false) {
+    const nowMs = Date.now();
+    for (const [taskId, session] of subagentSessions.entries()) {
+      if (session.status === "running") {
+        session.evictAfter = undefined;
+        continue;
+      }
+      if (!isTerminalSubagentStatus(session.status)) {
+        continue;
+      }
+      if (session.controller || session.promise) {
+        continue;
+      }
+
+      scheduleTerminalSubagentEviction(session, nowMs);
+      if (!force && (session.evictAfter ?? Infinity) > nowMs) {
+        continue;
+      }
+
+      if (isCurrentSessionSubagent(session)) {
+        upsertCurrentSessionTaskIndex(session);
+      }
+      subagentSessions.delete(taskId);
+    }
+  }
+
+  async function recordSubagentSessionEvent(
+    session: SubagentSession,
+    type: SessionHistorySubagentEvent["type"],
+    message?: string
+  ) {
+    await sessionHistory.recordSubagentEvent({
+      type,
+      taskId: session.taskId,
+      agentType: session.agentType,
+      description: session.description,
+      model: session.model,
+      maxSteps: session.maxSteps,
+      status: session.status,
+      ...(message ? { message } : {}),
+      ...(session.error ? { error: session.error } : {}),
+      ...(session.outputPath ? { outputPath: session.outputPath } : {}),
+      ...(session.startedAt ? { startedAt: session.startedAt } : {}),
+      ...(session.completedAt ? { completedAt: session.completedAt } : {}),
+      apiMessageCount: Math.max(0, messages.length - 1)
+    });
+    // 事件落盘后同步刷新当前会话索引，保证 TaskList/TaskGet 读到最新状态。
+    upsertCurrentSessionTaskIndex(session);
+  }
+
+  function toSessionTaskIndexItem(session: SubagentSession): SessionHistorySubagentTaskIndexItem {
+    return {
+      taskId: session.taskId,
+      agentType: session.agentType,
+      description: session.description,
+      model: session.model,
+      maxSteps: session.maxSteps,
+      status: session.status,
+      createdAt: session.createdAt,
+      updatedAt: session.updatedAt,
+      ...(session.startedAt ? { startedAt: session.startedAt } : {}),
+      ...(session.completedAt ? { completedAt: session.completedAt } : {}),
+      ...(session.error ? { error: session.error } : {}),
+      ...(session.outputPath ? { outputPath: session.outputPath } : {})
+    };
+  }
+
+  function upsertCurrentSessionTaskIndex(session: SubagentSession) {
+    if (!isCurrentSessionSubagent(session)) {
+      return;
+    }
+
+    currentSessionTaskIndex.set(session.taskId, toSessionTaskIndexItem(session));
+  }
+
+  function applySubagentTaskIndex(
+    sessionId: SessionId,
+    taskIndex: SessionHistorySubagentTaskIndexItem[]
+  ) {
+    currentSessionTaskIndex.clear();
+    for (const item of taskIndex) {
+      const normalizedItem = normalizeHistoricalTaskIndexItem({ ...item });
+      currentSessionTaskIndex.set(normalizedItem.taskId, normalizedItem);
+    }
+
+    for (const [taskId, session] of subagentSessions.entries()) {
+      if (session.parentSessionId === sessionId) {
+        subagentSessions.delete(taskId);
+      }
+    }
+
+    // 历史任务仅保留在轻量索引中，按需（TaskGet/TaskStop/resume task_id）再懒加载到内存。
+  }
+
+  function normalizeHistoricalTaskIndexItem(
+    item: SessionHistorySubagentTaskIndexItem
+  ): SessionHistorySubagentTaskIndexItem {
+    if (item.status !== "running") {
+      return item;
+    }
+
+    const now = new Date().toISOString();
+    return {
+      ...item,
+      status: "failed",
+      updatedAt: now,
+      completedAt: item.completedAt ?? now,
+      error: item.error ?? HISTORICAL_SUBAGENT_RUNNING_ERROR
+    };
+  }
+
+  function createIndexedSubagentSession(
+    indexItem: SessionHistorySubagentTaskIndexItem,
+    sessionId: SessionId
+  ): SubagentSession {
+    const storageIdentity = subagentTaskStorage.getStorageIdentity(indexItem.taskId, sessionId);
+    return {
+      taskId: indexItem.taskId,
+      agentType: indexItem.agentType,
+      description: indexItem.description,
+      model: indexItem.model,
+      maxSteps: indexItem.maxSteps,
+      parentSessionId: sessionId,
+      transcriptPath: storageIdentity.transcriptPath,
+      metadataPath: storageIdentity.metadataPath,
+      outputPath: indexItem.outputPath ?? storageIdentity.outputPath,
+      createdAt: indexItem.createdAt,
+      updatedAt: indexItem.updatedAt,
+      status: indexItem.status,
+      startedAt: indexItem.startedAt,
+      completedAt: indexItem.completedAt,
+      evictAfter: isTerminalSubagentStatus(indexItem.status)
+        ? Date.now() + SUBAGENT_TERMINAL_MEMORY_RETENTION_MS
+        : undefined,
+      output: undefined,
+      error: indexItem.error,
+      progress: [],
+      messages: [],
+      transcriptSyncedMessageCount: 0,
+      contextBudgetService: createContextBudgetService(settings),
+      conversationCompactor: new ConversationCompactor(createConversationCompactionConfig(settings))
+    };
+  }
+
+  function getIndexedSubagentSession(taskId: string): SubagentSession | undefined {
+    const indexItem = currentSessionTaskIndex.get(taskId);
+    if (!indexItem) {
+      return undefined;
+    }
+
+    const normalizedItem = normalizeHistoricalTaskIndexItem(indexItem);
+    if (normalizedItem !== indexItem) {
+      currentSessionTaskIndex.set(taskId, normalizedItem);
+    }
+
+    const session = createIndexedSubagentSession(
+      normalizedItem,
+      sessionHistory.getCurrentSessionId()
+    );
+    subagentSessions.set(taskId, session);
+    return session;
+  }
+
+  function toSubagentTaskInfoFromIndex(
+    item: SessionHistorySubagentTaskIndexItem,
+    session?: SubagentSession
+  ): SubagentTaskInfo {
+    return {
+      taskId: item.taskId,
+      agentType: item.agentType,
+      description: item.description,
+      model: item.model,
+      maxSteps: item.maxSteps,
+      status: session?.status ?? item.status,
+      createdAt: item.createdAt,
+      updatedAt: session?.updatedAt ?? item.updatedAt,
+      ...(session?.startedAt ?? item.startedAt ? { startedAt: session?.startedAt ?? item.startedAt } : {}),
+      ...(session?.completedAt ?? item.completedAt ? { completedAt: session?.completedAt ?? item.completedAt } : {}),
+      ...(session?.output !== undefined ? { output: session.output } : {}),
+      ...(session?.error ?? item.error ? { error: session?.error ?? item.error } : {}),
+      progress: session?.progress ?? []
+    };
+  }
+
+  function mapTranscriptEntryToProgressEvent(entry: SubagentTranscriptEntry): SubagentProgressEvent | null {
+    if (entry.type === "tool-event") {
+      return {
+        timestamp: entry.timestamp,
+        type: entry.event.phase === "start" ? "tool_start" : "tool_result",
+        message: entry.event.phase === "start"
+          ? `Running ${entry.event.toolName}`
+          : `Finished ${entry.event.toolName}`,
+        toolName: entry.event.toolName,
+        rawArguments: entry.event.rawArguments,
+        result: entry.event.result
+      };
+    }
+
+    if (entry.type === "status") {
+      return {
+        timestamp: entry.timestamp,
+        type: "status",
+        message: entry.message
+      };
+    }
+
+    return null;
+  }
+
+  async function hydrateSubagentSessionFromDisk(session: SubagentSession) {
+    if (session.status === "running") {
+      return;
+    }
+
+    // 已经加载过输出和进度时不重复扫描 transcript，降低 TaskGet 的 IO 成本。
+    if (session.output !== undefined && session.progress.length > 0) {
+      return;
+    }
+
+    if (session.output === undefined) {
+      try {
+        const output = await subagentHistoryStore.readOutput(session.outputPath);
+        if (output !== undefined) {
+          session.output = output;
+        }
+      } catch {
+        // 输出文件缺失或读取失败时，继续走 transcript 回退，不阻塞工具响应。
+      }
+    }
+
+    const transcriptEntries = await subagentHistoryStore.readTranscriptEntries(session.transcriptPath);
+    if (session.progress.length === 0) {
+      const progress = transcriptEntries
+        .map(mapTranscriptEntryToProgressEvent)
+        .filter((event): event is SubagentProgressEvent => event !== null);
+      if (progress.length > 0) {
+        session.progress = progress.slice(-MAX_SUBAGENT_PROGRESS_EVENTS);
+      }
+    }
+
+    const terminalStatuses = transcriptEntries
+      .filter((entry): entry is Extract<SubagentTranscriptEntry, { type: "status" }> => entry.type === "status");
+    const lastStatus = terminalStatuses.at(-1);
+    if (lastStatus) {
+      if (!session.error && lastStatus.error) {
+        session.error = lastStatus.error;
+      }
+      if (session.output === undefined && lastStatus.output !== undefined) {
+        session.output = lastStatus.output;
+      }
+      if (!session.startedAt && lastStatus.startedAt) {
+        session.startedAt = lastStatus.startedAt;
+      }
+      if (!session.completedAt && lastStatus.completedAt) {
+        session.completedAt = lastStatus.completedAt;
+      }
+    }
+
+    scheduleTerminalSubagentEviction(session);
+  }
+
+  async function hydrateResumableSubagentSession(
+    session: SubagentSession,
+    expectedAgentType: string
+  ) {
+    const metadata = await subagentHistoryStore.readMetadata(session.metadataPath);
+    if (!metadata) {
+      throw new Error(
+        `Cannot resume task_id ${session.taskId} because metadata is missing: ${session.metadataPath}`
+      );
+    }
+
+    if (metadata.parentSessionId !== sessionHistory.getCurrentSessionId()) {
+      throw new Error(`Subagent task_id ${session.taskId} does not belong to the current session.`);
+    }
+
+    if (metadata.agentType !== expectedAgentType) {
+      throw new Error(
+        `Subagent task_id ${session.taskId} belongs to ${metadata.agentType}, not ${expectedAgentType}.`
+      );
+    }
+
+    let transcriptEntries: SubagentTranscriptEntry[];
+    try {
+      transcriptEntries = await subagentHistoryStore.readTranscriptEntriesRequired(session.transcriptPath);
+    } catch (error) {
+      if (error instanceof Error && error.message.startsWith("Subagent transcript not found:")) {
+        throw new Error(
+          `Cannot resume task_id ${session.taskId} because transcript is missing: ${session.transcriptPath}`
+        );
+      }
+
+      throw error;
+    }
+
+    const transcriptMessages = transcriptEntries
+      .filter((entry): entry is Extract<SubagentTranscriptEntry, { type: "api-message" }> => entry.type === "api-message")
+      .map((entry) => entry.message);
+    const resumableMessages = prepareResumableSubagentMessages(transcriptMessages);
+    if (resumableMessages.length === 0) {
+      throw new Error(`Cannot resume task_id ${session.taskId} because transcript contains no resumable messages.`);
+    }
+    if (resumableMessages[0]?.role !== "system") {
+      throw new Error(
+        `Cannot resume task_id ${session.taskId} because transcript is missing the initial system message.`
+      );
+    }
+
+    // 以 metadata 为权威恢复运行环境，确保 resume 后模型与 worktree 语义一致。
+    session.parentSessionId = metadata.parentSessionId;
+    session.agentType = metadata.agentType;
+    session.description = metadata.description;
+    session.model = metadata.model;
+    session.maxSteps = metadata.maxSteps;
+    session.worktreePath = metadata.worktreePath;
+    session.baseWorkspaceRoot = metadata.baseWorkspaceRoot;
+    session.messages = resumableMessages;
+    session.transcriptSyncedMessageCount = resumableMessages.length;
+
+    await hydrateSubagentSessionFromDisk(session);
+  }
 
   async function runSubagent(
     input: SubagentRunInput,
@@ -954,8 +1338,10 @@ export async function createSessionRuntime(
       session.error = undefined;
       session.completedAt = now;
       session.updatedAt = now;
+      scheduleTerminalSubagentEviction(session);
       appendSubagentProgress(session, "status", "Subagent completed.");
-      await persistSubagentTasks();
+      await writeSubagentTerminalArtifacts(session, "Subagent completed.");
+      await recordSubagentSessionEvent(session, "subagent-notification", "Subagent completed.");
     } catch (error) {
       const now = new Date().toISOString();
       const isInterrupted = isTurnInterruptedError(error, parentContextOptions.abortSignal);
@@ -967,12 +1353,21 @@ export async function createSessionRuntime(
           : String(error);
       session.completedAt = now;
       session.updatedAt = now;
+      scheduleTerminalSubagentEviction(session);
       appendSubagentProgress(
         session,
         "status",
         `${isInterrupted ? "Subagent interrupted" : "Subagent failed"}: ${session.error}`
       );
-      await persistSubagentTasks();
+      await writeSubagentTerminalArtifacts(
+        session,
+        isInterrupted ? "Subagent interrupted." : "Subagent failed."
+      );
+      await recordSubagentSessionEvent(
+        session,
+        "subagent-notification",
+        isInterrupted ? "Subagent interrupted." : "Subagent failed."
+      );
       throw error;
     }
 
@@ -1015,8 +1410,14 @@ export async function createSessionRuntime(
       session.updatedAt = now;
       session.controller = undefined;
       session.promise = undefined;
+      scheduleTerminalSubagentEviction(session);
       appendSubagentProgress(session, "status", "Background subagent completed.");
-      queuePersistSubagentTasks();
+      void writeSubagentTerminalArtifacts(session, "Background subagent completed.").catch(() => undefined);
+      void recordSubagentSessionEvent(
+        session,
+        "subagent-notification",
+        "Background subagent completed."
+      ).catch(() => undefined);
     }).catch((error: unknown) => {
       if (session.runToken !== runToken) {
         return;
@@ -1034,10 +1435,18 @@ export async function createSessionRuntime(
       session.updatedAt = now;
       session.controller = undefined;
       session.promise = undefined;
+      scheduleTerminalSubagentEviction(session);
       appendSubagentProgress(session, "status", `${wasStopped ? "Background subagent stopped" : "Background subagent failed"}: ${session.error}`);
-      queuePersistSubagentTasks();
+      void writeSubagentTerminalArtifacts(
+        session,
+        wasStopped ? "Background subagent stopped." : "Background subagent failed."
+      ).catch(() => undefined);
+      void recordSubagentSessionEvent(
+        session,
+        "subagent-notification",
+        wasStopped ? "Background subagent stopped." : "Background subagent failed."
+      ).catch(() => undefined);
     });
-    await persistSubagentTasks();
 
     return {
       taskId: session.taskId,
@@ -1056,21 +1465,25 @@ export async function createSessionRuntime(
       throw new Error(`Unknown subagent type: ${input.agentType}`);
     }
 
-    const configuredMaxSteps = input.maxSteps ?? agent.maxSteps ?? settings.maxSteps;
-    const maxSteps = Math.max(1, Math.min(settings.maxSteps, configuredMaxSteps));
-    const model = input.model ?? agent.model ?? connection.model;
+    const fallbackModel = input.model ?? agent.model ?? connection.model;
+    const fallbackConfiguredMaxSteps = input.maxSteps ?? agent.maxSteps ?? settings.maxSteps;
+    const fallbackMaxSteps = Math.max(1, Math.min(settings.maxSteps, fallbackConfiguredMaxSteps));
     const session = await getOrCreateSubagentSession(input, {
-      model,
+      model: fallbackModel,
       systemPrompt: await buildSubagentSystemPrompt({
         agentType: input.agentType,
         description: input.description,
-        model
+        model: fallbackModel
       }),
-      maxSteps
+      maxSteps: fallbackMaxSteps
     });
     if (session.status === "running" && session.promise) {
       throw new Error(`Subagent task_id ${session.taskId} is already running.`);
     }
+
+    const configuredMaxSteps = input.maxSteps ?? session.maxSteps ?? agent.maxSteps ?? settings.maxSteps;
+    const maxSteps = Math.max(1, Math.min(settings.maxSteps, configuredMaxSteps));
+    const model = input.model ?? session.model ?? agent.model ?? connection.model;
 
     const now = new Date().toISOString();
     const isExistingSession = session.startedAt !== undefined;
@@ -1081,12 +1494,13 @@ export async function createSessionRuntime(
       content: input.prompt
     });
     session.description = input.description;
-    session.model = input.model ?? agent.model ?? session.model;
+    session.model = model;
     session.maxSteps = maxSteps;
     session.status = "running";
     session.error = undefined;
     session.output = undefined;
     session.completedAt = undefined;
+    session.evictAfter = undefined;
     session.promise = undefined;
     session.controller = undefined;
     session.runToken = runToken;
@@ -1101,7 +1515,9 @@ export async function createSessionRuntime(
     session.startedAt = now;
     session.updatedAt = now;
     appendSubagentProgress(session, "status", `Subagent started: ${input.description}`);
-    await persistSubagentTasks();
+    await writeSubagentMetadata(session);
+    await appendSubagentStatusEntry(session, `Subagent started: ${input.description}`);
+    await recordSubagentSessionEvent(session, "subagent-started", `Subagent started: ${input.description}`);
 
     return session;
   }
@@ -1138,7 +1554,6 @@ export async function createSessionRuntime(
       }
 
       appendSubagentProgress(session, type, message, patch);
-      queuePersistSubagentTasks();
     };
     session.messages[0] = {
       role: "system",
@@ -1148,6 +1563,8 @@ export async function createSessionRuntime(
         model: session.model
       }, workspaceRoot)
     };
+    await writeSubagentMetadata(session);
+    await appendUnsyncedSubagentMessages(session);
 
     const subagentContext: ToolExecutionContext = {
       workspaceRoot,
@@ -1190,7 +1607,7 @@ export async function createSessionRuntime(
     };
 
     try {
-      return await runAgentTurn(clientForSubagent, session.messages, {
+      const output = await runAgentTurn(clientForSubagent, session.messages, {
         model: session.model,
         maxSteps: session.maxSteps,
         querySource: "subagent",
@@ -1231,6 +1648,11 @@ export async function createSessionRuntime(
             toolName,
             rawArguments
           });
+          void appendSubagentToolEvent(session, {
+            phase: "start",
+            toolName,
+            rawArguments
+          }).catch(() => undefined);
         },
         onToolCallResult: (toolName, result, rawArguments) => {
           recordProgress("tool_result", `Finished ${toolName}`, {
@@ -1238,8 +1660,22 @@ export async function createSessionRuntime(
             rawArguments,
             result
           });
+          void appendSubagentToolEvent(session, {
+            phase: "result",
+            toolName,
+            rawArguments,
+            result
+          }).catch(() => undefined);
+        },
+        onMessagesAppended: async () => {
+          await appendUnsyncedSubagentMessages(session);
         }
       });
+      await appendUnsyncedSubagentMessages(session);
+      return output;
+    } catch (error) {
+      await appendUnsyncedSubagentMessages(session).catch(() => undefined);
+      throw error;
     } finally {
       if (isCurrentRun()) {
         await finalizeSubagentWorkspace(session);
@@ -1256,9 +1692,15 @@ export async function createSessionRuntime(
     }
   ): Promise<SubagentSession> {
     if (input.taskId) {
-      const existing = subagentSessions.get(input.taskId);
+      let existing = subagentSessions.get(input.taskId);
+      if (!existing) {
+        existing = getIndexedSubagentSession(input.taskId);
+      }
       if (!existing) {
         throw new Error(`Unknown subagent task_id: ${input.taskId}`);
+      }
+      if (!isCurrentSessionSubagent(existing)) {
+        throw new Error(`Subagent task_id ${input.taskId} does not belong to the current session.`);
       }
 
       if (existing.agentType !== input.agentType) {
@@ -1267,10 +1709,15 @@ export async function createSessionRuntime(
         );
       }
 
+      if (!(existing.status === "running" && existing.promise)) {
+        await hydrateResumableSubagentSession(existing, input.agentType);
+      }
+
       return existing;
     }
 
     const taskId = randomUUID();
+    const storageIdentity = subagentTaskStorage.getStorageIdentity(taskId);
     const now = new Date().toISOString();
     const session: SubagentSession = {
       taskId,
@@ -1278,6 +1725,10 @@ export async function createSessionRuntime(
       description: input.description,
       model: options.model,
       maxSteps: options.maxSteps,
+      parentSessionId: storageIdentity.parentSessionId,
+      transcriptPath: storageIdentity.transcriptPath,
+      metadataPath: storageIdentity.metadataPath,
+      outputPath: storageIdentity.outputPath,
       createdAt: now,
       updatedAt: now,
       status: "completed",
@@ -1289,83 +1740,126 @@ export async function createSessionRuntime(
         },
         ...(input.forkContext ? buildForkContextMessages() : [])
       ],
+      transcriptSyncedMessageCount: 0,
       contextBudgetService: createContextBudgetService(settings),
       conversationCompactor: new ConversationCompactor(createConversationCompactionConfig(settings))
     };
     subagentSessions.set(taskId, session);
-    await persistSubagentTasks();
     return session;
   }
 
   function listSubagentTasks(): SubagentTaskInfo[] {
-    return [...subagentSessions.values()]
-      .map(toSubagentTaskInfo)
-      .sort((left, right) => right.updatedAt.localeCompare(left.updatedAt));
+    evictExpiredSubagentSessionsFromMemory();
+    const merged = new Map<string, SubagentTaskInfo>();
+
+    // 先放入轻量索引，保证“历史任务”在没有活跃内存会话时仍可见。
+    for (const item of currentSessionTaskIndex.values()) {
+      merged.set(item.taskId, toSubagentTaskInfoFromIndex(item));
+    }
+
+    // 再用内存态覆盖索引态，确保运行中任务和最新状态优先展示。
+    for (const session of subagentSessions.values()) {
+      if (!isCurrentSessionSubagent(session)) {
+        continue;
+      }
+
+      merged.set(session.taskId, toSubagentTaskInfo(session));
+    }
+
+    return [...merged.values()].sort((left, right) => right.updatedAt.localeCompare(left.updatedAt));
   }
 
-  function getSubagentTask(taskId: string): SubagentTaskInfo | undefined {
-    const session = subagentSessions.get(taskId);
-    return session ? toSubagentTaskInfo(session) : undefined;
+  async function getSubagentTask(taskId: string): Promise<SubagentTaskInfo | undefined> {
+    evictExpiredSubagentSessionsFromMemory();
+    let session = subagentSessions.get(taskId);
+    if (session && !isCurrentSessionSubagent(session)) {
+      return undefined;
+    }
+    if (!session) {
+      session = getIndexedSubagentSession(taskId);
+    }
+    if (!session) {
+      return undefined;
+    }
+
+    await hydrateSubagentSessionFromDisk(session);
+    upsertCurrentSessionTaskIndex(session);
+    return toSubagentTaskInfo(session);
   }
 
   async function stopSubagentTask(taskId: string): Promise<SubagentTaskStopResult> {
     const session = subagentSessions.get(taskId);
-    if (!session) {
-      return {
-        taskId,
-        status: "not_found",
-        message: `Unknown subagent task_id: ${taskId}`
-      };
-    }
+    if (session && isCurrentSessionSubagent(session)) {
+      if (session.status !== "running") {
+        return {
+          taskId,
+          status: session.status,
+          message: `Subagent task is already ${session.status}.`,
+          task: toSubagentTaskInfo(session)
+        };
+      }
 
-    if (session.status !== "running") {
+      session.controller?.abort("task-stop");
+      const now = new Date().toISOString();
+      session.status = "stopped";
+      session.error = "Subagent task was stopped by TaskStop.";
+      session.completedAt = now;
+      session.updatedAt = now;
+      scheduleTerminalSubagentEviction(session);
+      appendSubagentProgress(session, "status", "Subagent task stop requested.");
+      await writeSubagentTerminalArtifacts(session, "Subagent task stop requested.");
+      await recordSubagentSessionEvent(session, "subagent-stopped", "Subagent task stop requested.");
+
       return {
         taskId,
         status: session.status,
-        message: `Subagent task is already ${session.status}.`,
+        message: "Stop requested for background subagent task.",
+        stopRequested: true,
         task: toSubagentTaskInfo(session)
       };
     }
 
-    session.controller?.abort("task-stop");
-    const now = new Date().toISOString();
-    session.status = "stopped";
-    session.error = "Subagent task was stopped by TaskStop.";
-    session.completedAt = now;
-    session.updatedAt = now;
-    appendSubagentProgress(session, "status", "Subagent task stop requested.");
-    await persistSubagentTasks();
-
+    // 任务不在当前进程运行态时，回退到会话索引，返回可解释的终态信息。
+    const indexItem = currentSessionTaskIndex.get(taskId);
+    if (indexItem) {
+      const normalizedItem = normalizeHistoricalTaskIndexItem(indexItem);
+      if (normalizedItem !== indexItem) {
+        currentSessionTaskIndex.set(taskId, normalizedItem);
+      }
+      return {
+        taskId,
+        status: normalizedItem.status,
+        message: normalizedItem.status === "failed"
+          ? "Historical task is not running in this process and was marked failed."
+          : `Historical task is already ${normalizedItem.status}.`,
+        task: toSubagentTaskInfoFromIndex(normalizedItem)
+      };
+    }
     return {
       taskId,
-      status: session.status,
-      message: "Stop requested for background subagent task.",
-      stopRequested: true,
-      task: toSubagentTaskInfo(session)
+      status: "not_found",
+      message: `Unknown subagent task_id: ${taskId}`
     };
   }
 
   function abortRunningSubagentTasks() {
-    let interrupted = false;
     for (const session of subagentSessions.values()) {
       if (session.status !== "running") {
         continue;
       }
 
-      interrupted = true;
       session.controller?.abort("session-reset");
       const now = new Date().toISOString();
       session.status = "failed";
       session.error = "Subagent task was interrupted by session reset.";
       session.completedAt = now;
       session.updatedAt = now;
+      scheduleTerminalSubagentEviction(session);
       session.controller = undefined;
       session.promise = undefined;
       session.runToken = randomUUID();
       appendSubagentProgress(session, "status", "Subagent task interrupted by session reset.");
     }
-
-    return interrupted;
   }
 
   function toSubagentTaskInfo(session: SubagentSession): SubagentTaskInfo {
@@ -1415,112 +1909,114 @@ export async function createSessionRuntime(
     session.updatedAt = new Date().toISOString();
   }
 
-  async function loadPersistedSubagentTasks() {
-    let parsed: PersistedSubagentTaskFile;
-    try {
-      const raw = await fs.readFile(tasksFilePath, "utf8");
-      parsed = JSON.parse(raw) as PersistedSubagentTaskFile;
-    } catch {
-      return;
-    }
-
-    if (parsed.version !== 1 || !Array.isArray(parsed.tasks)) {
-      return;
-    }
-
-    let migrated = false;
-    for (const task of parsed.tasks) {
-      if (!isPersistedSubagentTask(task)) {
-        continue;
-      }
-
-      const wasRunning = task.status === "running";
-      const restoredSession: SubagentSession = {
-        taskId: task.taskId,
-        agentType: task.agentType,
-        description: task.description,
-        model: task.model,
-        maxSteps: task.maxSteps,
-        createdAt: task.createdAt,
-        updatedAt: task.updatedAt,
-        status: wasRunning ? "failed" : task.status,
-        startedAt: task.startedAt,
-        completedAt: task.completedAt,
-        output: task.output,
-        error: wasRunning
-          ? "Subagent task was interrupted because Alyce restarted."
-          : task.error,
-        progress: normalizePersistedSubagentProgress(task.progress),
-        worktreePath: task.worktreePath,
-        diffSummary: task.diffSummary,
-        hasChanges: task.hasChanges,
-        isolateWorktree: task.isolateWorktree,
-        baseWorkspaceRoot: task.baseWorkspaceRoot,
-        messages: task.messages,
-        contextBudgetService: createContextBudgetService(settings),
-        conversationCompactor: new ConversationCompactor(createConversationCompactionConfig(settings))
-      };
-
-      if (wasRunning) {
-        restoredSession.completedAt = new Date().toISOString();
-        appendSubagentProgress(
-          restoredSession,
-          "status",
-          "Subagent task marked failed because Alyce restarted before it completed."
-        );
-        migrated = true;
-      }
-
-      subagentSessions.set(task.taskId, restoredSession);
-    }
-
-    if (migrated) {
-      queuePersistSubagentTasks();
-    }
-  }
-
-  async function persistSubagentTasks() {
-    const payload = createPersistedSubagentTaskPayload();
-
-    subagentTaskPersistQueue = subagentTaskPersistQueue
-      .catch(() => undefined)
-      .then(async () => {
-        await fs.mkdir(tasksDirectory, { recursive: true });
-        await fs.writeFile(tasksFilePath, JSON.stringify(payload, null, 2), "utf8");
-      });
-
-    await subagentTaskPersistQueue;
-  }
-
-  function queuePersistSubagentTasks() {
-    void persistSubagentTasks().catch(() => undefined);
-  }
-
-  function createPersistedSubagentTaskPayload(): PersistedSubagentTaskFile {
+  function createSubagentMetadata(session: SubagentSession): SubagentMetadataV1 {
     return {
-      version: 1,
-      tasks: [...subagentSessions.values()].map((session) => ({
-        taskId: session.taskId,
-        agentType: session.agentType,
-        description: session.description,
-        model: session.model,
-        maxSteps: session.maxSteps,
-        createdAt: session.createdAt,
-        updatedAt: session.updatedAt,
-        status: session.status,
-        ...(session.startedAt ? { startedAt: session.startedAt } : {}),
-        ...(session.completedAt ? { completedAt: session.completedAt } : {}),
-        ...(session.output !== undefined ? { output: session.output } : {}),
-        ...(session.error !== undefined ? { error: session.error } : {}),
-        ...(session.progress.length > 0 ? { progress: session.progress } : {}),
-        ...(session.worktreePath ? { worktreePath: session.worktreePath } : {}),
-        ...(session.diffSummary ? { diffSummary: session.diffSummary } : {}),
-        ...(session.hasChanges !== undefined ? { hasChanges: session.hasChanges } : {}),
-        ...(session.isolateWorktree !== undefined ? { isolateWorktree: session.isolateWorktree } : {}),
-        ...(session.baseWorkspaceRoot ? { baseWorkspaceRoot: session.baseWorkspaceRoot } : {}),
-        messages: session.messages
-      }))
+      version: SUBAGENT_METADATA_VERSION,
+      agentId: session.taskId,
+      parentSessionId: session.parentSessionId,
+      agentType: session.agentType,
+      description: session.description,
+      model: session.model,
+      maxSteps: session.maxSteps,
+      createdAt: session.createdAt,
+      ...(session.worktreePath ? { worktreePath: session.worktreePath } : {}),
+      ...(session.baseWorkspaceRoot ? { baseWorkspaceRoot: session.baseWorkspaceRoot } : {})
     };
+  }
+
+  async function writeSubagentMetadata(session: SubagentSession) {
+    const metadata = createSubagentMetadata(session);
+    await subagentHistoryStore.writeMetadata(session.metadataPath, metadata);
+    await appendSubagentTranscriptEntries(session, [
+      {
+        type: "subagent-meta",
+        timestamp: new Date().toISOString(),
+        agentId: session.taskId,
+        parentSessionId: session.parentSessionId,
+        metadata
+      }
+    ]);
+  }
+
+  async function appendSubagentTranscriptEntries(
+    session: SubagentSession,
+    entries: SubagentTranscriptEntry[]
+  ) {
+    await subagentHistoryStore.appendTranscriptEntries(session.transcriptPath, entries);
+  }
+
+  async function appendUnsyncedSubagentMessages(session: SubagentSession) {
+    if (session.messages.length <= session.transcriptSyncedMessageCount) {
+      return;
+    }
+
+    const pendingMessages = session.messages
+      .slice(session.transcriptSyncedMessageCount)
+      .map((message) => cloneJson(message));
+    const timestamp = new Date().toISOString();
+    await appendSubagentTranscriptEntries(
+      session,
+      pendingMessages.map((message) => ({
+        type: "api-message",
+        timestamp,
+        agentId: session.taskId,
+        parentSessionId: session.parentSessionId,
+        message
+      }))
+    );
+    session.transcriptSyncedMessageCount = session.messages.length;
+  }
+
+  async function appendSubagentToolEvent(
+    session: SubagentSession,
+    event: SubagentTranscriptToolEvent
+  ) {
+    await appendSubagentTranscriptEntries(session, [
+      {
+        type: "tool-event",
+        timestamp: new Date().toISOString(),
+        agentId: session.taskId,
+        parentSessionId: session.parentSessionId,
+        event
+      }
+    ]);
+  }
+
+  async function appendSubagentStatusEntry(
+    session: SubagentSession,
+    message?: string
+  ) {
+    await appendSubagentTranscriptEntries(session, [
+      {
+        type: "status",
+        timestamp: new Date().toISOString(),
+        agentId: session.taskId,
+        parentSessionId: session.parentSessionId,
+        status: session.status,
+        ...(message ? { message } : {}),
+        ...(session.error ? { error: session.error } : {}),
+        ...(session.output !== undefined ? { output: session.output } : {}),
+        ...(session.startedAt ? { startedAt: session.startedAt } : {}),
+        ...(session.completedAt ? { completedAt: session.completedAt } : {})
+      }
+    ]);
+  }
+
+  async function persistSubagentOutputFile(session: SubagentSession) {
+    if (session.output === undefined) {
+      return;
+    }
+
+    await subagentHistoryStore.writeOutput(session.outputPath, session.output);
+  }
+
+  async function writeSubagentTerminalArtifacts(
+    session: SubagentSession,
+    statusMessage: string
+  ) {
+    await appendUnsyncedSubagentMessages(session);
+    await appendSubagentStatusEntry(session, statusMessage);
+    await persistSubagentOutputFile(session);
   }
 
   function buildForkContextMessages(): SessionMessage[] {
@@ -1583,6 +2079,7 @@ export async function createSessionRuntime(
 
     if (session.worktreePath && await pathExists(session.worktreePath)) {
       session.activeWorktreePath = session.worktreePath;
+      await writeSubagentMetadata(session);
       return session.worktreePath;
     }
 
@@ -1595,8 +2092,8 @@ export async function createSessionRuntime(
     session.worktreePath = worktreePath;
     session.activeWorktreePath = worktreePath;
     session.baseWorkspaceRoot = config.paths.workspaceRoot;
+    await writeSubagentMetadata(session);
     appendSubagentProgress(session, "status", `Created isolated git worktree: ${worktreePath}`);
-    await persistSubagentTasks();
     return worktreePath;
   }
 
@@ -1616,13 +2113,11 @@ export async function createSessionRuntime(
           ? "Isolated worktree has changes."
           : "Isolated worktree has no changes."
       );
-      await persistSubagentTasks();
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       session.diffSummary = `Unable to inspect isolated worktree: ${message}`;
       session.hasChanges = undefined;
       appendSubagentProgress(session, "status", session.diffSummary);
-      await persistSubagentTasks();
     }
   }
 
@@ -1631,30 +2126,6 @@ export async function createSessionRuntime(
       isKnownToolName(toolName) && isToolSchemaAllowedByPolicy(toolName, agent.policy)
     );
   }
-}
-
-function isPersistedSubagentTask(value: unknown): value is PersistedSubagentTask {
-  if (!value || typeof value !== "object") {
-    return false;
-  }
-
-  const record = value as Partial<PersistedSubagentTask>;
-  return typeof record.taskId === "string" &&
-    typeof record.agentType === "string" &&
-    typeof record.description === "string" &&
-    typeof record.model === "string" &&
-    typeof record.maxSteps === "number" &&
-    typeof record.createdAt === "string" &&
-    typeof record.updatedAt === "string" &&
-    isPersistedSubagentStatus(record.status) &&
-    Array.isArray(record.messages);
-}
-
-function isPersistedSubagentStatus(value: unknown): value is SubagentSession["status"] {
-  return value === "running" ||
-    value === "completed" ||
-    value === "failed" ||
-    value === "stopped";
 }
 
 function isPathInsideDirectory(directory: string, candidate: string): boolean {

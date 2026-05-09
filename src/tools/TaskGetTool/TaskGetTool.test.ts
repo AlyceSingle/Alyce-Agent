@@ -27,6 +27,8 @@ function createTestContext(
 
 async function runTests() {
   await testReturnsTaskOutput();
+  await testAwaitsAsyncTaskLookupAndRetrievedHook();
+  await testRecordsRetrievedEventWhenTaskExists();
   await testReturnsNotFound();
   await testRequiresRuntimeHook();
   console.log("TaskGet tests passed");
@@ -62,6 +64,71 @@ async function testReturnsNotFound() {
 
   assert.equal(result.status, "not_found");
   assert.equal(result.task_id, "missing-task");
+}
+
+async function testRecordsRetrievedEventWhenTaskExists() {
+  let recordedTaskId: string | null = null;
+  const task: SubagentTaskInfo = {
+    taskId: "task-2",
+    agentType: "review",
+    description: "Review",
+    model: "test-model",
+    maxSteps: 4,
+    status: "completed",
+    createdAt: "2026-05-06T00:00:00.000Z",
+    updatedAt: "2026-05-06T00:02:00.000Z",
+    progress: []
+  };
+
+  await executeTaskGetTool({
+    task_id: "task-2"
+  }, createTestContext(task, {
+    recordSubagentTaskRetrieved: async (taskId) => {
+      recordedTaskId = taskId;
+    }
+  }));
+
+  assert.equal(recordedTaskId, "task-2");
+}
+
+async function testAwaitsAsyncTaskLookupAndRetrievedHook() {
+  const timeline: string[] = [];
+  const task: SubagentTaskInfo = {
+    taskId: "task-async",
+    agentType: "review",
+    description: "Review async",
+    model: "test-model",
+    maxSteps: 4,
+    status: "completed",
+    createdAt: "2026-05-06T00:00:00.000Z",
+    updatedAt: "2026-05-06T00:02:00.000Z",
+    progress: []
+  };
+
+  const result = await executeTaskGetTool({
+    task_id: "task-async"
+  }, createTestContext(undefined, {
+    getSubagentTask: async () => {
+      timeline.push("lookup:start");
+      await Promise.resolve();
+      timeline.push("lookup:end");
+      return task;
+    },
+    recordSubagentTaskRetrieved: async (taskId, resolvedTask) => {
+      timeline.push(`record:start:${taskId}:${resolvedTask.taskId}`);
+      await Promise.resolve();
+      timeline.push("record:end");
+    }
+  }));
+
+  assert.equal(result.status, "completed");
+  assert.equal(result.task_id, "task-async");
+  assert.deepEqual(timeline, [
+    "lookup:start",
+    "lookup:end",
+    "record:start:task-async:task-async",
+    "record:end"
+  ]);
 }
 
 async function testRequiresRuntimeHook() {

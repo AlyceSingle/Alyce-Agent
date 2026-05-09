@@ -7,6 +7,7 @@ export function prepareSessionResume(history: LoadedSessionHistory): SessionResu
     apiMessages: history.apiMessages,
     uiMessages: history.uiMessages,
     messageCount: history.messageCount,
-    sessionMemory: history.sessionMemory
+    sessionMemory: history.sessionMemory,
+    subagentTaskIndex: history.subagentTaskIndex
   };
 }

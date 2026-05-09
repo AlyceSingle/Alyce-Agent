@@ -1,5 +1,6 @@
 import OpenAI from "openai";
 import type { SessionMemoryFileState } from "../memory/types.js";
+import type { SubagentTaskStatus } from "../../tools/types.js";
 import type {
   UiMessageBlock,
   UiMessageBlockStyle,
@@ -19,6 +20,11 @@ export const SESSION_HISTORY_SCHEMA_VERSION = 1;
 export type SessionId = string;
 export type SessionHistoryApiMessage = OpenAI.Chat.Completions.ChatCompletionMessageParam;
 export type SessionHistoryRewindMode = "conversation" | "code-and-conversation";
+export type SessionHistorySubagentEventType =
+  | "subagent-started"
+  | "subagent-notification"
+  | "subagent-stopped"
+  | "subagent-retrieved";
 
 export type SessionHistoryUiMessageKind = UiMessageKind;
 export type SessionHistoryUiMessageBlockTone = UiMessageBlockTone;
@@ -42,6 +48,38 @@ export interface SessionHistoryUiMessage {
   metadata: string[];
   createdAt: string;
   toolData?: SessionHistoryUiToolData;
+}
+
+export interface SessionHistorySubagentEvent {
+  type: SessionHistorySubagentEventType;
+  taskId: string;
+  agentType: string;
+  description: string;
+  model: string;
+  maxSteps: number;
+  status: SubagentTaskStatus;
+  message?: string;
+  error?: string;
+  outputPath?: string;
+  startedAt?: string;
+  completedAt?: string;
+  apiMessageCount?: number;
+  uiMessageCount?: number;
+}
+
+export interface SessionHistorySubagentTaskIndexItem {
+  taskId: string;
+  agentType: string;
+  description: string;
+  model: string;
+  maxSteps: number;
+  status: SubagentTaskStatus;
+  createdAt: string;
+  updatedAt: string;
+  startedAt?: string;
+  completedAt?: string;
+  error?: string;
+  outputPath?: string;
 }
 
 export type SessionHistoryEntry =
@@ -90,6 +128,34 @@ export type SessionHistoryEntry =
       restoredInput?: string;
       restoreMode?: SessionHistoryRewindMode;
       sessionMemory?: SessionMemoryFileState | null;
+    }
+  | {
+      type: "subagent-started";
+      sessionId: SessionId;
+      sequence: number;
+      timestamp: string;
+      event: SessionHistorySubagentEvent;
+    }
+  | {
+      type: "subagent-notification";
+      sessionId: SessionId;
+      sequence: number;
+      timestamp: string;
+      event: SessionHistorySubagentEvent;
+    }
+  | {
+      type: "subagent-stopped";
+      sessionId: SessionId;
+      sequence: number;
+      timestamp: string;
+      event: SessionHistorySubagentEvent;
+    }
+  | {
+      type: "subagent-retrieved";
+      sessionId: SessionId;
+      sequence: number;
+      timestamp: string;
+      event: SessionHistorySubagentEvent;
     };
 
 export interface LoadedSessionHistory {
@@ -104,6 +170,8 @@ export interface LoadedSessionHistory {
   apiMessages: SessionHistoryApiMessage[];
   uiMessages: SessionHistoryUiMessage[];
   sessionMemory: SessionMemoryFileState | null;
+  subagentTaskIndex: SessionHistorySubagentTaskIndexItem[];
+  subagentEvents: SessionHistorySubagentEvent[];
 }
 
 export interface SessionHistoryListItem {
@@ -123,4 +191,5 @@ export interface SessionResumePayload {
   uiMessages: SessionHistoryUiMessage[];
   messageCount: number;
   sessionMemory: SessionMemoryFileState | null;
+  subagentTaskIndex: SessionHistorySubagentTaskIndexItem[];
 }

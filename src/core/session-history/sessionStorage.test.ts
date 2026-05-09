@@ -17,6 +17,8 @@ async function runTests() {
   await testRestoredInputRewindUsesOriginalCheckpoint();
   await testRewindDropsCheckpointsFromPrunedBranches();
   await testRewindCheckpointPreservesNestedMessages();
+  await testSubagentEventsBuildTaskIndex();
+  await testRewindPrunesSubagentEventsByApiMessageCount();
   console.log("Session history storage tests passed");
 }
 
@@ -305,6 +307,86 @@ async function testRewindCheckpointPreservesNestedMessages() {
   assert.equal(restored.content?.[0]?.text, "root");
 }
 
+async function testSubagentEventsBuildTaskIndex() {
+  const directory = await fs.mkdtemp(path.join(os.tmpdir(), "alyce-session-history-subagent-index-"));
+  const store = new SessionHistoryStore({
+    sessionsDirectory: directory,
+    workspaceRoot: process.cwd(),
+    sessionId: SESSION_ID
+  });
+
+  await store.recordSubagentEvent({
+    type: "subagent-started",
+    taskId: "task-1",
+    agentType: "explore",
+    description: "Explore repo",
+    model: "test-model",
+    maxSteps: 5,
+    status: "running",
+    apiMessageCount: 1,
+    startedAt: "2026-05-07T00:00:00.000Z"
+  });
+  await store.recordSubagentEvent({
+    type: "subagent-notification",
+    taskId: "task-1",
+    agentType: "explore",
+    description: "Explore repo",
+    model: "test-model",
+    maxSteps: 5,
+    status: "completed",
+    apiMessageCount: 1,
+    completedAt: "2026-05-07T00:01:00.000Z"
+  });
+
+  const loaded = await store.loadSession(SESSION_ID);
+  assert.equal(loaded.subagentEvents.length, 2);
+  assert.equal(loaded.subagentTaskIndex.length, 1);
+  assert.equal(loaded.subagentTaskIndex[0]?.taskId, "task-1");
+  assert.equal(loaded.subagentTaskIndex[0]?.status, "completed");
+}
+
+async function testRewindPrunesSubagentEventsByApiMessageCount() {
+  const directory = await fs.mkdtemp(path.join(os.tmpdir(), "alyce-session-history-subagent-rewind-"));
+  const store = new SessionHistoryStore({
+    sessionsDirectory: directory,
+    workspaceRoot: process.cwd(),
+    sessionId: SESSION_ID
+  });
+
+  const filePath = store.getCurrentSessionFilePath();
+  const entries = [
+    meta(),
+    api(1, "user", "first"),
+    subagentEvent(2, "subagent-started", {
+      taskId: "task-keep",
+      agentType: "explore",
+      description: "keep",
+      model: "test-model",
+      maxSteps: 4,
+      status: "running",
+      apiMessageCount: 1
+    }),
+    api(3, "user", "second"),
+    subagentEvent(4, "subagent-started", {
+      taskId: "task-drop",
+      agentType: "explore",
+      description: "drop",
+      model: "test-model",
+      maxSteps: 4,
+      status: "running",
+      apiMessageCount: 2
+    }),
+    rewind(5, 1, 0)
+  ];
+  await fs.writeFile(filePath, entries.map((entry) => JSON.stringify(entry)).join("\n") + "\n");
+
+  const loaded = await store.loadSession(SESSION_ID);
+  assert.equal(loaded.subagentTaskIndex.length, 1);
+  assert.equal(loaded.subagentTaskIndex[0]?.taskId, "task-keep");
+  assert.equal(loaded.subagentEvents.length, 1);
+  assert.equal(loaded.subagentEvents[0]?.taskId, "task-keep");
+}
+
 function meta() {
   return {
     type: "session-meta",
@@ -376,6 +458,28 @@ function rewind(
             updatedAt: "2026-05-07T00:00:00.000Z"
           }
         })
+  };
+}
+
+function subagentEvent(
+  sequence: number,
+  type: "subagent-started" | "subagent-notification" | "subagent-stopped" | "subagent-retrieved",
+  event: {
+    taskId: string;
+    agentType: string;
+    description: string;
+    model: string;
+    maxSteps: number;
+    status: "running" | "completed" | "failed" | "stopped";
+    apiMessageCount?: number;
+  }
+) {
+  return {
+    type,
+    sessionId: SESSION_ID,
+    sequence,
+    timestamp: "2026-05-07T00:00:00.000Z",
+    event
   };
 }
 

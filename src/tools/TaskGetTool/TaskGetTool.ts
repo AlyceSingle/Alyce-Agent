@@ -54,7 +54,7 @@ export async function executeTaskGetTool(
     throw new Error("TaskGet is not available in this execution context.");
   }
 
-  const task = context.getSubagentTask(input.task_id);
+  const task = await context.getSubagentTask(input.task_id);
   if (!task) {
     return {
       status: "not_found",
@@ -62,6 +62,7 @@ export async function executeTaskGetTool(
       message: `Unknown subagent task_id: ${input.task_id}`
     };
   }
+  await context.recordSubagentTaskRetrieved?.(input.task_id, task);
 
   return {
     status: task.status,

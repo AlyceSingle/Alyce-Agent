@@ -116,6 +116,7 @@ npm start
 - Project-level runtime state lives in `./.alyce/`
 - User-level runtime state lives in `~/.alyce/`
 - Local skills live in `.alyce/skills/**/SKILL.md`; MCP servers are configured in `.alyce/mcp.json`
+- Legacy workspace-wide `.alyce/tasks/tasks.json` is deprecated; subagent history now persists under `.alyce/sessions/<sessionId>/`
 - `User_Info/` is treated as user data, not as project documentation
 
 ## Validation

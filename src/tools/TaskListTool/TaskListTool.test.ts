@@ -27,6 +27,7 @@ function createTestContext(
 
 async function runTests() {
   await testListsTasks();
+  await testMapsHistoricalTaskFields();
   await testCanHideCompletedTasks();
   await testRequiresRuntimeHook();
   console.log("TaskList tests passed");
@@ -53,6 +54,43 @@ async function testCanHideCompletedTasks() {
   ]));
 
   assert.deepEqual(result.tasks.map((task) => task.task_id), ["task-1", "task-3"]);
+}
+
+async function testMapsHistoricalTaskFields() {
+  const result = await executeTaskListTool({}, createTestContext([
+    createTask("task-history", "failed", {
+      startedAt: "2026-05-06T00:00:05.000Z",
+      completedAt: "2026-05-06T00:00:30.000Z",
+      error: "Interrupted after resume.",
+      worktreePath: "D:/tmp/worktree",
+      hasChanges: true,
+      output: "partial output",
+      progress: [
+        {
+          timestamp: "2026-05-06T00:00:10.000Z",
+          type: "status",
+          message: "running"
+        },
+        {
+          timestamp: "2026-05-06T00:00:20.000Z",
+          type: "tool_result",
+          toolName: "Read",
+          result: "ok"
+        }
+      ]
+    })
+  ]));
+
+  assert.equal(result.tasks.length, 1);
+  assert.equal(result.tasks[0]?.task_id, "task-history");
+  assert.equal(result.tasks[0]?.status, "failed");
+  assert.equal(result.tasks[0]?.has_output, true);
+  assert.equal(result.tasks[0]?.progress_count, 2);
+  assert.equal(result.tasks[0]?.worktree_path, "D:/tmp/worktree");
+  assert.equal(result.tasks[0]?.has_changes, true);
+  assert.equal(result.tasks[0]?.error, "Interrupted after resume.");
+  assert.equal(result.tasks[0]?.started_at, "2026-05-06T00:00:05.000Z");
+  assert.equal(result.tasks[0]?.completed_at, "2026-05-06T00:00:30.000Z");
 }
 
 async function testRequiresRuntimeHook() {

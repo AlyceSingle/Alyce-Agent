@@ -208,7 +208,11 @@ export interface ToolExecutionContext {
   runSubagent?: (input: SubagentRunInput) => Promise<SubagentRunResult>;
   launchSubagentTask?: (input: SubagentRunInput) => Promise<SubagentTaskLaunchResult>;
   listSubagentTasks?: () => SubagentTaskInfo[];
-  getSubagentTask?: (taskId: string) => SubagentTaskInfo | undefined;
+  getSubagentTask?: (taskId: string) => Promise<SubagentTaskInfo | undefined> | SubagentTaskInfo | undefined;
+  recordSubagentTaskRetrieved?: (
+    taskId: string,
+    task: SubagentTaskInfo
+  ) => Promise<void> | void;
   stopSubagentTask?: (taskId: string) => Promise<SubagentTaskStopResult>;
   getSubagentDefinition?: (type: string) => Promise<SubagentDefinitionInfo | undefined>;
   listSubagentDefinitions?: () => Promise<SubagentDefinitionInfo[]>;
