@@ -16,6 +16,7 @@ function runTests() {
   testLinkSpanPreservesHrefAndUnderlineStyle();
   testLinkRenderingAppendsHrefForCopyWhenLabelDiffers();
   testLinkRenderingDoesNotDuplicateHrefWhenLabelIsUrl();
+  testLiveCjkStrongWithEdgePunctuationRendersInsideSentence();
   testMarkdownCacheKeyIncludesPolicyVersion();
   testBudgetGuardIgnoresFencedCodeNestingMarkers();
   testBudgetGuardRejectsOverNestedMarkdown();
@@ -151,6 +152,27 @@ function testLinkRenderingDoesNotDuplicateHrefWhenLabelIsUrl() {
   const renderedText = flattenPlanText(plan);
 
   assert.doesNotMatch(renderedText, /<https:\/\/example\.com>/);
+}
+
+function testLiveCjkStrongWithEdgePunctuationRendersInsideSentence() {
+  const cases: Array<{ source: string; highlighted: string }> = [
+    {
+      source: "一个**“事件驱动的系统”**。",
+      highlighted: "事件驱动的系统"
+    },
+    {
+      source: "还有**事件驱动（你好）**也不会",
+      highlighted: "事件驱动（你好）"
+    }
+  ];
+
+  for (const testCase of cases) {
+    const plan = buildMarkdownRenderPlan(testCase.source, 120, { live: true });
+    const renderedText = flattenPlanText(plan);
+
+    assert.equal(findSpan(plan, testCase.highlighted)?.bold, true);
+    assert.doesNotMatch(renderedText, /\*\*/);
+  }
 }
 
 function testMarkdownCacheKeyIncludesPolicyVersion() {

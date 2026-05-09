@@ -72,6 +72,33 @@ export function appendMessage(state: TerminalUiState, message: TerminalUiMessage
   };
 }
 
+export function replaceMessageById(
+  state: TerminalUiState,
+  messageId: string,
+  message: TerminalUiMessage
+): TerminalUiState {
+  const index = state.messages.findIndex((item) => item.id === messageId);
+  if (index < 0) {
+    return state;
+  }
+
+  const nextMessages = [...state.messages];
+  nextMessages[index] = message;
+
+  return {
+    ...state,
+    messages: nextMessages,
+    selectedMessageId:
+      state.selectedMessageId === messageId && message.id !== messageId
+        ? message.id
+        : state.selectedMessageId,
+    unseenDividerMessageId:
+      state.unseenDividerMessageId === messageId && message.id !== messageId
+        ? message.id
+        : state.unseenDividerMessageId
+  };
+}
+
 export function replaceMessages(
   state: TerminalUiState,
   messages: TerminalUiMessage[]
@@ -130,6 +157,28 @@ export function setContextBudget(
   return {
     ...state,
     contextBudget
+  };
+}
+
+export function prependMessages(
+  state: TerminalUiState,
+  messages: TerminalUiMessage[]
+): TerminalUiState {
+  if (messages.length === 0) {
+    return state;
+  }
+
+  const existingIds = new Set(state.messages.map((message) => message.id));
+  const uniquePrepended = messages.filter((message) => !existingIds.has(message.id));
+  if (uniquePrepended.length === 0) {
+    return state;
+  }
+
+  const nextMessages = [...uniquePrepended, ...state.messages];
+  return {
+    ...state,
+    messages: nextMessages,
+    selectedMessageId: state.selectedMessageId ?? nextMessages.at(-1)?.id ?? null
   };
 }
 

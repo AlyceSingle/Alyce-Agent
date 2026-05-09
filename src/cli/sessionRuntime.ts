@@ -2332,6 +2332,28 @@ function normalizeSettingsPatch(
     normalized.commandTimeoutMs = Math.max(1, Math.trunc(patch.commandTimeoutMs));
   }
 
+  if ("scrollSpeed" in patch && patch.scrollSpeed !== undefined) {
+    normalized.scrollSpeed = Math.min(8, Math.max(1, Math.trunc(patch.scrollSpeed)));
+  }
+
+  if ("scrollAccelerationEnabled" in patch) {
+    normalized.scrollAccelerationEnabled = patch.scrollAccelerationEnabled;
+  }
+
+  if ("historyPagingEnabled" in patch) {
+    normalized.historyPagingEnabled = patch.historyPagingEnabled;
+  }
+
+  if (
+    "maxMessagesWithoutVirtualization" in patch &&
+    patch.maxMessagesWithoutVirtualization !== undefined
+  ) {
+    normalized.maxMessagesWithoutVirtualization = Math.max(
+      1,
+      Math.trunc(patch.maxMessagesWithoutVirtualization)
+    );
+  }
+
   if ("sessionMemoryEnabled" in patch) {
     normalized.sessionMemoryEnabled = patch.sessionMemoryEnabled;
   }

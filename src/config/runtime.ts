@@ -56,6 +56,10 @@ export interface SessionSettings extends PromptOverrideConfig {
   approvalMode: ApprovalMode;
   maxSteps: number;
   commandTimeoutMs: number;
+  scrollSpeed: number;
+  scrollAccelerationEnabled: boolean;
+  historyPagingEnabled: boolean;
+  maxMessagesWithoutVirtualization: number;
   sessionMemoryEnabled: boolean;
   messageTimestampsEnabled: boolean;
   markdownMessageRenderingEnabled: boolean;
@@ -133,6 +137,10 @@ const SessionSettingsFileSchema: z.ZodType<SessionSettingsFile> = z
     approvalMode: z.union([z.literal("manual"), z.literal("auto")]).optional(),
     maxSteps: z.number().int().positive().optional(),
     commandTimeoutMs: z.number().int().positive().optional(),
+    scrollSpeed: z.number().int().positive().optional(),
+    scrollAccelerationEnabled: z.boolean().optional(),
+    historyPagingEnabled: z.boolean().optional(),
+    maxMessagesWithoutVirtualization: z.number().int().positive().optional(),
     sessionMemoryEnabled: z.boolean().optional(),
     // Accept the retired setting as a compatibility alias.
     autoSummaryEnabled: z.boolean().optional(),
@@ -563,6 +571,10 @@ function normalizeSessionSettings(
     approvalMode: input.approvalMode === "auto" ? "auto" : "manual",
     maxSteps: clampPositiveInt(input.maxSteps, 50),
     commandTimeoutMs: clampPositiveInt(input.commandTimeoutMs, 120_000),
+    scrollSpeed: clampBoundedInt(input.scrollSpeed, 2, 1, 8),
+    scrollAccelerationEnabled: input.scrollAccelerationEnabled ?? false,
+    historyPagingEnabled: input.historyPagingEnabled ?? false,
+    maxMessagesWithoutVirtualization: clampPositiveInt(input.maxMessagesWithoutVirtualization, 200),
     sessionMemoryEnabled: input.sessionMemoryEnabled ?? true,
     messageTimestampsEnabled: input.messageTimestampsEnabled ?? false,
     markdownMessageRenderingEnabled: input.markdownMessageRenderingEnabled ?? true,
@@ -588,6 +600,15 @@ function serializeSessionSettings(
     approvalMode: "approvalMode" in settings ? settings.approvalMode : undefined,
     maxSteps: "maxSteps" in settings ? settings.maxSteps : undefined,
     commandTimeoutMs: "commandTimeoutMs" in settings ? settings.commandTimeoutMs : undefined,
+    scrollSpeed: "scrollSpeed" in settings ? settings.scrollSpeed : undefined,
+    scrollAccelerationEnabled:
+      "scrollAccelerationEnabled" in settings ? settings.scrollAccelerationEnabled : undefined,
+    historyPagingEnabled:
+      "historyPagingEnabled" in settings ? settings.historyPagingEnabled : undefined,
+    maxMessagesWithoutVirtualization:
+      "maxMessagesWithoutVirtualization" in settings
+        ? settings.maxMessagesWithoutVirtualization
+        : undefined,
     sessionMemoryEnabled:
       "sessionMemoryEnabled" in settings ? settings.sessionMemoryEnabled : undefined,
     messageTimestampsEnabled:
@@ -684,6 +705,11 @@ function resolveSettingsFromEnv(env: NodeJS.ProcessEnv): Partial<SessionSettings
   return compactObject({
     maxSteps: parseOptionalPositiveInt(env.AGENT_MAX_STEPS),
     commandTimeoutMs: parseOptionalPositiveInt(env.AGENT_COMMAND_TIMEOUT_MS),
+    scrollSpeed: parseOptionalPositiveInt(env.AGENT_SCROLL_SPEED),
+    scrollAccelerationEnabled: parseOptionalBoolean(env.AGENT_SCROLL_ACCELERATION_ENABLED),
+    historyPagingEnabled: parseOptionalBoolean(env.AGENT_HISTORY_PAGING_ENABLED),
+    maxMessagesWithoutVirtualization:
+      parseOptionalPositiveInt(env.AGENT_MAX_MESSAGES_WITHOUT_VIRTUALIZATION),
     sessionMemoryEnabled: parseOptionalBoolean(
       env.AGENT_SESSION_MEMORY_ENABLED ?? env.AGENT_MEMORY_AUTO_SUMMARY
     ),
@@ -791,6 +817,19 @@ function clampPositiveInt(value: number | undefined, fallback: number): number {
   }
 
   return Math.max(1, Math.trunc(value!));
+}
+
+function clampBoundedInt(
+  value: number | undefined,
+  fallback: number,
+  minimum: number,
+  maximum: number
+): number {
+  if (!Number.isFinite(value)) {
+    return fallback;
+  }
+
+  return Math.min(maximum, Math.max(minimum, Math.trunc(value!)));
 }
 
 function normalizeOptionalText(value: string | undefined): string | undefined {

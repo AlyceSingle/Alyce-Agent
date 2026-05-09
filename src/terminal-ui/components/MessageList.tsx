@@ -1,9 +1,18 @@
-import React, { forwardRef, useEffect, useImperativeHandle, useMemo, useRef, useState } from "react";
+import React, {
+  forwardRef,
+  useCallback,
+  useEffect,
+  useImperativeHandle,
+  useMemo,
+  useRef,
+  useState
+} from "react";
 import {
   buildMarkdownRenderPlan,
   MarkdownRenderer,
   type MarkdownRenderPlan
 } from "./MarkdownRenderer.js";
+import { VirtualMessageList } from "./VirtualMessageList.js";
 import { Box, ScrollBox, Text, type ScrollBoxHandle } from "../runtime/ink.js";
 import { useSelection } from "../runtime/ink-runtime/hooks/use-selection.js";
 import type { MouseEvent as TerminalMouseEvent } from "../runtime/ink-runtime/events/mouse-event.js";
@@ -29,6 +38,9 @@ import {
   type RenderPolicy
 } from "../utils/renderPolicy.js";
 import { wrapText, wrapTextClamped } from "../utils/text.js";
+import { logForDebugging } from "../runtime/utils/debug.js";
+import { isEnvTruthy } from "../runtime/utils/envUtils.js";
+import { useVirtualScroll, type VirtualScrollRange } from "../hooks/useVirtualScroll.js";
 
 const SCROLL_HEADROOM_ROWS = 2;
 const MESSAGE_CONTENT_WIDTH_OFFSET = 14;
@@ -39,6 +51,15 @@ const SCROLLBAR_TRACK_CHAR = "╎╎";
 const SCROLLBAR_THUMB_IDLE_CHAR = "││";
 const SCROLLBAR_THUMB_ACTIVE_CHAR = "┃┃";
 const SCROLLBAR_WIDTH = 2;
+const NEAR_TOP_TRIGGER_ROWS = 1;
+const SCROLL_PERF_LOG_ENABLED =
+  isEnvTruthy(process.env.ALYCE_SCROLL_PERF_LOG) ||
+  isEnvTruthy(process.env.CLAUDE_CODE_SCROLL_PERF_LOG);
+const VIRTUAL_SCROLL_ENABLED = !isEnvTruthy(process.env.ALYCE_DISABLE_VIRTUAL_SCROLL);
+const SCROLL_PERF_FLUSH_INTERVAL_MS = 1500;
+const SCROLL_PERF_SLOW_SYNC_THRESHOLD_MS = 8;
+const MIN_NON_VIRTUALIZED_MESSAGE_CAP = 20;
+const WINDOW_ANCHOR_HEADROOM_RATIO = 0.75;
 
 function isHandleAtBottom(handle: ScrollBoxHandle) {
   const scrollTop = handle.getScrollTop();
@@ -815,13 +836,74 @@ function buildRenderedMessageEntries(
   });
 }
 
+function clampNonVirtualizedMessageCap(value: number) {
+  if (!Number.isFinite(value)) {
+    return MIN_NON_VIRTUALIZED_MESSAGE_CAP;
+  }
+
+  return Math.max(MIN_NON_VIRTUALIZED_MESSAGE_CAP, Math.trunc(value));
+}
+
+function sliceMessagesForNonVirtualizedList(options: {
+  messages: TerminalUiMessage[];
+  maxMessages: number;
+  sticky: boolean;
+  visibleMessageId: string | null;
+  selectedMessageId: string | null;
+  unseenDividerMessageId: string | null;
+}) {
+  const cap = clampNonVirtualizedMessageCap(options.maxMessages);
+  if (options.messages.length <= cap) {
+    return options.messages;
+  }
+
+  if (options.sticky) {
+    return options.messages.slice(options.messages.length - cap);
+  }
+
+  const lastMessageId = options.messages.at(-1)?.id ?? null;
+  const selectedAnchorCandidate =
+    options.selectedMessageId && options.selectedMessageId !== lastMessageId
+      ? options.selectedMessageId
+      : null;
+  const anchorCandidates = [
+    selectedAnchorCandidate,
+    options.visibleMessageId,
+    options.unseenDividerMessageId,
+    options.selectedMessageId,
+    lastMessageId
+  ].filter((value): value is string => Boolean(value));
+
+  let anchorIndex = -1;
+  for (const candidate of anchorCandidates) {
+    const index = options.messages.findIndex((message) => message.id === candidate);
+    if (index >= 0) {
+      anchorIndex = index;
+      break;
+    }
+  }
+
+  if (anchorIndex < 0) {
+    return options.messages.slice(options.messages.length - cap);
+  }
+
+  const headroom = Math.max(1, Math.floor(cap * WINDOW_ANCHOR_HEADROOM_RATIO));
+  const maxStart = options.messages.length - cap;
+  const unclampedStart = anchorIndex - headroom;
+  const start = Math.max(0, Math.min(unclampedStart, maxStart));
+  return options.messages.slice(start, start + cap);
+}
+
 export const __MESSAGE_LIST_TESTING__ = {
   renderBlockLines,
   buildCollapsedMessageBlocks,
   buildCollapsedToolBlocks,
   combineShellOutput,
   renderToolMessageState,
-  buildRenderedMessageEntries
+  buildRenderedMessageEntries,
+  sliceMessagesForNonVirtualizedList,
+  resolveVisibleMessageId,
+  resolvePrependedMessageIds
 } as const;
 
 function buildScrollIndicatorLines(state: ScrollIndicatorState): ScrollIndicatorLine[] {
@@ -888,22 +970,198 @@ function resolveScrollIndicatorMetrics(state: ScrollIndicatorState): ScrollIndic
 function resolveVisibleMessageId(
   renderedEntries: RenderedMessageEntry[],
   entryOffsets: number[],
-  scrollTop: number,
-  viewportHeight: number
+  scrollTop: number
 ) {
   if (renderedEntries.length === 0) {
     return null;
   }
 
-  const viewportBottom = scrollTop + Math.max(1, viewportHeight) - 1;
-  for (let index = renderedEntries.length - 1; index >= 0; index -= 1) {
-    if ((entryOffsets[index] ?? 0) <= viewportBottom) {
-      return renderedEntries[index]?.message.id ?? renderedEntries.at(-1)?.message.id ?? null;
+  const viewportTop = Math.max(0, Math.floor(scrollTop));
+  let left = 0;
+  let right = entryOffsets.length;
+  while (left < right) {
+    const middle = Math.floor((left + right) / 2);
+    const top = entryOffsets[middle] ?? 0;
+    const bottomExclusive = top + Math.max(1, renderedEntries[middle]?.rowCount ?? 1);
+    if (bottomExclusive <= viewportTop) {
+      left = middle + 1;
+    } else {
+      right = middle;
     }
+  }
+
+  const index = Math.max(0, Math.min(renderedEntries.length - 1, left));
+  if (index >= 0) {
+    return renderedEntries[index]?.message.id ?? renderedEntries.at(-1)?.message.id ?? null;
   }
 
   return renderedEntries[0]?.message.id ?? null;
 }
+
+function resolvePrependedMessageIds(previousIds: string[], nextIds: string[]) {
+  if (previousIds.length === 0 || nextIds.length <= previousIds.length) {
+    return [];
+  }
+
+  const prependCount = nextIds.length - previousIds.length;
+  for (let index = 0; index < previousIds.length; index += 1) {
+    if (nextIds[prependCount + index] !== previousIds[index]) {
+      return [];
+    }
+  }
+
+  return nextIds.slice(0, prependCount);
+}
+
+const TranscriptRows = React.memo(function TranscriptRows(props: {
+  renderedEntries: RenderedMessageEntry[];
+  virtualRange: VirtualScrollRange;
+  unseenMessageCount: number;
+  onExpandableMessageClick: (message: TerminalUiMessage, event: TerminalClickEvent) => void;
+}) {
+  const renderMessageEntry = useCallback((entry: RenderedMessageEntry) => {
+    const timestamp = new Date(entry.message.createdAt).toLocaleTimeString("zh-CN", {
+      hour: "2-digit",
+      minute: "2-digit"
+    });
+    const railRowCount = Math.max(
+      1,
+      entry.rowCount - entry.leadingSpacingRows - entry.unseenDividerRows
+    );
+
+    return (
+      <Box
+        key={entry.message.id}
+        flexDirection="column"
+        width="100%"
+      >
+        {Array.from({ length: entry.leadingSpacingRows }, (_, spacerIndex) => (
+          <Box
+            key={`${entry.message.id}-spacer-${spacerIndex}`}
+            flexDirection="row"
+            width="100%"
+            noSelect="from-left-edge"
+          >
+            <Text> </Text>
+          </Box>
+        ))}
+        {entry.unseenDividerRows > 0 ? (
+          <Text color={terminalUiTheme.colors.warning} wrap="truncate-end">
+            -- {props.unseenMessageCount} new message{props.unseenMessageCount === 1 ? "" : "s"} --
+          </Text>
+        ) : null}
+        <Box
+          flexDirection="row"
+          width="100%"
+        >
+          <Box
+            flexDirection="column"
+            flexShrink={0}
+            width={MESSAGE_RAIL_GUTTER_WIDTH}
+            noSelect="from-left-edge"
+          >
+            {Array.from({ length: railRowCount }, (_, rowIndex) => (
+              <Text
+                key={`${entry.message.id}-rail-${rowIndex}`}
+                color={entry.palette.railColor}
+                dimColor={!entry.isSelected}
+              >
+                {MESSAGE_RAIL_GUTTER}
+              </Text>
+            ))}
+          </Box>
+          <Box
+            flexDirection="column"
+            flexGrow={1}
+            flexShrink={1}
+            minWidth={0}
+            width="100%"
+            onClick={entry.isExpandable
+              ? (event) => props.onExpandableMessageClick(entry.message, event)
+              : undefined}
+          >
+            <SelectionSafeRow wrap="truncate-end">
+              <Text color={entry.palette.headerColor}>{entry.headerLabel}</Text>
+              {entry.headerTitle ? (
+                <Text color={entry.palette.bodyColor}> · {entry.headerTitle}</Text>
+              ) : null}
+              <Text color={entry.palette.mutedColor}> · {timestamp}</Text>
+            </SelectionSafeRow>
+            {entry.markdownPlan ? (
+              <MarkdownRenderer
+                plan={entry.markdownPlan}
+                kind={entry.message.kind}
+                baseColor={entry.palette.bodyColor}
+              />
+            ) : (
+              entry.sections.map((section, sectionIndex) => (
+                <Box
+                  key={`${entry.message.id}-section-${sectionIndex}`}
+                  flexDirection="column"
+                  width="100%"
+                >
+                  {shouldDisplaySectionLabel(section) ? (
+                    <SelectionSafeRow
+                      color={entry.palette.mutedColor}
+                      wrap="truncate-end"
+                    >
+                      {section.label}
+                    </SelectionSafeRow>
+                  ) : null}
+                  {section.lines.map((line, lineIndex) => {
+                    const lineColors = getRenderedLineColors(
+                      line,
+                      section,
+                      entry.message.kind,
+                      entry.palette
+                    );
+
+                    return (
+                      <SelectionSafeRow
+                        key={`${entry.message.id}-line-${sectionIndex}-${lineIndex}`}
+                        color={lineColors.color}
+                        backgroundColor={lineColors.backgroundColor}
+                      >
+                        {line.content || " "}
+                      </SelectionSafeRow>
+                    );
+                  })}
+                </Box>
+              ))
+            )}
+            {entry.metadataLine ? (
+              <SelectionSafeRow
+                color={entry.palette.mutedColor}
+                wrap="truncate-end"
+              >
+                {entry.metadataLine}
+              </SelectionSafeRow>
+            ) : null}
+          </Box>
+        </Box>
+      </Box>
+    );
+  }, [props.onExpandableMessageClick, props.unseenMessageCount]);
+
+  if (props.renderedEntries.length === 0) {
+    return (
+      <Box flexDirection="column" width="100%" paddingBottom={1}>
+        <Text color={terminalUiTheme.colors.muted}>No messages yet.</Text>
+        <Text color={terminalUiTheme.colors.subtle}>
+          Type a prompt below, or open settings before the first model request.
+        </Text>
+      </Box>
+    );
+  }
+
+  return (
+    <VirtualMessageList
+      entries={props.renderedEntries}
+      range={props.virtualRange}
+      renderEntry={renderMessageEntry}
+    />
+  );
+});
 
 const MessageListImpl = forwardRef<MessageListHandle, {
   messages: TerminalUiMessage[];
@@ -912,11 +1170,13 @@ const MessageListImpl = forwardRef<MessageListHandle, {
   markdownEnabled: boolean;
   markdownToolMessageRenderingEnabled: boolean;
   markdownRenderMaxChars: number;
+  maxMessagesWithoutVirtualization: number;
   isLoading: boolean;
   assistantLabel: string;
   unseenDividerMessageId: string | null;
   unseenMessageCount: number;
   onStickyChange: (sticky: boolean) => void;
+  onNearTop?: (visibleMessageId: string | null) => void;
 }>(function MessageList(props, ref) {
   const scrollRef = useRef<ScrollBoxHandle | null>(null);
   const scrollIndicatorTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -924,6 +1184,9 @@ const MessageListImpl = forwardRef<MessageListHandle, {
   const visibleMessageIdRef = useRef<string | null>(props.selectedMessageId);
   const selectedMessageSnapshotRef = useRef<string | null>(props.selectedMessageId);
   const stickySnapshotRef = useRef(true);
+  const nearTopSnapshotRef = useRef(false);
+  const previousMessageIdsRef = useRef<string[]>(props.messages.map((message) => message.id));
+  const pendingPrependMessageIdsRef = useRef<string[]>([]);
   const selection = useSelection();
   const [expandedMessageIds, setExpandedMessageIds] = useState<ReadonlySet<string>>(() => new Set());
   const [scrollIndicator, setScrollIndicator] = useState<ScrollIndicatorState>({
@@ -938,7 +1201,40 @@ const MessageListImpl = forwardRef<MessageListHandle, {
     messageCount: number;
     totalRowCount: number;
   } | null>(null);
+  const layoutPerfSignatureRef = useRef<string | null>(null);
+  const scrollSyncPerfRef = useRef({
+    sampleCount: 0,
+    totalDurationMs: 0,
+    maxDurationMs: 0,
+    lastFlushAtMs: Date.now()
+  });
   const contentWidth = Math.max(24, props.viewportWidth - MESSAGE_CONTENT_WIDTH_OFFSET);
+  const stickySnapshot = stickySnapshotRef.current;
+  const visibleMessageIdSnapshot = visibleMessageIdRef.current;
+  const sourceMessages = useMemo(
+    () => {
+      if (VIRTUAL_SCROLL_ENABLED) {
+        return props.messages;
+      }
+
+      return sliceMessagesForNonVirtualizedList({
+        messages: props.messages,
+        maxMessages: props.maxMessagesWithoutVirtualization,
+        sticky: stickySnapshot,
+        visibleMessageId: visibleMessageIdSnapshot,
+        selectedMessageId: props.selectedMessageId,
+        unseenDividerMessageId: props.unseenDividerMessageId
+      });
+    },
+    [
+      props.maxMessagesWithoutVirtualization,
+      props.messages,
+      props.selectedMessageId,
+      props.unseenDividerMessageId,
+      stickySnapshot,
+      visibleMessageIdSnapshot
+    ]
+  );
   const renderPolicy = useMemo(
     () =>
       createRenderPolicy({
@@ -957,8 +1253,8 @@ const MessageListImpl = forwardRef<MessageListHandle, {
       return null;
     }
 
-    for (let index = props.messages.length - 1; index >= 0; index -= 1) {
-      const message = props.messages[index];
+    for (let index = sourceMessages.length - 1; index >= 0; index -= 1) {
+      const message = sourceMessages[index];
       if (!message) {
         continue;
       }
@@ -969,12 +1265,12 @@ const MessageListImpl = forwardRef<MessageListHandle, {
     }
 
     return null;
-  }, [props.isLoading, props.messages]);
+  }, [props.isLoading, sourceMessages]);
 
   const renderedEntries = useMemo(
     () =>
       buildRenderedMessageEntries(
-        props.messages,
+        sourceMessages,
         props.selectedMessageId,
         contentWidth,
         renderPolicy,
@@ -988,11 +1284,15 @@ const MessageListImpl = forwardRef<MessageListHandle, {
       expandedMessageIds,
       props.assistantLabel,
       liveMarkdownMessageId,
-      props.messages,
+      sourceMessages,
       renderPolicy,
       props.selectedMessageId,
       props.unseenDividerMessageId
     ]
+  );
+  const entryRowCounts = useMemo(
+    () => renderedEntries.map((entry) => entry.rowCount),
+    [renderedEntries]
   );
   const totalRowCount = useMemo(
     () => renderedEntries.reduce((sum, entry) => sum + entry.rowCount, 0),
@@ -1010,6 +1310,26 @@ const MessageListImpl = forwardRef<MessageListHandle, {
     () => buildScrollIndicatorLines(scrollIndicator),
     [scrollIndicator]
   );
+  const virtualRange = useVirtualScroll({
+    enabled: VIRTUAL_SCROLL_ENABLED,
+    sticky: stickySnapshot,
+    entryOffsets,
+    entryRowCounts,
+    totalRowCount,
+    scrollHandleRef: scrollRef
+  });
+
+  useEffect(() => {
+    const previousIds = previousMessageIdsRef.current;
+    const nextIds = props.messages.map((message) => message.id);
+    const prependedIds = resolvePrependedMessageIds(previousIds, nextIds);
+    if (prependedIds.length > 0 && !stickySnapshotRef.current) {
+      pendingPrependMessageIdsRef.current = prependedIds;
+    } else {
+      pendingPrependMessageIdsRef.current = [];
+    }
+    previousMessageIdsRef.current = nextIds;
+  }, [props.messages]);
 
   function armScrollIndicatorFade() {
     if (scrollIndicatorTimeoutRef.current) {
@@ -1228,33 +1548,36 @@ const MessageListImpl = forwardRef<MessageListHandle, {
     armScrollIndicatorFade();
   }
 
-  function handleExpandableMessageClick(message: TerminalUiMessage, event: TerminalClickEvent) {
-    if (event.cellIsBlank) {
-      return;
-    }
+  const handleExpandableMessageClick = useCallback(
+    (message: TerminalUiMessage, event: TerminalClickEvent) => {
+      if (event.cellIsBlank) {
+        return;
+      }
 
-    setExpandedMessageIds((previous) => {
-      const next = new Set(previous);
-      const expanded = isMessageExpanded(message, previous);
+      setExpandedMessageIds((previous) => {
+        const next = new Set(previous);
+        const expanded = isMessageExpanded(message, previous);
 
-      if (isDefaultExpandedToolMessage(message)) {
-        if (expanded) {
-          next.add(message.id);
-        } else {
-          next.delete(message.id);
+        if (isDefaultExpandedToolMessage(message)) {
+          if (expanded) {
+            next.add(message.id);
+          } else {
+            next.delete(message.id);
+          }
+          return next;
         }
+
+        if (expanded) {
+          next.delete(message.id);
+        } else {
+          next.add(message.id);
+        }
+
         return next;
-      }
-
-      if (expanded) {
-        next.delete(message.id);
-      } else {
-        next.add(message.id);
-      }
-
-      return next;
-    });
-  }
+      });
+    },
+    []
+  );
 
   useEffect(() => {
     setExpandedMessageIds((previous) => {
@@ -1263,7 +1586,7 @@ const MessageListImpl = forwardRef<MessageListHandle, {
       }
 
       const validIds = new Set(
-        props.messages
+        sourceMessages
           .filter((message) => message.kind === "tool" || isContextPreviewMessage(message))
           .map((message) => message.id)
       );
@@ -1279,7 +1602,7 @@ const MessageListImpl = forwardRef<MessageListHandle, {
 
       return changed ? next : previous;
     });
-  }, [props.messages]);
+  }, [sourceMessages]);
 
   useImperativeHandle(ref, () => ({
     scrollBy: (delta) => {
@@ -1321,6 +1644,7 @@ const MessageListImpl = forwardRef<MessageListHandle, {
     }
 
     const syncScrollState = () => {
+      const syncStartedAtMs = SCROLL_PERF_LOG_ENABLED ? Date.now() : 0;
       const currentHandle = scrollRef.current;
       if (!currentHandle) {
         return;
@@ -1340,9 +1664,13 @@ const MessageListImpl = forwardRef<MessageListHandle, {
       visibleMessageIdRef.current = resolveVisibleMessageId(
         renderedEntries,
         entryOffsets,
-        scrollTop,
-        viewportHeight
+        scrollTop
       );
+      const nearTop = scrollTop <= NEAR_TOP_TRIGGER_ROWS;
+      if (nearTop && !nearTopSnapshotRef.current) {
+        props.onNearTop?.(visibleMessageIdRef.current);
+      }
+      nearTopSnapshotRef.current = nearTop;
       setScrollIndicator((previous) => {
         const visible = scrollHeight > viewportHeight;
         if (
@@ -1364,6 +1692,42 @@ const MessageListImpl = forwardRef<MessageListHandle, {
         };
       });
       armScrollIndicatorFade();
+
+      if (!SCROLL_PERF_LOG_ENABLED) {
+        return;
+      }
+
+      const durationMs = Date.now() - syncStartedAtMs;
+      const stats = scrollSyncPerfRef.current;
+      stats.sampleCount += 1;
+      stats.totalDurationMs += durationMs;
+      stats.maxDurationMs = Math.max(stats.maxDurationMs, durationMs);
+
+      if (durationMs >= SCROLL_PERF_SLOW_SYNC_THRESHOLD_MS) {
+        logForDebugging(
+          `[scroll-perf] sync slow durationMs=${durationMs} messages=${props.messages.length} renderedEntries=${renderedEntries.length} totalRows=${totalRowCount}`,
+          { level: "debug" }
+        );
+      } else {
+        logForDebugging(`[scroll-perf] sync durationMs=${durationMs}`, { level: "verbose" });
+      }
+
+      const nowMs = Date.now();
+      if (nowMs - stats.lastFlushAtMs < SCROLL_PERF_FLUSH_INTERVAL_MS) {
+        return;
+      }
+
+      const averageMs = stats.sampleCount > 0
+        ? Number((stats.totalDurationMs / stats.sampleCount).toFixed(2))
+        : 0;
+      logForDebugging(
+        `[scroll-perf] sync aggregate samples=${stats.sampleCount} avgMs=${averageMs} maxMs=${stats.maxDurationMs} messages=${props.messages.length} renderedEntries=${renderedEntries.length} totalRows=${totalRowCount}`,
+        { level: "debug" }
+      );
+      stats.sampleCount = 0;
+      stats.totalDurationMs = 0;
+      stats.maxDurationMs = 0;
+      stats.lastFlushAtMs = nowMs;
     };
 
     syncScrollState();
@@ -1374,17 +1738,65 @@ const MessageListImpl = forwardRef<MessageListHandle, {
       clearTimeout(timeout);
       unsubscribe();
     };
-  }, [entryOffsets, props.onStickyChange, renderedEntries]);
+  }, [
+    entryOffsets,
+    props.messages.length,
+    props.onNearTop,
+    props.onStickyChange,
+    renderedEntries,
+    totalRowCount
+  ]);
+
+  useEffect(() => {
+    if (!SCROLL_PERF_LOG_ENABLED) {
+      return;
+    }
+
+    const nextSignature =
+      `${props.messages.length}|${renderedEntries.length}|${totalRowCount}|${contentWidth}`;
+    if (layoutPerfSignatureRef.current === nextSignature) {
+      return;
+    }
+
+    layoutPerfSignatureRef.current = nextSignature;
+    logForDebugging(
+      `[scroll-perf] layout messageCount=${props.messages.length} renderedEntries=${renderedEntries.length} totalRows=${totalRowCount} contentWidth=${contentWidth}`,
+      { level: "debug" }
+    );
+  }, [contentWidth, props.messages.length, renderedEntries.length, totalRowCount]);
 
   useEffect(() => {
     return () => {
       scrollDragOffsetRef.current = null;
+      nearTopSnapshotRef.current = false;
+      pendingPrependMessageIdsRef.current = [];
       if (scrollIndicatorTimeoutRef.current) {
         clearTimeout(scrollIndicatorTimeoutRef.current);
         scrollIndicatorTimeoutRef.current = null;
       }
     };
   }, []);
+
+  useEffect(() => {
+    const pendingIds = pendingPrependMessageIdsRef.current;
+    if (pendingIds.length === 0) {
+      return;
+    }
+
+    const rowCountById = new Map(
+      renderedEntries.map((entry) => [entry.message.id, Math.max(1, entry.rowCount)] as const)
+    );
+    const addedRows = pendingIds.reduce(
+      (sum, messageId) => sum + (rowCountById.get(messageId) ?? 0),
+      0
+    );
+    pendingPrependMessageIdsRef.current = [];
+    if (addedRows <= 0) {
+      return;
+    }
+
+    scrollManuallyBy(addedRows);
+  }, [renderedEntries]);
 
   useEffect(() => {
     const handle = scrollRef.current;
@@ -1497,140 +1909,12 @@ const MessageListImpl = forwardRef<MessageListHandle, {
           // prop here only risks remount/reset churn when leaving the bottom.
           stickyScroll
         >
-          {props.messages.length === 0 ? (
-            <Box flexDirection="column" width="100%" paddingBottom={1}>
-              <Text color={terminalUiTheme.colors.muted}>No messages yet.</Text>
-              <Text color={terminalUiTheme.colors.subtle}>
-                Type a prompt below, or open settings before the first model request.
-              </Text>
-            </Box>
-          ) : (
-            <Box flexDirection="column" width="100%" paddingBottom={1}>
-              {renderedEntries.map((entry) => {
-                const timestamp = new Date(entry.message.createdAt).toLocaleTimeString("zh-CN", {
-                  hour: "2-digit",
-                  minute: "2-digit"
-                });
-                const railRowCount = Math.max(
-                  1,
-                  entry.rowCount - entry.leadingSpacingRows - entry.unseenDividerRows
-                );
-
-                return (
-                  <Box
-                    key={entry.message.id}
-                    flexDirection="column"
-                    width="100%"
-                  >
-                    {Array.from({ length: entry.leadingSpacingRows }, (_, spacerIndex) => (
-                      <Box
-                        key={`${entry.message.id}-spacer-${spacerIndex}`}
-                        flexDirection="row"
-                        width="100%"
-                        noSelect="from-left-edge"
-                      >
-                        <Text> </Text>
-                      </Box>
-                    ))}
-                    {entry.unseenDividerRows > 0 ? (
-                      <Text color={terminalUiTheme.colors.warning} wrap="truncate-end">
-                        -- {props.unseenMessageCount} new message{props.unseenMessageCount === 1 ? "" : "s"} --
-                      </Text>
-                    ) : null}
-                    <Box
-                      flexDirection="row"
-                      width="100%"
-                    >
-                      <Box
-                        flexDirection="column"
-                        flexShrink={0}
-                        width={MESSAGE_RAIL_GUTTER_WIDTH}
-                        noSelect="from-left-edge"
-                      >
-                        {Array.from({ length: railRowCount }, (_, rowIndex) => (
-                          <Text
-                            key={`${entry.message.id}-rail-${rowIndex}`}
-                            color={entry.palette.railColor}
-                            dimColor={!entry.isSelected}
-                          >
-                            {MESSAGE_RAIL_GUTTER}
-                          </Text>
-                        ))}
-                      </Box>
-                      <Box
-                        flexDirection="column"
-                        flexGrow={1}
-                        flexShrink={1}
-                        minWidth={0}
-                        width="100%"
-                        onClick={entry.isExpandable
-                          ? (event) => handleExpandableMessageClick(entry.message, event)
-                          : undefined}
-                      >
-                        <SelectionSafeRow wrap="truncate-end">
-                          <Text color={entry.palette.headerColor}>{entry.headerLabel}</Text>
-                          {entry.headerTitle ? (
-                            <Text color={entry.palette.bodyColor}> · {entry.headerTitle}</Text>
-                          ) : null}
-                          <Text color={entry.palette.mutedColor}> · {timestamp}</Text>
-                        </SelectionSafeRow>
-                        {entry.markdownPlan ? (
-                          <MarkdownRenderer
-                            plan={entry.markdownPlan}
-                            kind={entry.message.kind}
-                            baseColor={entry.palette.bodyColor}
-                          />
-                        ) : (
-                          entry.sections.map((section, sectionIndex) => (
-                            <Box
-                              key={`${entry.message.id}-section-${sectionIndex}`}
-                              flexDirection="column"
-                              width="100%"
-                            >
-                              {shouldDisplaySectionLabel(section) ? (
-                                <SelectionSafeRow
-                                  color={entry.palette.mutedColor}
-                                  wrap="truncate-end"
-                                >
-                                  {section.label}
-                                </SelectionSafeRow>
-                              ) : null}
-                              {section.lines.map((line, lineIndex) => {
-                                const lineColors = getRenderedLineColors(
-                                  line,
-                                  section,
-                                  entry.message.kind,
-                                  entry.palette
-                                );
-
-                                return (
-                                  <SelectionSafeRow
-                                    key={`${entry.message.id}-line-${sectionIndex}-${lineIndex}`}
-                                    color={lineColors.color}
-                                    backgroundColor={lineColors.backgroundColor}
-                                  >
-                                    {line.content || " "}
-                                  </SelectionSafeRow>
-                                );
-                              })}
-                            </Box>
-                          ))
-                        )}
-                        {entry.metadataLine ? (
-                          <SelectionSafeRow
-                            color={entry.palette.mutedColor}
-                            wrap="truncate-end"
-                          >
-                            {entry.metadataLine}
-                          </SelectionSafeRow>
-                        ) : null}
-                      </Box>
-                    </Box>
-                  </Box>
-                );
-              })}
-            </Box>
-          )}
+          <TranscriptRows
+            renderedEntries={renderedEntries}
+            virtualRange={virtualRange}
+            unseenMessageCount={props.unseenMessageCount}
+            onExpandableMessageClick={handleExpandableMessageClick}
+          />
         </ScrollBox>
         <Box
           flexDirection="column"

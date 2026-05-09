@@ -40,6 +40,25 @@ const FIELD_DEFINITIONS: FieldDefinition[] = [
   },
   { key: "maxSteps", label: "Max Steps", type: "number", section: "session" },
   { key: "commandTimeoutMs", label: "Command Timeout", type: "number", section: "session" },
+  { key: "scrollSpeed", label: "Scroll Speed", type: "number", section: "session" },
+  {
+    key: "scrollAccelerationEnabled",
+    label: "Scroll Acceleration",
+    type: "toggle",
+    section: "session"
+  },
+  {
+    key: "historyPagingEnabled",
+    label: "History Paging",
+    type: "toggle",
+    section: "session"
+  },
+  {
+    key: "maxMessagesWithoutVirtualization",
+    label: "Max Non-Virtual Messages",
+    type: "number",
+    section: "session"
+  },
   { key: "sessionMemoryEnabled", label: "Session Memory", type: "toggle", section: "session" },
   {
     key: "messageTimestampsEnabled",
@@ -526,6 +545,12 @@ export function SettingsDialog(props: {
                   ? "Use comma-separated pattern=tokens entries, for example custom fast=512000."
                   : currentField.key === "markdownToolMessageRenderingEnabled"
                     ? "When off, tool results always use plain/code sections even if markdown-capable."
+                    : currentField.key === "scrollSpeed"
+                      ? "Scroll speed applies to line-by-line scrolling. Valid range: 1-8."
+                      : currentField.key === "scrollAccelerationEnabled"
+                        ? "When on, consecutive line scroll input ramps speed up within a short window."
+                        : currentField.key === "historyPagingEnabled"
+                          ? "Experimental: resume long sessions with recent messages first, then load older chunks near the top."
                   : currentField.type === "text"
                   ? "Text fields accept \\n for line breaks."
                   : currentField.type === "number"
@@ -576,6 +601,10 @@ export function SettingsDialog(props: {
           const parsed = Number(draftValue);
           if (!Number.isFinite(parsed) || parsed <= 0) {
             throw new Error(`${field.label} must be a positive number.`);
+          }
+
+          if (field.key === "scrollSpeed" && parsed > 8) {
+            throw new Error("Scroll Speed must be between 1 and 8.");
           }
 
           return {

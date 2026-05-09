@@ -84,6 +84,9 @@ const MAX_MARKDOWN_PARSE_LINES = 6_000;
 const MAX_MARKDOWN_PARSE_NESTING_DEPTH = 32;
 const MAX_MARKDOWN_STREAM_BLOCKS = 512;
 const markdownPlanCache = new Map<string, MarkdownRenderPlan>();
+const CJK_SCRIPT_PATTERN = /[\p{Script=Han}\p{Script=Hiragana}\p{Script=Katakana}\p{Script=Hangul}]/u;
+const CJK_STRONG_EDGE_PUNCTUATION_PATTERN =
+  /[\u2018\u2019\u201C\u201D\u3008\u3009\u300A\u300B\u300C\u300D\u300E\u300F\u3010\u3011\u3014\u3015\uFF08\uFF09]/u;
 const markdownMathExtension: TokenizerAndRendererExtension = {
   name: "math",
   level: "inline",
@@ -105,10 +108,44 @@ const markdownMathExtension: TokenizerAndRendererExtension = {
     };
   }
 };
+const markdownCjkStrongExtension: TokenizerAndRendererExtension = {
+  name: "cjk-strong",
+  level: "inline",
+  start(src: string): number | undefined {
+    const index = src.indexOf("**");
+    return index >= 0 ? index : undefined;
+  },
+  tokenizer(src: string) {
+    if (!src.startsWith("**") || src.startsWith("***")) {
+      return undefined;
+    }
+
+    const closeIndex = src.indexOf("**", 2);
+    if (closeIndex < 0) {
+      return undefined;
+    }
+
+    const content = src.slice(2, closeIndex);
+    if (
+      content.length === 0 ||
+      src[closeIndex + 2] === "*" ||
+      !shouldForceCjkStrongFallback(content)
+    ) {
+      return undefined;
+    }
+
+    return {
+      type: "strong",
+      raw: src.slice(0, closeIndex + 2),
+      text: content,
+      tokens: this.lexer.inlineTokens(content)
+    };
+  }
+};
 const markdownLexer = new Marked({
   gfm: true,
   breaks: true,
-  extensions: [markdownMathExtension]
+  extensions: [markdownMathExtension, markdownCjkStrongExtension]
 });
 
 export function buildMarkdownRenderPlan(
@@ -1627,6 +1664,24 @@ function measureStringWidth(value: string): number {
 
 function normalizeInlineMarkdownText(value: string): string {
   return normalizeMarkdownInput(value, { normalizeLineEndings: false });
+}
+
+function shouldForceCjkStrongFallback(content: string): boolean {
+  if (content.trim() !== content || !CJK_SCRIPT_PATTERN.test(content)) {
+    return false;
+  }
+
+  const characters = Array.from(content);
+  if (characters.length === 0) {
+    return false;
+  }
+
+  const first = characters[0] ?? "";
+  const last = characters[characters.length - 1] ?? "";
+  return (
+    CJK_STRONG_EDGE_PUNCTUATION_PATTERN.test(first) ||
+    CJK_STRONG_EDGE_PUNCTUATION_PATTERN.test(last)
+  );
 }
 
 function asString(value: unknown): string | undefined {

@@ -27,7 +27,9 @@ const COPY_STATUS_DURATION_MS = 1800;
 const PAGE_UP_SHORTCUT = getBindingDisplayText("scroll:pageUp", "Scroll") ?? "PgUp";
 const PAGE_DOWN_SHORTCUT = getBindingDisplayText("scroll:pageDown", "Scroll") ?? "PgDn";
 const LAST_MESSAGE_SHORTCUT = getBindingDisplayText("scroll:bottom", "Scroll") ?? "End";
-const LINE_SCROLL_ROWS = 2;
+const DEFAULT_LINE_SCROLL_ROWS = 2;
+const SCROLL_ACCEL_WINDOW_MS = 220;
+const SCROLL_ACCEL_MAX_MULTIPLIER = 4;
 
 function resolveAssistantLabel(personaPreset?: string) {
   return getBuiltinPersonaPresetTitle(personaPreset)?.toUpperCase() ?? "ALYCE";
@@ -37,8 +39,10 @@ const ConversationPane = React.memo(React.forwardRef<MessageListHandle, {
   terminalWidth: number;
   unseenDividerMessageId: string | null;
   unseenMessageCount: number;
+  maxMessagesWithoutVirtualization: number;
   isLoading: boolean;
   onStickyChange: (sticky: boolean) => void;
+  onNearTop: (visibleMessageId: string | null) => void;
 }>(function ConversationPane(props, ref) {
   const messages = useTerminalUiSelector((value) => value.messages);
   const selectedMessageId = useTerminalUiSelector((value) => value.selectedMessageId);
@@ -64,11 +68,13 @@ const ConversationPane = React.memo(React.forwardRef<MessageListHandle, {
       markdownEnabled={markdownEnabled}
       markdownToolMessageRenderingEnabled={markdownToolMessageRenderingEnabled}
       markdownRenderMaxChars={markdownRenderMaxChars}
+      maxMessagesWithoutVirtualization={props.maxMessagesWithoutVirtualization}
       isLoading={props.isLoading}
       assistantLabel={assistantLabel}
       unseenDividerMessageId={props.unseenDividerMessageId}
       unseenMessageCount={props.unseenMessageCount}
       onStickyChange={props.onStickyChange}
+      onNearTop={props.onNearTop}
     />
   );
 }));
@@ -95,9 +101,25 @@ export function AgentScreen(props: { controller: SessionController }) {
   const transcriptSticky = useTerminalUiSelector((value) => value.transcriptSticky);
   const unseenDividerMessageId = useTerminalUiSelector((value) => value.unseenDividerMessageId);
   const unseenMessageCount = useTerminalUiSelector((value) => value.unseenMessageCount);
+  const maxMessagesWithoutVirtualization = useTerminalUiSelector(
+    (value) => value.settings.maxMessagesWithoutVirtualization
+  );
+  const scrollSpeed = useTerminalUiSelector((value) => value.settings.scrollSpeed);
+  const scrollAccelerationEnabled = useTerminalUiSelector(
+    (value) => value.settings.scrollAccelerationEnabled
+  );
   const messages = useTerminalUiSelector((value) => value.messages);
   const clearOnCtrlCRef = useRef(false);
   const transcriptRef = useRef<MessageListHandle | null>(null);
+  const scrollAccelerationRef = useRef<{
+    lastDirection: -1 | 0 | 1;
+    lastAtMs: number;
+    streak: number;
+  }>({
+    lastDirection: 0,
+    lastAtMs: 0,
+    streak: 0
+  });
   const copyStatusTimerRef = useRef<NodeJS.Timeout | null>(null);
   const [copyStatusText, setCopyStatusText] = useState<string | null>(null);
   const [historyEscPending, setHistoryEscPending] = useState(false);
@@ -157,6 +179,47 @@ export function AgentScreen(props: { controller: SessionController }) {
     store.updateState((state) => setTranscriptSticky(state, sticky));
   }, [store]);
 
+  const handleTranscriptNearTop = useCallback((visibleMessageId: string | null) => {
+    props.controller.loadOlderSessionMessages(visibleMessageId);
+  }, [props.controller]);
+
+  const resetScrollAcceleration = useCallback(() => {
+    scrollAccelerationRef.current = {
+      lastDirection: 0,
+      lastAtMs: 0,
+      streak: 0
+    };
+  }, []);
+
+  const resolveLineScrollRows = useCallback((direction: -1 | 1) => {
+    const baseRows = Math.max(1, Math.trunc(scrollSpeed || DEFAULT_LINE_SCROLL_ROWS));
+    if (!scrollAccelerationEnabled) {
+      resetScrollAcceleration();
+      return baseRows;
+    }
+
+    const nowMs = Date.now();
+    const previous = scrollAccelerationRef.current;
+    const shouldAccelerate =
+      previous.lastDirection === direction &&
+      nowMs - previous.lastAtMs <= SCROLL_ACCEL_WINDOW_MS;
+    const nextStreak = shouldAccelerate
+      ? Math.min(previous.streak + 1, SCROLL_ACCEL_MAX_MULTIPLIER * 2)
+      : 1;
+    const multiplier = Math.min(
+      SCROLL_ACCEL_MAX_MULTIPLIER,
+      1 + Math.floor((nextStreak - 1) / 2)
+    );
+
+    scrollAccelerationRef.current = {
+      lastDirection: direction,
+      lastAtMs: nowMs,
+      streak: nextStreak
+    };
+
+    return baseRows * multiplier;
+  }, [resetScrollAcceleration, scrollAccelerationEnabled, scrollSpeed]);
+
   const { trigger: triggerHistoryEscape, reset: resetHistoryEscape } = useDoublePress(
     setHistoryEscPending,
     () => {
@@ -209,21 +272,25 @@ export function AgentScreen(props: { controller: SessionController }) {
       );
     },
     "scroll:lineUp": () => {
-      transcriptRef.current?.scrollBy(-LINE_SCROLL_ROWS);
+      transcriptRef.current?.scrollBy(-resolveLineScrollRows(-1));
     },
     "scroll:lineDown": () => {
-      transcriptRef.current?.scrollBy(LINE_SCROLL_ROWS);
+      transcriptRef.current?.scrollBy(resolveLineScrollRows(1));
     },
     "scroll:pageUp": () => {
+      resetScrollAcceleration();
       transcriptRef.current?.scrollPage(-1);
     },
     "scroll:pageDown": () => {
+      resetScrollAcceleration();
       transcriptRef.current?.scrollPage(1);
     },
     "scroll:top": () => {
+      resetScrollAcceleration();
       transcriptRef.current?.scrollToTop();
     },
     "scroll:bottom": () => {
+      resetScrollAcceleration();
       transcriptRef.current?.scrollToBottom();
     }
   }), [
@@ -231,6 +298,8 @@ export function AgentScreen(props: { controller: SessionController }) {
     hasConnectionConfig,
     isLoading,
     props.controller,
+    resetScrollAcceleration,
+    resolveLineScrollRows,
     resetHistoryEscape,
     triggerHistoryEscape,
     store
@@ -384,8 +453,10 @@ export function AgentScreen(props: { controller: SessionController }) {
           terminalWidth={terminalWidth}
           unseenDividerMessageId={unseenDividerMessageId}
           unseenMessageCount={unseenMessageCount}
+          maxMessagesWithoutVirtualization={maxMessagesWithoutVirtualization}
           isLoading={isLoading}
           onStickyChange={syncTranscriptSticky}
+          onNearTop={handleTranscriptNearTop}
         />
       }
       pill={pill}

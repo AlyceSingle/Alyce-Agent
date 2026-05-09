@@ -42,6 +42,10 @@ Alyce 的配置采用分层加载机制，优先级从高到低排列如下（�
 - `AGENT_SESSION_MEMORY_MAX_CHARS_PER_MESSAGE`：提取 prompt 中单条消息的截断字符数，默认 `1500`。
 - `AGENT_MARKDOWN_TOOL_RENDERING_ENABLED`：是否为符合条件的工具结果启用 markdown 渲染，默认 `true`。
 - `AGENT_MARKDOWN_RENDER_MAX_CHARS`：markdown 渲染字符预算，超过后回退到 plain/code section，默认 `32000`。
+- `AGENT_SCROLL_SPEED`：转录区逐行滚动的基础行数，默认 `2`（会限制在 `1-8`）。
+- `AGENT_SCROLL_ACCELERATION_ENABLED`：是否启用短时间连续滚动的加速，默认 `false`。
+- `AGENT_MAX_MESSAGES_WITHOUT_VIRTUALIZATION`：禁用虚拟滚动时的安全消息上限，默认 `200`。
+- `AGENT_HISTORY_PAGING_ENABLED`：实验功能，恢复超长会话时先加载最近窗口，滚到顶部附近再分块补载旧消息，默认 `false`。
 - `ALYCE_WEB_SEARCH_PROVIDER`：搜索服务商（`auto`、`brave`、`exa`、`duckduckgo`）。
 - `ALYCE_BRAVE_SEARCH_API_KEY`：Brave Search API 密钥。
 - `ALYCE_WEB_FETCH_MAX_BYTES`：单次网页抓取的最大字节数。
@@ -156,6 +160,10 @@ description: 用于重复项目任务的流程。
 - **审批模式**：控制工具调用的审批严格程度。
 - **最大步数**：单轮对话中允许 Agent 连续调用工具的最大次数。
 - **命令超时**：Shell 命令执行的超时时间（毫秒）。
+- **滚动速度**（`scrollSpeed`）：逐行滚动动作使用的基础行数（`1-8`）。
+- **滚动加速**（`scrollAccelerationEnabled`）：开启后，短时间连续逐行滚动会逐级提速。
+- **非虚拟消息上限**（`maxMessagesWithoutVirtualization`）：禁用虚拟滚动时的安全上限，避免回退路径无限增长。
+- **历史分页**（`historyPagingEnabled`）：实验开关，恢复长会话时先挂载近期消息，滚到顶部再按块加载旧消息。
 
 ### 角色与语言
 - **语言偏好**：助手回复时使用的语言。

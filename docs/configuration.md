@@ -67,6 +67,10 @@ Loaded in this priority order — **again, earlier wins**:
 - `AGENT_MEMORY_MAX_PROMPT` — max memory chars injected into prompt
 - `AGENT_MARKDOWN_TOOL_RENDERING_ENABLED` — enable/disable markdown rendering for eligible tool-result messages, default `true`
 - `AGENT_MARKDOWN_RENDER_MAX_CHARS` — markdown render character budget before fallback, default `32000`
+- `AGENT_SCROLL_SPEED` — base line-scroll rows for transcript navigation, default `2` (clamped to `1-8`)
+- `AGENT_SCROLL_ACCELERATION_ENABLED` — enable/disable short-burst line-scroll acceleration, default `false`
+- `AGENT_MAX_MESSAGES_WITHOUT_VIRTUALIZATION` — safety cap for non-virtual transcript mode, default `200`
+- `AGENT_HISTORY_PAGING_ENABLED` — experimental resumed-session history paging (load recent first, prepend older chunks near top), default `false`
 - `AGENT_AUTO_COMPACT_TIMEOUT_MS` — timeout for automatic compaction model calls, default `180000`
 - `AGENT_AUTO_COMPACT_MAX_FAILURES` — consecutive automatic compaction failures before circuit breaking, default `3`
 - `AGENT_MODEL_CONTEXT_WINDOW_OVERRIDES` — comma-separated model context overrides, for example `custom fast=512000,my alias=1000000`
@@ -198,6 +202,10 @@ These appear in the **Session** tab of settings.
 - `approvalMode` — how strict tool approval is. Options range from always-ask to smart-defaults.
 - `maxSteps` — maximum tool-calling steps per turn before the agent must produce a final answer.
 - `commandTimeoutMs` — timeout for shell commands in milliseconds.
+- `scrollSpeed` — base number of rows used for line-by-line transcript scroll actions (`1-8`).
+- `scrollAccelerationEnabled` — when enabled, repeated line-scroll actions in a short window accelerate progressively.
+- `maxMessagesWithoutVirtualization` — non-virtual transcript safety cap that prevents fallback mode from growing without bound.
+- `historyPagingEnabled` — experimental setting that resumes long sessions with a recent window first and lazily prepends older transcript chunks near the top.
 
 ### Prompt & Persona
 

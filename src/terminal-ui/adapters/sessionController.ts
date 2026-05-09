@@ -38,6 +38,8 @@ import {
   openRewindPickerDialog,
   openSessionPickerDialog,
   openSettingsDialog,
+  prependMessages,
+  replaceMessageById,
   replaceMessages,
   setConnectionConfigState,
   setContextBudget,
@@ -65,6 +67,7 @@ import {
   createThinkingMessage,
   createToolResultMessage,
   createUserMessage,
+  isEphemeralProgressMessage,
   shouldKeepUiMessage,
   shouldSkipThinkingContent
 } from "./messageMapper.js";
@@ -79,6 +82,8 @@ const RESTORABLE_TOOL_NAMES = new Set([
   "apply_patch"
 ]);
 const MAX_REWIND_POINTS = 100;
+const PAGED_HISTORY_INITIAL_WINDOW = 240;
+const PAGED_HISTORY_CHUNK_SIZE = 120;
 
 // 每轮请求在执行前都会记录一个 checkpoint，便于中断时回滚消息和文件改动。
 interface TurnCheckpoint {
@@ -103,6 +108,14 @@ interface RewindPoint {
   hasFileChanges: boolean;
   hasNonRestorableToolActivity: boolean;
   isRestoredFromHistory: boolean;
+}
+
+interface SessionHistoryPagingState {
+  allMessages: TerminalUiMessage[];
+  indexById: Map<string, number>;
+  loadedStartIndex: number;
+  chunkSize: number;
+  loading: boolean;
 }
 
 function getErrorMessage(error: unknown): string {
@@ -178,6 +191,7 @@ export interface SessionController {
   initialize: () => void;
   submit: (input: string) => Promise<void>;
   setDraftInput: (value: string) => void;
+  loadOlderSessionMessages: (visibleMessageId: string | null) => void;
   interrupt: () => void;
   openRewindSelector: () => void;
   restoreRewindPoint: (pointId: string, mode: RewindRestoreMode) => Promise<void>;
@@ -207,12 +221,79 @@ export function createSessionController(
   const sessionAllowedKinds = new Set<ToolPermissionKind>();
   let activeTurn: TurnCheckpoint | null = null;
   let rewindPoints: RewindPoint[] = [];
+  let sessionHistoryPaging: SessionHistoryPagingState | null = null;
+  const turnEphemeralMessageIds = new Map<"thinking" | "progress", string>();
+
+  const resetSessionHistoryPaging = () => {
+    sessionHistoryPaging = null;
+  };
+
+  const upsertPagedMessageCache = (message: TerminalUiMessage) => {
+    if (!sessionHistoryPaging) {
+      return;
+    }
+
+    const currentIndex = sessionHistoryPaging.indexById.get(message.id);
+    if (currentIndex !== undefined) {
+      sessionHistoryPaging.allMessages[currentIndex] = message;
+      return;
+    }
+
+    sessionHistoryPaging.allMessages.push(message);
+    sessionHistoryPaging.indexById.set(
+      message.id,
+      sessionHistoryPaging.allMessages.length - 1
+    );
+  };
+
+  const resetTurnEphemeralMessages = () => {
+    turnEphemeralMessageIds.clear();
+  };
+
+  const upsertTurnEphemeralMessage = (
+    key: "thinking" | "progress",
+    message: TerminalUiMessage
+  ) => {
+    if (!shouldKeepUiMessage(message)) {
+      return;
+    }
+
+    store.updateState((state) => {
+      const previousId = turnEphemeralMessageIds.get(key);
+      if (!previousId) {
+        turnEphemeralMessageIds.set(key, message.id);
+        upsertPagedMessageCache(message);
+        return appendMessage(state, message);
+      }
+
+      const previousMessage = state.messages.find((item) => item.id === previousId);
+      if (!previousMessage) {
+        turnEphemeralMessageIds.set(key, message.id);
+        upsertPagedMessageCache(message);
+        return appendMessage(state, message);
+      }
+
+      const replacement: TerminalUiMessage = {
+        ...message,
+        id: previousMessage.id,
+        createdAt: previousMessage.createdAt
+      };
+      upsertPagedMessageCache(replacement);
+      return replaceMessageById(state, previousMessage.id, replacement);
+    });
+  };
 
   const appendUiMessage = (message: TerminalUiMessage) => {
     if (!shouldKeepUiMessage(message)) {
       return;
     }
 
+    if (isEphemeralProgressMessage(message)) {
+      upsertTurnEphemeralMessage("progress", message);
+      return;
+    }
+
+    upsertPagedMessageCache(message);
     store.updateState((state) => appendMessage(state, message));
   };
 
@@ -424,6 +505,7 @@ export function createSessionController(
           target.input
         )
       );
+      resetSessionHistoryPaging();
 
       await runtime.recordSessionRewind({
         apiMessageCount: Math.max(0, runtime.messages.length - 1),
@@ -656,20 +738,78 @@ export function createSessionController(
       .join("\n");
   };
 
+  const loadOlderSessionMessages = (visibleMessageId: string | null) => {
+    const paging = sessionHistoryPaging;
+    if (!paging || paging.loading || paging.loadedStartIndex === 0) {
+      return;
+    }
+
+    const currentMessages = store.getState().messages;
+    if (currentMessages.length === 0) {
+      return;
+    }
+
+    if (visibleMessageId) {
+      const visibleIndex = currentMessages.findIndex((message) => message.id === visibleMessageId);
+      if (visibleIndex > 2) {
+        return;
+      }
+    }
+
+    paging.loading = true;
+    try {
+      const nextStart = Math.max(0, paging.loadedStartIndex - paging.chunkSize);
+      const prepended = paging.allMessages.slice(nextStart, paging.loadedStartIndex);
+      paging.loadedStartIndex = nextStart;
+      if (prepended.length === 0) {
+        return;
+      }
+
+      store.updateState((state) => prependMessages(state, prepended));
+    } finally {
+      paging.loading = false;
+    }
+  };
+
   const resumeSessionById = async (sessionId: string) => {
     const resumed = await runtime.resumeSessionHistory(sessionId);
     activeTurn = null;
     sessionAllowedKinds.clear();
     sessionApprovalMode = runtime.getSettings().approvalMode;
 
-    const restoredMessages = filterUiMessages(resumed.uiMessages as TerminalUiMessage[]);
+    const allRestoredMessages = filterUiMessages(resumed.uiMessages as TerminalUiMessage[]);
+    const historyPagingEnabled = runtime.getSettings().historyPagingEnabled;
+    const initialStartIndex = historyPagingEnabled
+      ? Math.max(0, allRestoredMessages.length - PAGED_HISTORY_INITIAL_WINDOW)
+      : 0;
+    const restoredMessages = allRestoredMessages.slice(initialStartIndex);
+    if (historyPagingEnabled && initialStartIndex > 0) {
+      const indexById = new Map<string, number>();
+      for (let index = 0; index < allRestoredMessages.length; index += 1) {
+        indexById.set(allRestoredMessages[index]!.id, index);
+      }
+      sessionHistoryPaging = {
+        allMessages: allRestoredMessages,
+        indexById,
+        loadedStartIndex: initialStartIndex,
+        chunkSize: PAGED_HISTORY_CHUNK_SIZE,
+        loading: false
+      };
+    } else {
+      resetSessionHistoryPaging();
+    }
     rebuildRewindPointsFromCurrentConversation(restoredMessages);
     const systemMessage = createSystemMessage(
       [
         `Resumed session ${resumed.sessionId.slice(0, 8)}.`,
         `Title: ${resumed.title || "(session)"}`,
-        `Messages restored: ${resumed.messageCount}`
-      ].join("\n"),
+        `Messages restored: ${resumed.messageCount}`,
+        sessionHistoryPaging
+          ? `History paging active: loaded latest ${restoredMessages.length}, older messages load when scrolling near top.`
+          : null
+      ]
+        .filter((line): line is string => line !== null)
+        .join("\n"),
       "Session"
     );
 
@@ -901,6 +1041,7 @@ export function createSessionController(
         }
       }
       rewindPoints = [];
+      resetSessionHistoryPaging();
       await runtime.clearConversation();
       store.updateState((state) =>
         setDraftInput(
@@ -1138,6 +1279,7 @@ export function createSessionController(
 
       runtime.beginTurn(turnId);
       activeTurn = checkpoint;
+      resetTurnEphemeralMessages();
 
       store.updateState((state) => setTranscriptSticky(state, true));
       const userMessage = {
@@ -1150,6 +1292,7 @@ export function createSessionController(
       let completedTurnHistoryPlan: CompletedTurnHistoryPlan | null = null;
       let turnRecorded = false;
       let conversationWasCompacted = false;
+      let thinkingContent = "";
 
       try {
         // 每轮都绑定独立的 abort controller 和 tool context，确保取消只影响当前轮次。
@@ -1260,7 +1403,13 @@ export function createSessionController(
               return;
             }
 
-            appendUiMessage(createThinkingMessage(chunk));
+            const nextThinkingContent = mergeThinkingContent(thinkingContent, chunk);
+            if (nextThinkingContent === thinkingContent) {
+              return;
+            }
+
+            thinkingContent = nextThinkingContent;
+            upsertTurnEphemeralMessage("thinking", createThinkingMessage(thinkingContent));
           },
           onReconnect: (event) => {
             if (event.type === "scheduled") {
@@ -1442,6 +1591,7 @@ export function createSessionController(
           );
         }
       } finally {
+        resetTurnEphemeralMessages();
         store.updateState((state) => setLoading(state, false));
 
         if (exitRequestedAfterTurn && activeTurn === null && !store.getState().isLoading) {
@@ -1452,6 +1602,9 @@ export function createSessionController(
     },
     setDraftInput: (value) => {
       setDraftInputValue(value);
+    },
+    loadOlderSessionMessages: (visibleMessageId) => {
+      loadOlderSessionMessages(visibleMessageId);
     },
     interrupt: () => {
       if (!activeTurn || activeTurn.controller.signal.aborted) {
@@ -1491,6 +1644,9 @@ export function createSessionController(
     saveConfig: async (connectionPatch, settingsPatch, connectionTarget) => {
       await runtime.updateConnectionConfig(connectionPatch, connectionTarget);
       await runtime.updateSettings(settingsPatch);
+      if (!runtime.getSettings().historyPagingEnabled) {
+        resetSessionHistoryPaging();
+      }
 
       sessionApprovalMode = runtime.getSettings().approvalMode;
       sessionAllowedKinds.clear();
@@ -1578,6 +1734,41 @@ function extractMessageText(value: unknown): string {
     .replace(/\s+/g, " ")
     .trim();
 }
+
+function mergeThinkingContent(current: string, nextChunk: string): string {
+  if (!nextChunk.trim()) {
+    return current;
+  }
+
+  if (!current) {
+    return nextChunk;
+  }
+
+  if (current === nextChunk) {
+    return current;
+  }
+
+  if (nextChunk.startsWith(current)) {
+    return nextChunk;
+  }
+
+  if (current.endsWith(nextChunk)) {
+    return current;
+  }
+
+  const maxOverlap = Math.min(current.length, nextChunk.length);
+  for (let overlap = maxOverlap; overlap > 0; overlap -= 1) {
+    if (current.endsWith(nextChunk.slice(0, overlap))) {
+      return `${current}${nextChunk.slice(overlap)}`;
+    }
+  }
+
+  return `${current}${nextChunk}`;
+}
+
+export const __SESSION_CONTROLLER_TESTING__ = {
+  mergeThinkingContent
+} as const;
 
 function shouldUseGcliGeminiCompat(baseURL: string | undefined, model: string): boolean {
   if (!baseURL) {

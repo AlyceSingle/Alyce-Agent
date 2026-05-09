@@ -164,6 +164,17 @@ export function shouldKeepUiMessage(message: TerminalUiMessage) {
   return true;
 }
 
+export function isEphemeralProgressMessage(message: TerminalUiMessage) {
+  if (message.kind === "system" && message.title.trim().toLowerCase() === "progress") {
+    return true;
+  }
+
+  return message.metadata.some((entry) => {
+    const normalized = entry.trim().toLowerCase();
+    return normalized === "progress" || normalized.startsWith("progress:");
+  });
+}
+
 export function createToolResultMessage(toolName: string, displayResult: string, rawArguments = "") {
   const result = parseToolCallExecutionResult(toolName, displayResult, rawArguments);
   const summary = buildToolSummary(result.toolName, result.parsedArgs, result.structuredResult);

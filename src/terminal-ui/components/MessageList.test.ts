@@ -13,7 +13,7 @@ type TestMessageEntry = {
   metadataLine?: string;
 };
 
-const testing = __MESSAGE_LIST_TESTING__ as {
+const testing = __MESSAGE_LIST_TESTING__ as unknown as {
   renderBlockLines: (block: TerminalUiMessageBlock, width: number) => Array<{ content: string; diffKind?: string }>;
   buildCollapsedMessageBlocks: (
     blocks: TerminalUiMessageBlock[],
@@ -31,6 +31,20 @@ const testing = __MESSAGE_LIST_TESTING__ as {
     unseenDividerMessageId: string | null,
     liveMarkdownMessageId: string | null
   ) => TestMessageEntry[];
+  sliceMessagesForNonVirtualizedList: (options: {
+    messages: TerminalUiMessage[];
+    maxMessages: number;
+    sticky: boolean;
+    visibleMessageId: string | null;
+    selectedMessageId: string | null;
+    unseenDividerMessageId: string | null;
+  }) => TerminalUiMessage[];
+  resolveVisibleMessageId: (
+    renderedEntries: Array<{ message: { id: string }; rowCount: number }>,
+    entryOffsets: number[],
+    scrollTop: number
+  ) => string | null;
+  resolvePrependedMessageIds: (previousIds: string[], nextIds: string[]) => string[];
 };
 
 function createMessage(overrides: Partial<TerminalUiMessage>): TerminalUiMessage {
@@ -63,6 +77,9 @@ function runTests() {
   testShellToolStaysCodeFirst(renderPolicy);
   testOverBudgetMarkdownFallsBackToSections();
   testMarkdownBudgetErrorFallsBackToSections();
+  testSliceMessagesForNonVirtualizedListAnchorsAroundVisibleMessage();
+  testResolveVisibleMessageIdReturnsTopVisibleEntry();
+  testResolvePrependedMessageIds();
   console.log("MessageList tests passed");
 }
 
@@ -417,6 +434,100 @@ function testMarkdownBudgetErrorFallsBackToSections() {
   assert.ok(entry);
   assert.equal(entry?.markdownPlan, undefined);
   assert.ok((entry?.sections.length ?? 0) > 0);
+}
+
+function testSliceMessagesForNonVirtualizedListAnchorsAroundVisibleMessage() {
+  const messages = Array.from({ length: 30 }, (_, index) =>
+    createMessage({
+      id: `message-${index + 1}`,
+      content: `message-${index + 1}`,
+      blocks: [{ content: `message-${index + 1}` }]
+    })
+  );
+
+  const stickySlice = testing.sliceMessagesForNonVirtualizedList({
+    messages,
+    maxMessages: 20,
+    sticky: true,
+    visibleMessageId: null,
+    selectedMessageId: null,
+    unseenDividerMessageId: null
+  });
+  assert.deepEqual(stickySlice.map((message) => message.id), [
+    "message-11",
+    "message-12",
+    "message-13",
+    "message-14",
+    "message-15",
+    "message-16",
+    "message-17",
+    "message-18",
+    "message-19",
+    "message-20",
+    "message-21",
+    "message-22",
+    "message-23",
+    "message-24",
+    "message-25",
+    "message-26",
+    "message-27",
+    "message-28",
+    "message-29",
+    "message-30"
+  ]);
+
+  const anchoredSlice = testing.sliceMessagesForNonVirtualizedList({
+    messages,
+    maxMessages: 20,
+    sticky: false,
+    visibleMessageId: "message-20",
+    selectedMessageId: null,
+    unseenDividerMessageId: null
+  });
+  assert.deepEqual(
+    anchoredSlice.map((message) => message.id),
+    Array.from({ length: 20 }, (_, index) => `message-${index + 5}`)
+  );
+}
+
+function testResolveVisibleMessageIdReturnsTopVisibleEntry() {
+  const renderedEntries = [
+    { message: { id: "message-1" }, rowCount: 3 },
+    { message: { id: "message-2" }, rowCount: 4 },
+    { message: { id: "message-3" }, rowCount: 2 }
+  ];
+  const entryOffsets = [0, 3, 7];
+
+  assert.equal(testing.resolveVisibleMessageId(renderedEntries, entryOffsets, 0), "message-1");
+  assert.equal(testing.resolveVisibleMessageId(renderedEntries, entryOffsets, 2), "message-1");
+  assert.equal(testing.resolveVisibleMessageId(renderedEntries, entryOffsets, 3), "message-2");
+  assert.equal(testing.resolveVisibleMessageId(renderedEntries, entryOffsets, 6), "message-2");
+  assert.equal(testing.resolveVisibleMessageId(renderedEntries, entryOffsets, 7), "message-3");
+  assert.equal(testing.resolveVisibleMessageId(renderedEntries, entryOffsets, 999), "message-3");
+}
+
+function testResolvePrependedMessageIds() {
+  assert.deepEqual(
+    testing.resolvePrependedMessageIds(
+      ["b", "c", "d"],
+      ["a", "b", "c", "d"]
+    ),
+    ["a"]
+  );
+  assert.deepEqual(
+    testing.resolvePrependedMessageIds(
+      ["b", "c", "d"],
+      ["x", "y", "b", "c", "d"]
+    ),
+    ["x", "y"]
+  );
+  assert.deepEqual(
+    testing.resolvePrependedMessageIds(
+      ["b", "c", "d"],
+      ["a", "b", "x", "d"]
+    ),
+    []
+  );
 }
 
 function flattenSections(entry: TestMessageEntry) {
