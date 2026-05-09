@@ -65,6 +65,8 @@ Loaded in this priority order — **again, earlier wins**:
 - `AGENT_MEMORY_MAX_SESSION` — max session memory entries
 - `AGENT_MEMORY_MAX_PERSISTENT` — max persistent memory entries
 - `AGENT_MEMORY_MAX_PROMPT` — max memory chars injected into prompt
+- `AGENT_MARKDOWN_TOOL_RENDERING_ENABLED` — enable/disable markdown rendering for eligible tool-result messages, default `true`
+- `AGENT_MARKDOWN_RENDER_MAX_CHARS` — markdown render character budget before fallback, default `32000`
 - `AGENT_AUTO_COMPACT_TIMEOUT_MS` — timeout for automatic compaction model calls, default `180000`
 - `AGENT_AUTO_COMPACT_MAX_FAILURES` — consecutive automatic compaction failures before circuit breaking, default `3`
 - `AGENT_MODEL_CONTEXT_WINDOW_OVERRIDES` — comma-separated model context overrides, for example `custom fast=512000,my alias=1000000`
@@ -208,6 +210,9 @@ These appear in the **Session** tab of settings.
 
 - `sessionMemoryEnabled` — whether the session memory file is injected and automatically maintained. Older `autoSummaryEnabled` settings files are read as a compatibility alias.
 - `messageTimestampsEnabled` — whether the model sees the current system time in each turn.
+- `markdownMessageRenderingEnabled` — global markdown rendering switch for conversation messages.
+- `markdownToolMessageRenderingEnabled` — fine-grained switch for markdown rendering on eligible tool-result messages.
+- `markdownRenderMaxChars` — markdown render character budget. Messages exceeding this budget fall back to plain/code sections.
 - `conversationCompactionEnabled` — whether long conversations get compressed to stay within context limits.
 - `autoCompactTimeoutMs` — timeout for automatic compaction model calls.
 - `autoCompactMaxFailures` — consecutive automatic compaction failures before Alyce stops retrying for the current session.
@@ -224,6 +229,21 @@ These appear in the **Session** tab of settings.
 ```
 
 Alyce first checks these overrides, then explicit suffixes in the model name such as `128k` or `1m`, then its built-in provider table. Unknown models fall back to `128000` tokens.
+
+### Markdown Rendering Rules
+
+- Assistant/thinking messages can render as markdown when `markdownMessageRenderingEnabled` is on.
+- Tool messages require both `markdownMessageRenderingEnabled` and `markdownToolMessageRenderingEnabled`.
+- `shell` / `write` / `edit` / `patch` tool results always stay code/diff-first.
+- Markdown-capable tool rendering is limited to text-heavy tool results (for example list/glob/grep/webfetch/websearch/codesearch style outputs) and keeps collapsed previews in section mode.
+- If markdown parsing hits safety budgets (size/line/nesting limits) or parsing fails, Alyce automatically falls back to plain/code sections.
+
+### Markdown Limitations in TTY
+
+- Alyce uses terminal-native markdown rendering, not browser DOM rendering.
+- DOM-level HTML behaviors (sanitizers, layout engines, CSS, script execution) are intentionally unsupported.
+- Table, quote, and link semantics are approximated for terminal readability.
+- Copy behavior follows rendered terminal text; for labeled links, Alyce appends `<URL>` so copied text preserves the target.
 
 ### Paths
 

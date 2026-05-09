@@ -2344,6 +2344,14 @@ function normalizeSettingsPatch(
     normalized.markdownMessageRenderingEnabled = patch.markdownMessageRenderingEnabled;
   }
 
+  if ("markdownToolMessageRenderingEnabled" in patch) {
+    normalized.markdownToolMessageRenderingEnabled = patch.markdownToolMessageRenderingEnabled;
+  }
+
+  if ("markdownRenderMaxChars" in patch && patch.markdownRenderMaxChars !== undefined) {
+    normalized.markdownRenderMaxChars = Math.max(1, Math.trunc(patch.markdownRenderMaxChars));
+  }
+
   if ("conversationCompactionEnabled" in patch) {
     normalized.conversationCompactionEnabled = patch.conversationCompactionEnabled;
   }

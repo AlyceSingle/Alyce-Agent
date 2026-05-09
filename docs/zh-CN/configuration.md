@@ -40,6 +40,8 @@ Alyce 的配置采用分层加载机制，优先级从高到低排列如下（�
 - `AGENT_SESSION_MEMORY_STALE_MS`：进行中的提取任务超过多久视为陈旧，默认 `60000` 毫秒。
 - `AGENT_SESSION_MEMORY_WINDOW_MESSAGES`：每次提取最多带入的最近消息数，默认 `80`。
 - `AGENT_SESSION_MEMORY_MAX_CHARS_PER_MESSAGE`：提取 prompt 中单条消息的截断字符数，默认 `1500`。
+- `AGENT_MARKDOWN_TOOL_RENDERING_ENABLED`：是否为符合条件的工具结果启用 markdown 渲染，默认 `true`。
+- `AGENT_MARKDOWN_RENDER_MAX_CHARS`：markdown 渲染字符预算，超过后回退到 plain/code section，默认 `32000`。
 - `ALYCE_WEB_SEARCH_PROVIDER`：搜索服务商（`auto`、`brave`、`exa`、`duckduckgo`）。
 - `ALYCE_BRAVE_SEARCH_API_KEY`：Brave Search API 密钥。
 - `ALYCE_WEB_FETCH_MAX_BYTES`：单次网页抓取的最大字节数。
@@ -163,6 +165,9 @@ description: 用于重复项目任务的流程。
 ### 记忆与上下文
 - **会话记忆**：是否注入并自动维护会话记忆文件。旧设置文件里的 `autoSummaryEnabled` 会作为兼容别名读取。
 - **系统时间注入**：是否让模型在每轮对话中感知当前的系统时间。
+- **Markdown 消息渲染**（`markdownMessageRenderingEnabled`）：消息 markdown 渲染总开关。
+- **工具结果 Markdown 渲染**（`markdownToolMessageRenderingEnabled`）：工具结果 markdown 渲染细粒度开关。
+- **Markdown 渲染字符预算**（`markdownRenderMaxChars`）：超过预算时自动回退到 plain/code section 渲染。
 - **对话压缩**：当请求接近模型上下文上限时，是否自动压缩旧消息。自动压缩带有超时和连续失败熔断，避免每轮重复卡住。
 - **自动压缩超时**：自动压缩模型调用的最长等待时间，单位毫秒。
 - **自动压缩失败阈值**：自动压缩连续失败达到该次数后，本会话停止自动重试。
@@ -179,6 +184,21 @@ description: 用于重复项目任务的流程。
 ```
 
 Alyce 会先使用这些覆盖项，再读取模型名里的 `128k`、`1m` 等显式后缀，然后匹配内置模型表。完全未知的模型会回退到 `128000` tokens。
+
+### Markdown 渲染规则
+
+- `assistant` / `thinking` 消息在开启 `markdownMessageRenderingEnabled` 时可走 markdown 渲染。
+- `tool` 消息需要同时开启 `markdownMessageRenderingEnabled` 与 `markdownToolMessageRenderingEnabled`。
+- `shell` / `write` / `edit` / `patch` 结果始终保持 code/diff-first，不走 markdown。
+- markdown 化主要用于文本型工具结果（如 list/glob/grep/webfetch/websearch/codesearch 风格输出）；折叠预览仍保持 section 模式。
+- 如果 markdown 解析触发安全预算（大小/行数/嵌套深度）或解析异常，会自动回退到 plain/code section，保证 UI 稳定。
+
+### TTY 下的 Markdown 限制
+
+- Alyce 使用终端原生渲染，不是浏览器 DOM 渲染。
+- 不支持 DOM 级 HTML 能力（如浏览器布局/CSS/脚本执行等）。
+- 表格、引用、链接等语义会按终端可读性做近似呈现。
+- 复制行为以终端实际渲染文本为准；带标签链接会追加 `<URL>`，避免复制后丢失目标地址。
 
 ---
 

@@ -2,7 +2,6 @@ import React, { forwardRef, useEffect, useImperativeHandle, useMemo, useRef, use
 import {
   buildMarkdownRenderPlan,
   MarkdownRenderer,
-  shouldRenderMarkdownMessage,
   type MarkdownRenderPlan
 } from "./MarkdownRenderer.js";
 import { Box, ScrollBox, Text, type ScrollBoxHandle } from "../runtime/ink.js";
@@ -23,6 +22,12 @@ import {
   isContextPreviewMessage,
   isDiffPatchBlock
 } from "../utils/messageBlocks.js";
+import { normalizeMarkdownInput } from "../utils/htmlEntities.js";
+import {
+  createRenderPolicy,
+  resolveMessageRenderDecision,
+  type RenderPolicy
+} from "../utils/renderPolicy.js";
 import { wrapText, wrapTextClamped } from "../utils/text.js";
 
 const SCROLL_HEADROOM_ROWS = 2;
@@ -245,7 +250,7 @@ function renderBlockLines(block: TerminalUiMessageBlock, width: number): Rendere
     return wrapDiffPatchLines(block.content, width);
   }
 
-  return wrapText(block.content, width).map((content) => ({ content }));
+  return wrapText(normalizeMarkdownInput(block.content), width).map((content) => ({ content }));
 }
 
 function wrapDiffPatchLines(content: string, width: number): RenderedSectionLine[] {
@@ -669,14 +674,54 @@ function buildExpandableMetadataLine(metadata: string[], toggleHint?: string) {
   return parts.length > 0 ? parts.join(" | ") : undefined;
 }
 
+function buildToolMarkdownContent(
+  blocks: readonly TerminalUiMessageBlock[]
+): string | null {
+  const sections = blocks.flatMap((block) => {
+    const normalizedContent = normalizeMarkdownInput(block.content);
+    if (normalizedContent.trim().length === 0) {
+      return [];
+    }
+
+    if (!block.label) {
+      return [normalizedContent];
+    }
+
+    return [`### ${block.label}\n\n${normalizedContent}`];
+  });
+
+  if (sections.length === 0) {
+    return null;
+  }
+
+  return sections.join("\n\n");
+}
+
+function buildMarkdownPlanSafely(
+  source: string,
+  width: number,
+  live: boolean,
+  policyVersion: string
+): MarkdownRenderPlan | undefined {
+  try {
+    return buildMarkdownRenderPlan(source, width, {
+      live,
+      policyVersion
+    });
+  } catch {
+    return undefined;
+  }
+}
+
 function buildRenderedMessageEntries(
   messages: TerminalUiMessage[],
   selectedMessageId: string | null,
   contentWidth: number,
-  markdownEnabled: boolean,
+  renderPolicy: RenderPolicy,
   expandedMessageIds: ReadonlySet<string>,
   assistantLabel: string,
-  unseenDividerMessageId: string | null
+  unseenDividerMessageId: string | null,
+  liveMarkdownMessageId: string | null
 ): RenderedMessageEntry[] {
   return messages.map((message, index) => {
     const isSelected = message.id === selectedMessageId;
@@ -692,9 +737,43 @@ function buildRenderedMessageEntries(
         ? renderToolMessageState(message, contentWidth, isExpanded)
         : isContextPreviewMessage(message)
           ? renderContextPreviewMessageState(message, contentWidth, isExpanded)
-        : null;
-    const markdownPlan = shouldRenderMarkdownMessage(message.kind, markdownEnabled)
-      ? buildMarkdownRenderPlan(message.content, bodyWidth)
+          : null;
+    const resolveRenderDecision = (markdownSource: string) => resolveMessageRenderDecision({
+      policy: renderPolicy,
+      message,
+      expanded: isExpanded,
+      hasExpandablePreview: expandableRenderState?.expandable ?? false,
+      live: message.id === liveMarkdownMessageId,
+      markdownSource
+    });
+    let markdownSource = message.content;
+    let renderDecision = resolveRenderDecision(markdownSource);
+
+    if (message.kind === "tool" && message.toolData) {
+      const shouldResolveToolMarkdownSource =
+        renderDecision.mode === "markdown" || renderDecision.fallbackReason === "content-too-long";
+
+      if (shouldResolveToolMarkdownSource) {
+        const nextToolMarkdownSource = buildToolMarkdownContent(
+          isExpanded
+            ? getRenderableToolBlocks(message.blocks, message.toolData)
+            : buildCollapsedToolBlocks(message, message.toolData, bodyWidth).blocks
+        );
+
+        if (nextToolMarkdownSource) {
+          markdownSource = nextToolMarkdownSource;
+          renderDecision = resolveRenderDecision(markdownSource);
+        }
+      }
+    }
+
+    const markdownPlan = renderDecision.mode === "markdown"
+      ? buildMarkdownPlanSafely(
+          markdownSource,
+          bodyWidth,
+          renderDecision.live,
+          renderPolicy.version
+        )
       : undefined;
     const sections = markdownPlan
       ? []
@@ -735,6 +814,15 @@ function buildRenderedMessageEntries(
     };
   });
 }
+
+export const __MESSAGE_LIST_TESTING__ = {
+  renderBlockLines,
+  buildCollapsedMessageBlocks,
+  buildCollapsedToolBlocks,
+  combineShellOutput,
+  renderToolMessageState,
+  buildRenderedMessageEntries
+} as const;
 
 function buildScrollIndicatorLines(state: ScrollIndicatorState): ScrollIndicatorLine[] {
   const metrics = resolveScrollIndicatorMetrics(state);
@@ -822,6 +910,9 @@ const MessageListImpl = forwardRef<MessageListHandle, {
   selectedMessageId: string | null;
   viewportWidth: number;
   markdownEnabled: boolean;
+  markdownToolMessageRenderingEnabled: boolean;
+  markdownRenderMaxChars: number;
+  isLoading: boolean;
   assistantLabel: string;
   unseenDividerMessageId: string | null;
   unseenMessageCount: number;
@@ -848,23 +939,57 @@ const MessageListImpl = forwardRef<MessageListHandle, {
     totalRowCount: number;
   } | null>(null);
   const contentWidth = Math.max(24, props.viewportWidth - MESSAGE_CONTENT_WIDTH_OFFSET);
+  const renderPolicy = useMemo(
+    () =>
+      createRenderPolicy({
+        markdownMessageRenderingEnabled: props.markdownEnabled,
+        markdownToolMessageRenderingEnabled: props.markdownToolMessageRenderingEnabled,
+        markdownRenderMaxChars: props.markdownRenderMaxChars
+      }),
+    [
+      props.markdownEnabled,
+      props.markdownToolMessageRenderingEnabled,
+      props.markdownRenderMaxChars
+    ]
+  );
+  const liveMarkdownMessageId = useMemo(() => {
+    if (!props.isLoading) {
+      return null;
+    }
+
+    for (let index = props.messages.length - 1; index >= 0; index -= 1) {
+      const message = props.messages[index];
+      if (!message) {
+        continue;
+      }
+
+      if ((message.kind === "thinking" || message.kind === "assistant") && message.content.trim().length > 0) {
+        return message.id;
+      }
+    }
+
+    return null;
+  }, [props.isLoading, props.messages]);
+
   const renderedEntries = useMemo(
     () =>
       buildRenderedMessageEntries(
         props.messages,
         props.selectedMessageId,
         contentWidth,
-        props.markdownEnabled,
+        renderPolicy,
         expandedMessageIds,
         props.assistantLabel,
-        props.unseenDividerMessageId
+        props.unseenDividerMessageId,
+        liveMarkdownMessageId
       ),
     [
       contentWidth,
       expandedMessageIds,
       props.assistantLabel,
-      props.markdownEnabled,
+      liveMarkdownMessageId,
       props.messages,
+      renderPolicy,
       props.selectedMessageId,
       props.unseenDividerMessageId
     ]

@@ -37,12 +37,19 @@ const ConversationPane = React.memo(React.forwardRef<MessageListHandle, {
   terminalWidth: number;
   unseenDividerMessageId: string | null;
   unseenMessageCount: number;
+  isLoading: boolean;
   onStickyChange: (sticky: boolean) => void;
 }>(function ConversationPane(props, ref) {
   const messages = useTerminalUiSelector((value) => value.messages);
   const selectedMessageId = useTerminalUiSelector((value) => value.selectedMessageId);
   const markdownEnabled = useTerminalUiSelector(
     (value) => value.settings.markdownMessageRenderingEnabled
+  );
+  const markdownToolMessageRenderingEnabled = useTerminalUiSelector(
+    (value) => value.settings.markdownToolMessageRenderingEnabled
+  );
+  const markdownRenderMaxChars = useTerminalUiSelector(
+    (value) => value.settings.markdownRenderMaxChars
   );
   const assistantLabel = useTerminalUiSelector(
     (value) => resolveAssistantLabel(value.settings.personaPreset)
@@ -55,6 +62,9 @@ const ConversationPane = React.memo(React.forwardRef<MessageListHandle, {
       selectedMessageId={selectedMessageId}
       viewportWidth={props.terminalWidth}
       markdownEnabled={markdownEnabled}
+      markdownToolMessageRenderingEnabled={markdownToolMessageRenderingEnabled}
+      markdownRenderMaxChars={markdownRenderMaxChars}
+      isLoading={props.isLoading}
       assistantLabel={assistantLabel}
       unseenDividerMessageId={props.unseenDividerMessageId}
       unseenMessageCount={props.unseenMessageCount}
@@ -374,6 +384,7 @@ export function AgentScreen(props: { controller: SessionController }) {
           terminalWidth={terminalWidth}
           unseenDividerMessageId={unseenDividerMessageId}
           unseenMessageCount={unseenMessageCount}
+          isLoading={isLoading}
           onStickyChange={syncTranscriptSticky}
         />
       }

@@ -54,6 +54,18 @@ const FIELD_DEFINITIONS: FieldDefinition[] = [
     section: "session"
   },
   {
+    key: "markdownToolMessageRenderingEnabled",
+    label: "Tool Markdown",
+    type: "toggle",
+    section: "session"
+  },
+  {
+    key: "markdownRenderMaxChars",
+    label: "Markdown Max Chars",
+    type: "number",
+    section: "session"
+  },
+  {
     key: "conversationCompactionEnabled",
     label: "Conversation Compaction",
     type: "toggle",
@@ -512,6 +524,8 @@ export function SettingsDialog(props: {
                 ? "Text fields accept \\n for line breaks. Press P to switch the connection save scope."
                 : currentField.key === "modelContextWindowOverrides"
                   ? "Use comma-separated pattern=tokens entries, for example custom fast=512000."
+                  : currentField.key === "markdownToolMessageRenderingEnabled"
+                    ? "When off, tool results always use plain/code sections even if markdown-capable."
                   : currentField.type === "text"
                   ? "Text fields accept \\n for line breaks."
                   : currentField.type === "number"

@@ -1,6 +1,6 @@
 export const DEFAULT_MAX_SIZE_BYTES = 256 * 1024;
 export const DEFAULT_MAX_NOTEBOOK_SIZE_BYTES = 2 * 1024 * 1024;
-export const DEFAULT_MAX_TEXT_RESULT_BYTES = 50 * 1024;
+export const DEFAULT_MAX_TEXT_RESULT_BYTES = 200 * 1024;
 export const DEFAULT_DIRECTORY_ENTRIES_TO_READ = 200;
 export const MAX_DIRECTORY_ENTRIES_TO_READ = 2000;
 export const DEFAULT_NOTEBOOK_CELLS_TO_READ = 50;
@@ -9,7 +9,7 @@ export const DEFAULT_NOTEBOOK_OUTPUTS_PER_CELL = 3;
 export const DEFAULT_NOTEBOOK_CELL_CHARS = 4000;
 export const DEFAULT_NOTEBOOK_OUTPUT_CHARS = 2000;
 export const DEFAULT_MAX_LINE_CHARS = 2000;
-export const MAX_LINES_TO_READ = 2000;
+export const MAX_LINES_TO_READ = 6000;
 
 export interface FileReadingLimits {
   maxSizeBytes: number;

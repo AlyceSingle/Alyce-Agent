@@ -85,9 +85,9 @@ export class ContextOverflowError extends Error {
 
 const DEFAULT_AUTO_COMPACT_BUFFER_TOKENS = 13_000;
 const TOOL_OUTPUT_SNIP_MARKER = "[Alyce context snip]";
-const TOOL_OUTPUT_MAX_CHARS = 18_000;
-const TOOL_OUTPUT_HEAD_CHARS = 9_000;
-const TOOL_OUTPUT_TAIL_CHARS = 4_000;
+const TOOL_OUTPUT_MAX_CHARS = 72_000;
+const TOOL_OUTPUT_HEAD_CHARS = 28_000;
+const TOOL_OUTPUT_TAIL_CHARS = 20_000;
 
 export class ContextBudgetService {
   private calibrationScale = 1;

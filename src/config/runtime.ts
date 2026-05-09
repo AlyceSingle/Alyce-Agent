@@ -59,6 +59,8 @@ export interface SessionSettings extends PromptOverrideConfig {
   sessionMemoryEnabled: boolean;
   messageTimestampsEnabled: boolean;
   markdownMessageRenderingEnabled: boolean;
+  markdownToolMessageRenderingEnabled: boolean;
+  markdownRenderMaxChars: number;
   conversationCompactionEnabled: boolean;
   autoCompactTimeoutMs: number;
   autoCompactMaxFailures: number;
@@ -136,6 +138,8 @@ const SessionSettingsFileSchema: z.ZodType<SessionSettingsFile> = z
     autoSummaryEnabled: z.boolean().optional(),
     messageTimestampsEnabled: z.boolean().optional(),
     markdownMessageRenderingEnabled: z.boolean().optional(),
+    markdownToolMessageRenderingEnabled: z.boolean().optional(),
+    markdownRenderMaxChars: z.number().int().positive().optional(),
     conversationCompactionEnabled: z.boolean().optional(),
     autoCompactTimeoutMs: z.number().int().positive().optional(),
     autoCompactMaxFailures: z.number().int().positive().optional(),
@@ -557,11 +561,13 @@ function normalizeSessionSettings(
 ): SessionSettings {
   return {
     approvalMode: input.approvalMode === "auto" ? "auto" : "manual",
-    maxSteps: clampPositiveInt(input.maxSteps, 8),
+    maxSteps: clampPositiveInt(input.maxSteps, 50),
     commandTimeoutMs: clampPositiveInt(input.commandTimeoutMs, 120_000),
     sessionMemoryEnabled: input.sessionMemoryEnabled ?? true,
     messageTimestampsEnabled: input.messageTimestampsEnabled ?? false,
     markdownMessageRenderingEnabled: input.markdownMessageRenderingEnabled ?? true,
+    markdownToolMessageRenderingEnabled: input.markdownToolMessageRenderingEnabled ?? true,
+    markdownRenderMaxChars: clampPositiveInt(input.markdownRenderMaxChars, 32_000),
     conversationCompactionEnabled: input.conversationCompactionEnabled ?? true,
     autoCompactTimeoutMs: clampPositiveInt(input.autoCompactTimeoutMs, 180_000),
     autoCompactMaxFailures: clampPositiveInt(input.autoCompactMaxFailures, 3),
@@ -590,6 +596,12 @@ function serializeSessionSettings(
       "markdownMessageRenderingEnabled" in settings
         ? settings.markdownMessageRenderingEnabled
         : undefined,
+    markdownToolMessageRenderingEnabled:
+      "markdownToolMessageRenderingEnabled" in settings
+        ? settings.markdownToolMessageRenderingEnabled
+        : undefined,
+    markdownRenderMaxChars:
+      "markdownRenderMaxChars" in settings ? settings.markdownRenderMaxChars : undefined,
     conversationCompactionEnabled:
       "conversationCompactionEnabled" in settings
         ? settings.conversationCompactionEnabled
@@ -675,6 +687,10 @@ function resolveSettingsFromEnv(env: NodeJS.ProcessEnv): Partial<SessionSettings
     sessionMemoryEnabled: parseOptionalBoolean(
       env.AGENT_SESSION_MEMORY_ENABLED ?? env.AGENT_MEMORY_AUTO_SUMMARY
     ),
+    markdownToolMessageRenderingEnabled: parseOptionalBoolean(
+      env.AGENT_MARKDOWN_TOOL_RENDERING_ENABLED
+    ),
+    markdownRenderMaxChars: parseOptionalPositiveInt(env.AGENT_MARKDOWN_RENDER_MAX_CHARS),
     autoCompactTimeoutMs: parseOptionalPositiveInt(env.AGENT_AUTO_COMPACT_TIMEOUT_MS),
     autoCompactMaxFailures: parseOptionalPositiveInt(env.AGENT_AUTO_COMPACT_MAX_FAILURES),
     languagePreference: env.AGENT_LANGUAGE,

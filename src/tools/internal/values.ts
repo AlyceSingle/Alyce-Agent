@@ -1,4 +1,4 @@
-const MAX_OUTPUT_CHARS = 12_000;
+const MAX_OUTPUT_CHARS = 60_000;
 
 // 截断超长文本，保留前缀并标记被隐藏字符数。
 export function truncate(value: string, maxChars = MAX_OUTPUT_CHARS): string {

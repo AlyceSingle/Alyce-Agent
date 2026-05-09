@@ -42,6 +42,7 @@ Alyce is a local coding assistant framework with:
 - Session resume: project-local JSONL transcripts let `/resume` reopen earlier conversations
 - Rewind: `Esc` or `/rewind` can restore an earlier prompt, with tracked file rollback when available
 - Context control: message timestamps, memory injection, auto-summary, and compaction work together to keep prompts useful instead of bloated
+- Markdown controls: global and tool-level markdown toggles with safety-budget fallback to plain/code sections
 - Safety rails: scoped external-directory approvals, file access scope, UNC path blocking on Windows, approval gates, per-file write locks, raw-byte pre-write snapshots, read-before-write freshness checks with content fallback, byte-level approval-window rechecks, encoding/line-ending preservation, robust edit matching, `MultiEdit`, opencode-style `apply_patch`, and post-edit/write formatter plus TypeScript/JavaScript diagnostics are built into the runtime
 
 ## Quick Start
@@ -81,7 +82,7 @@ copy .env.example .env
 - `OPENAI_BASE_URL`
 - `OPENAI_MODEL`
 
-Optional web tuning includes `ALYCE_WEB_FETCH_CACHE_MAX_BYTES` for the total in-memory WebFetch cache budget; see [Configuration](https://github.com/AlyceSingle/Alyce-Agent/blob/master/docs/configuration.md) for the full list.
+Optional tuning includes `ALYCE_WEB_FETCH_CACHE_MAX_BYTES` (WebFetch cache budget), `AGENT_MARKDOWN_TOOL_RENDERING_ENABLED`, and `AGENT_MARKDOWN_RENDER_MAX_CHARS`; see [Configuration](https://github.com/AlyceSingle/Alyce-Agent/blob/master/docs/configuration.md) for the full list.
 
 4. Start Alyce
 

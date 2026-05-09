@@ -1,9 +1,11 @@
 import React from "react";
+import { createHash } from "node:crypto";
 import { Marked, type TokenizerAndRendererExtension } from "marked";
 import { Box, Text } from "../runtime/ink.js";
 import type { TerminalUiMessageKind } from "../state/types.js";
 import { terminalUiTheme } from "../theme/theme.js";
-import { decodeHtmlEntities } from "../utils/htmlEntities.js";
+import { normalizeMarkdownInput } from "../utils/htmlEntities.js";
+import { streamMarkdownForRender } from "../utils/markdownStream.js";
 import { measureCharWidth } from "../utils/text.js";
 import {
   readMarkdownMathSegmentAtStart,
@@ -47,7 +49,8 @@ type MarkdownLineVariant =
   | "code-label"
   | "math"
   | "rule"
-  | "table";
+  | "table"
+  | "table-divider";
 
 export interface MarkdownRenderLine {
   key: string;
@@ -55,6 +58,7 @@ export interface MarkdownRenderLine {
   prefix: string;
   spans: MarkdownSpan[];
   variant: MarkdownLineVariant;
+  quoteDepth?: number;
 }
 
 export interface MarkdownRenderBlock {
@@ -68,7 +72,17 @@ export interface MarkdownRenderPlan {
   rowCount: number;
 }
 
+export interface BuildMarkdownRenderPlanOptions {
+  live?: boolean;
+  policyVersion?: string;
+}
+
 const MAX_MARKDOWN_PLAN_CACHE_ENTRIES = 128;
+const DEFAULT_RENDER_POLICY_VERSION = "legacy";
+const MAX_MARKDOWN_PARSE_INPUT_CHARS = 180_000;
+const MAX_MARKDOWN_PARSE_LINES = 6_000;
+const MAX_MARKDOWN_PARSE_NESTING_DEPTH = 32;
+const MAX_MARKDOWN_STREAM_BLOCKS = 512;
 const markdownPlanCache = new Map<string, MarkdownRenderPlan>();
 const markdownMathExtension: TokenizerAndRendererExtension = {
   name: "math",
@@ -97,10 +111,30 @@ const markdownLexer = new Marked({
   extensions: [markdownMathExtension]
 });
 
-export function buildMarkdownRenderPlan(content: string, width: number): MarkdownRenderPlan {
+export function buildMarkdownRenderPlan(
+  content: string,
+  width: number,
+  options: BuildMarkdownRenderPlanOptions = {}
+): MarkdownRenderPlan {
   const safeWidth = Math.max(16, width);
-  const normalizedContent = content.trim().length > 0 ? content : "(empty)";
-  const cacheKey = `${safeWidth}:${normalizedContent}`;
+  const mode = options.live === true ? "live" : "full";
+  const policyVersion = options.policyVersion?.trim() || DEFAULT_RENDER_POLICY_VERSION;
+  const normalizedInput = normalizeMarkdownInput(content, { decodeEntities: false });
+  const preparedInput = normalizedInput.trim().length > 0 ? normalizedInput : "(empty)";
+  assertWithinParseBudget(preparedInput);
+  const streamBlocks = streamMarkdownForRender(preparedInput, options.live === true);
+  if (streamBlocks.length > MAX_MARKDOWN_STREAM_BLOCKS) {
+    throw new Error(
+      `Markdown stream block budget exceeded: ${streamBlocks.length}/${MAX_MARKDOWN_STREAM_BLOCKS}`
+    );
+  }
+
+  const cacheKey = buildMarkdownPlanCacheKey(
+    streamBlocks.map((block) => block.src),
+    safeWidth,
+    mode,
+    policyVersion
+  );
   const cachedPlan = markdownPlanCache.get(cacheKey);
   if (cachedPlan) {
     markdownPlanCache.delete(cacheKey);
@@ -108,8 +142,7 @@ export function buildMarkdownRenderPlan(content: string, width: number): Markdow
     return cachedPlan;
   }
 
-  const tokens = markdownLexer.lexer(normalizedContent) as MarkdownToken[];
-  const blocks = renderBlockTokens(tokens, safeWidth, "md", 0);
+  const blocks = renderStreamBlocks(streamBlocks, safeWidth);
   const plan = {
     blocks,
     rowCount: blocks.reduce((sum, block) => sum + block.marginTop + block.lines.length, 0)
@@ -126,11 +159,167 @@ export function buildMarkdownRenderPlan(content: string, width: number): Markdow
   return plan;
 }
 
-export function shouldRenderMarkdownMessage(
-  kind: TerminalUiMessageKind,
-  enabled: boolean
-): boolean {
-  return enabled && (kind === "assistant" || kind === "thinking");
+function renderStreamBlocks(streamBlocks: Array<{ src: string }>, width: number) {
+  const blocks: MarkdownRenderBlock[] = [];
+
+  for (let index = 0; index < streamBlocks.length; index += 1) {
+    const streamBlock = streamBlocks[index];
+    if (!streamBlock) {
+      continue;
+    }
+
+    const tokens = markdownLexer.lexer(streamBlock.src) as MarkdownToken[];
+    const rendered = renderBlockTokens(tokens, width, `md-${index}`, 0);
+    if (rendered.length === 0) {
+      continue;
+    }
+
+    if (blocks.length > 0) {
+      rendered[0] = {
+        ...rendered[0],
+        marginTop: Math.max(1, rendered[0].marginTop)
+      };
+    }
+    blocks.push(...rendered);
+  }
+
+  return blocks;
+}
+
+function buildMarkdownPlanCacheKey(
+  sources: string[],
+  width: number,
+  mode: "live" | "full",
+  policyVersion: string
+) {
+  const digest = createHash("sha1");
+  digest.update(mode);
+  digest.update("\u0000");
+  digest.update(policyVersion);
+  digest.update("\u0000");
+  for (const source of sources) {
+    digest.update(source);
+    digest.update("\u0001");
+  }
+
+  return `${width}:${mode}:${policyVersion}:${digest.digest("hex")}`;
+}
+
+function assertWithinParseBudget(content: string) {
+  if (content.length > MAX_MARKDOWN_PARSE_INPUT_CHARS) {
+    throw new Error(
+      `Markdown content budget exceeded: ${content.length}/${MAX_MARKDOWN_PARSE_INPUT_CHARS}`
+    );
+  }
+
+  const lines = content.split("\n");
+  if (lines.length > MAX_MARKDOWN_PARSE_LINES) {
+    throw new Error(
+      `Markdown line budget exceeded: ${lines.length}/${MAX_MARKDOWN_PARSE_LINES}`
+    );
+  }
+
+  const maxNestingDepth = resolveMaxMarkdownNestingDepth(lines);
+  if (maxNestingDepth > MAX_MARKDOWN_PARSE_NESTING_DEPTH) {
+    throw new Error(
+      `Markdown nesting budget exceeded: ${maxNestingDepth}/${MAX_MARKDOWN_PARSE_NESTING_DEPTH}`
+    );
+  }
+}
+
+function resolveMaxMarkdownNestingDepth(lines: string[]) {
+  let maxDepth = 0;
+  let activeFence: {
+    marker: "`" | "~";
+    length: number;
+  } | null = null;
+
+  for (const line of lines) {
+    const fence = resolveFenceMarker(line);
+    if (activeFence) {
+      if (
+        fence &&
+        fence.marker === activeFence.marker &&
+        fence.length >= activeFence.length &&
+        fence.trailing.trim().length === 0
+      ) {
+        activeFence = null;
+      }
+      continue;
+    }
+
+    if (fence) {
+      activeFence = {
+        marker: fence.marker,
+        length: fence.length
+      };
+      continue;
+    }
+
+    maxDepth = Math.max(
+      maxDepth,
+      resolveQuoteDepth(line),
+      resolveListDepth(line)
+    );
+  }
+
+  return maxDepth;
+}
+
+function resolveFenceMarker(line: string): {
+  marker: "`" | "~";
+  length: number;
+  trailing: string;
+} | null {
+  const match = line.match(/^([ \t]*)([`~]{3,})(.*)$/);
+  if (!match) {
+    return null;
+  }
+
+  const indentation = match[1]?.replace(/\t/g, "  ").length ?? 0;
+  if (indentation > 3) {
+    return null;
+  }
+
+  const markers = match[2] ?? "";
+  const marker = markers[0];
+  if (marker !== "`" && marker !== "~") {
+    return null;
+  }
+
+  return {
+    marker,
+    length: markers.length,
+    trailing: match[3] ?? ""
+  };
+}
+
+function resolveQuoteDepth(line: string) {
+  let index = 0;
+  while (index < line.length && (line[index] === " " || line[index] === "\t")) {
+    index += 1;
+  }
+
+  let depth = 0;
+  while (index < line.length && line[index] === ">") {
+    depth += 1;
+    index += 1;
+    while (index < line.length && line[index] === " ") {
+      index += 1;
+    }
+  }
+
+  return depth;
+}
+
+function resolveListDepth(line: string) {
+  const match = line.match(/^([ \t]*)(?:[-*+]|\d+[.)])\s+/);
+  if (!match) {
+    return 0;
+  }
+
+  const indentation = match[1]?.replace(/\t/g, "  ").length ?? 0;
+  return Math.floor(indentation / 2) + 1;
 }
 
 export function sliceMarkdownRenderPlan(
@@ -184,7 +373,7 @@ export function MarkdownRenderer(props: {
       {props.plan.blocks.map((block) => (
         <Box key={block.key} flexDirection="column" marginTop={block.marginTop} width="100%">
           {block.lines.map((line) => {
-            const lineStyle = getLineStyle(line.variant, props.kind, props.baseColor);
+            const lineStyle = getLineStyle(line.variant, props.kind, props.baseColor, line.quoteDepth);
 
             return (
               <Text
@@ -223,19 +412,19 @@ function renderLineContent(line: MarkdownRenderLine) {
 function getLineStyle(
   variant: MarkdownLineVariant,
   kind: TerminalUiMessageKind,
-  baseColor: string | undefined
+  baseColor: string | undefined,
+  quoteDepth = 0
 ): MarkdownSpanStyle {
-  const defaultColor =
-    baseColor ??
-    (kind === "thinking"
-      ? terminalUiTheme.colors.messageCardMuted
-      : terminalUiTheme.colors.messageCardText);
+  const defaultColor = kind === "thinking"
+    ? terminalUiTheme.colors.thinkingMarkdownText
+    : (baseColor ?? terminalUiTheme.colors.messageCardText);
 
   switch (variant) {
     case "heading-1":
       return {
         color: terminalUiTheme.colors.markdownHeading1,
-        bold: true
+        bold: true,
+        underline: true
       };
     case "heading-2":
       return {
@@ -253,6 +442,18 @@ function getLineStyle(
         bold: true
       };
     case "quote":
+      if (quoteDepth >= 3) {
+        return {
+          color: terminalUiTheme.colors.markdownQuoteDeep
+        };
+      }
+
+      if (quoteDepth >= 2) {
+        return {
+          color: terminalUiTheme.colors.markdownQuoteNested
+        };
+      }
+
       return {
         color: terminalUiTheme.colors.markdownQuote
       };
@@ -277,6 +478,10 @@ function getLineStyle(
     case "table":
       return {
         color: terminalUiTheme.colors.markdownTable
+      };
+    case "table-divider":
+      return {
+        color: terminalUiTheme.colors.markdownTableDivider
       };
     case "list":
     case "paragraph":
@@ -599,7 +804,7 @@ function renderRawBlock(
   key: string,
   baseIndent: number
 ): MarkdownRenderBlock {
-  return createWrappedSpanBlock([{ text: decodeHtmlEntities(content) }], width, {
+  return createWrappedSpanBlock([{ text: normalizeInlineMarkdownText(content) }], width, {
     key,
     indent: baseIndent,
     variant: "paragraph"
@@ -644,6 +849,10 @@ function prefixRenderedBlocks(
       ...line,
       key: `${line.key}-prefixed-${lineIndex}`,
       prefix: `${prefix}${line.prefix}`,
+      quoteDepth:
+        line.variant === "code" || line.variant === "code-label"
+          ? line.quoteDepth
+          : (line.quoteDepth ?? 0) + 1,
       variant:
         line.variant === "code" || line.variant === "code-label" ? line.variant : "quote"
     }))
@@ -746,7 +955,7 @@ function toInlineSpans(tokens: MarkdownToken[]): MarkdownSpan[] {
         break;
       case "codespan":
         spans.push({
-          text: decodeCodeLiteral(asString(token.text) ?? asString(token.raw) ?? ""),
+          text: normalizeInlineMarkdownText(asString(token.text) ?? asString(token.raw) ?? ""),
           color: terminalUiTheme.colors.markdownInlineCode
         });
         break;
@@ -771,25 +980,19 @@ function toInlineSpans(tokens: MarkdownToken[]): MarkdownSpan[] {
             : spansFromMarkdownText(
                 asString(token.text) ?? asString(token.href) ?? asString(token.raw) ?? ""
               );
-        spans.push(
-          ...applySpanStyle(linkSpans, {
-            color: terminalUiTheme.colors.markdownLink,
-            underline: true,
-            href: asString(token.href)
-          })
-        );
+        spans.push(...buildLinkDisplaySpans(linkSpans, asString(token.href)));
         break;
       }
       case "image":
         spans.push({
-          text: `[image: ${decodeHtmlEntities(asString(token.text) ?? asString(token.href) ?? "asset")}]`,
+          text: `[image: ${normalizeInlineMarkdownText(asString(token.text) ?? asString(token.href) ?? "asset")}]`,
           color: terminalUiTheme.colors.markdownLink,
           href: asString(token.href)
         });
         break;
       case "html":
         spans.push({
-          text: decodeHtmlEntities(asString(token.raw) ?? asString(token.text) ?? ""),
+          text: normalizeInlineMarkdownText(asString(token.raw) ?? asString(token.text) ?? ""),
           dim: true
         });
         break;
@@ -835,7 +1038,7 @@ function spansFromMarkdownText(text: string): MarkdownSpan[] {
     if (segment.type === "text") {
       if (segment.content.length > 0) {
         spans.push({
-          text: decodeHtmlEntities(segment.content)
+          text: normalizeInlineMarkdownText(segment.content)
         });
       }
       continue;
@@ -892,7 +1095,7 @@ function buildBlocksFromMathSegments(
   for (const segment of segments) {
     if (segment.type === "text") {
       if (segment.content.length > 0) {
-        currentInlineSpans.push({ text: decodeHtmlEntities(segment.content) });
+        currentInlineSpans.push({ text: normalizeInlineMarkdownText(segment.content) });
       }
       continue;
     }
@@ -1225,8 +1428,55 @@ function buildTableDividerLine(
     indent,
     prefix: "",
     spans: [{ text: divider }],
-    variant: "rule"
+    variant: "table-divider"
   };
+}
+
+function buildLinkDisplaySpans(
+  labelSpans: MarkdownSpan[],
+  href: string | undefined
+): MarkdownSpan[] {
+  if (!href) {
+    return labelSpans;
+  }
+
+  const styledLabelSpans = applySpanStyle(labelSpans, {
+    color: terminalUiTheme.colors.markdownLink,
+    underline: true,
+    href
+  });
+  const renderedLabel = labelSpans.map((span) => span.text).join("");
+  if (!shouldAppendLinkHrefPreview(renderedLabel, href)) {
+    return styledLabelSpans;
+  }
+
+  return [
+    ...styledLabelSpans,
+    {
+      text: ` <${href}>`,
+      color: terminalUiTheme.colors.markdownLinkUrl,
+      href
+    }
+  ];
+}
+
+function shouldAppendLinkHrefPreview(label: string, href: string): boolean {
+  const normalizedLabel = normalizeComparableLinkText(label);
+  const normalizedHref = normalizeComparableLinkText(href);
+  if (!normalizedLabel || !normalizedHref) {
+    return false;
+  }
+
+  return normalizedLabel !== normalizedHref;
+}
+
+function normalizeComparableLinkText(value: string): string {
+  return value
+    .trim()
+    .replace(/^<+/, "")
+    .replace(/>+$/, "")
+    .replace(/[\/\s]+$/g, "")
+    .toLowerCase();
 }
 
 function alignTableCellSpans(
@@ -1375,8 +1625,8 @@ function measureStringWidth(value: string): number {
   return Array.from(value).reduce((sum, character) => sum + measureCharWidth(character), 0);
 }
 
-function decodeCodeLiteral(value: string): string {
-  return value.replace(/&(?:amp|#38|#x26);/gi, "&");
+function normalizeInlineMarkdownText(value: string): string {
+  return normalizeMarkdownInput(value, { normalizeLineEndings: false });
 }
 
 function asString(value: unknown): string | undefined {
