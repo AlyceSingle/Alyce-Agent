@@ -32,20 +32,6 @@ Alyce is a local coding assistant framework with:
 - MCP server integration for stdio, streamable HTTP, and SSE tools/resources
 - rollback support for interrupted file edits
 
-## Highlights
-
-- Terminal-native UI: React + Ink, including dialogs, message viewer, and settings
-- Tool loop: the model can call multiple tools in one turn before returning a final answer
-- Richer local inspection: `Read` now handles text files, directory listings, notebook summaries, missing-path suggestions, capped continuation reads, on-demand external directory approval, and true multimodal image/PDF attachment flow for supported formats, while still reporting metadata such as image dimensions
-- Extensible context: local skills can be loaded from `./.alyce/skills/**/SKILL.md` or `~/.alyce/skills/**/SKILL.md`, and MCP servers configured in `./.alyce/mcp.json` can expose resources plus dynamic tools
-- Prompt engineering: static rules, dynamic environment, and persona overlays are assembled into one system prompt
-- Session resume: project-local JSONL transcripts let `/resume` reopen earlier conversations
-- Rewind: `Esc` or `/rewind` can restore an earlier prompt, with tracked file rollback when available
-- Context control: message timestamps, memory injection, auto-summary, and compaction work together to keep prompts useful instead of bloated
-- Markdown controls: global and tool-level markdown toggles with safety-budget fallback to plain/code sections
-- Transcript performance controls: virtualized message rendering, configurable scroll speed/acceleration, non-virtual safety caps, and experimental history paging for resumed long sessions
-- Safety rails: scoped external-directory approvals, file access scope, UNC path blocking on Windows, approval gates, per-file write locks, raw-byte pre-write snapshots, read-before-write freshness checks with content fallback, byte-level approval-window rechecks, encoding/line-ending preservation, robust edit matching, `MultiEdit`, opencode-style `apply_patch`, and post-edit/write formatter plus TypeScript/JavaScript diagnostics are built into the runtime
-
 ## Quick Start
 
 ### Global Installation (Recommended)
@@ -103,7 +89,6 @@ npm start
 - [Documentation Index](https://github.com/AlyceSingle/Alyce-Agent/blob/master/docs/README.md)
 - [Getting Started](https://github.com/AlyceSingle/Alyce-Agent/blob/master/docs/getting-started.md)
 - [Project Structure](https://github.com/AlyceSingle/Alyce-Agent/blob/master/docs/project-structure.md)
-- [apply_patch Tool](https://github.com/AlyceSingle/Alyce-Agent/blob/master/docs/apply-patch-tool.md)
 - [Commands and Keys](https://github.com/AlyceSingle/Alyce-Agent/blob/master/docs/commands-and-keys.md)
 - [Configuration](https://github.com/AlyceSingle/Alyce-Agent/blob/master/docs/configuration.md)
 - [Memory and Context](https://github.com/AlyceSingle/Alyce-Agent/blob/master/docs/memory-and-context.md)
@@ -118,8 +103,6 @@ npm start
 - Project-level runtime state lives in `./.alyce/`
 - User-level runtime state lives in `~/.alyce/`
 - Local skills live in `.alyce/skills/**/SKILL.md`; MCP servers are configured in `.alyce/mcp.json`
-- Legacy workspace-wide `.alyce/tasks/tasks.json` is deprecated; subagent history now persists under `.alyce/sessions/<sessionId>/`
-- `User_Info/` is treated as user data, not as project documentation
 
 ## Validation
 

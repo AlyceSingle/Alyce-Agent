@@ -224,7 +224,7 @@ These appear in the **Session** tab of settings.
 - `conversationCompactionEnabled` — whether long conversations get compressed to stay within context limits.
 - `autoCompactTimeoutMs` — timeout for automatic compaction model calls.
 - `autoCompactMaxFailures` — consecutive automatic compaction failures before Alyce stops retrying for the current session.
-- Session memory extraction uses Claude-style thresholds: initialize after `AGENT_SESSION_MEMORY_INIT_TOKENS`, then update only after `AGENT_SESSION_MEMORY_UPDATE_TOKENS` of estimated context growth and either enough tool calls or a natural assistant break. The updater runs in the background with timeout, stale-task cancellation, and a circuit breaker.
+- Session memory extraction uses threshold-based triggers: initialize after `AGENT_SESSION_MEMORY_INIT_TOKENS`, then update only after `AGENT_SESSION_MEMORY_UPDATE_TOKENS` of estimated context growth and either enough tool calls or a natural assistant break. The updater runs in the background with timeout, stale-task cancellation, and a circuit breaker.
 - `modelContextWindowOverrides` — optional context window overrides for custom model aliases or proxy-specific model names. Use loose model patterns as keys and token counts as values, for example:
 
 ```json

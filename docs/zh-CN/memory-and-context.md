@@ -39,7 +39,7 @@
 ## 上下文优化机制
 
 ### 会话记忆文件 (Session Memory File)
-会话记忆文件默认位于 `./.alyce/memory/SESSION_MEMORY.md`，可通过 `AGENT_SESSION_MEMORY_FILE` 配置。它会作为当前会话的结构化状态摘要注入 Prompt，和 `/remember --session` 的临时笔记、`/remember` 的持久记忆分开管理。自动提取采用 Claude 风格触发方式：首次达到 `AGENT_SESSION_MEMORY_INIT_TOKENS` 后初始化，之后必须满足 `AGENT_SESSION_MEMORY_UPDATE_TOKENS` 的上下文增长，并且达到工具调用阈值或处于无工具调用的自然断点。更新任务在后台运行，不修改主对话记录，不递归触发 compact，并且只有确认对话没有 rewind/clear/resume 后才写回受管理的会话记忆文件。
+会话记忆文件默认位于 `./.alyce/memory/SESSION_MEMORY.md`，可通过 `AGENT_SESSION_MEMORY_FILE` 配置。它会作为当前会话的结构化状态摘要注入 Prompt，和 `/remember --session` 的临时笔记、`/remember` 的持久记忆分开管理。自动提取采用阈值触发方式：首次达到 `AGENT_SESSION_MEMORY_INIT_TOKENS` 后初始化，之后必须满足 `AGENT_SESSION_MEMORY_UPDATE_TOKENS` 的上下文增长，并且达到工具调用阈值或处于无工具调用的自然断点。更新任务在后台运行，不修改主对话记录，不递归触发 compact，并且只有确认对话没有 rewind/clear/resume 后才写回受管理的会话记忆文件。
 
 ### 对话压缩 (Conversation Compaction)
 这是防止上下文溢出的最后防线。当消息总长度接近模型上限时，系统会将较早的消息折叠为结构化摘要，仅保留最近几轮的原始对话。
@@ -49,7 +49,7 @@
 
 1. `modelContextWindowOverrides` 设置里的手动覆盖项。
 2. 模型名中的显式后缀，例如 `128k` 或 `1m`。
-3. 内置宽松模型表，覆盖 OpenAI、Claude、Gemini、Kimi、DeepSeek、Qwen、Mistral、xAI、Llama、Cohere、GLM、MiniMax 等常见模型族。
+3. 内置宽松模型表，覆盖 OpenAI、Gemini、Kimi、DeepSeek、Qwen、Mistral、xAI、Llama、Cohere、GLM、MiniMax 等常见模型族。
 4. 未知模型回退到保守的 `128000` tokens。
 
 匹配时会忽略大多数分隔符，所以 `gemini-2.5-pro`、`gemini 2.5 pro`、`google/gemini_2_5_pro` 会命中同一条规则。`/context` 会显示该窗口来自 override、模型名、内置表还是 fallback。

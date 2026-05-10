@@ -26,17 +26,6 @@ Alyce 是一套本地优先的编码助手框架，它的核心功能包括：
 - **MCP 扩展接入**：支持通过 `.alyce/mcp.json` 配置 stdio、streamable HTTP 和 SSE MCP server，暴露资源和动态工具。
 - **可靠的编辑回滚**：如果文件修改过程中断，支持自动或手动回滚，保护您的代码安全。
 
-## 核心亮点
-
-- **纯正的终端体验**：完全基于 React + Ink，连弹窗、消息详情和设置界面都是在终端里渲染的。
-- **强大的 Read 工具**：不仅能读文本，还能列目录、总结 Notebook、提供路径建议，甚至支持图片和 PDF 的多模态分析（在支持的模型下）。
-- **扩展上下文入口**：本地技能放在 `./.alyce/skills/**/SKILL.md` 或 `~/.alyce/skills/**/SKILL.md`，MCP server 配置在 `./.alyce/mcp.json`，可接入例如 Chrome DevTools MCP 这类外部工具。
-- **严密的安全性**：
-  - **审批流**：所有敏感操作（写文件、运行命令、访问外部目录）都必须经过您的同意。
-  - **写保护**：内置单文件写锁、写入前快照和“先读后改”校验，确保代码不会被意外覆盖。
-  - **格式化与诊断**：写入代码后会自动运行格式化工具并进行 TypeScript/JavaScript 语法检查。
-- **丝滑的开发流程**：支持 `/resume` 恢复旧对话，支持 `Esc` 或 `/rewind` 快速回退到之前的状态。
-
 ## 快速开始
 
 ### 全局安装（推荐）
@@ -92,7 +81,6 @@ npm start
 - [文档索引](https://github.com/AlyceSingle/Alyce-Agent/blob/master/docs/zh-CN/README.md)
 - [快速开始](https://github.com/AlyceSingle/Alyce-Agent/blob/master/docs/zh-CN/getting-started.md)
 - [项目结构](https://github.com/AlyceSingle/Alyce-Agent/blob/master/docs/zh-CN/project-structure.md)
-- [apply_patch 工具](https://github.com/AlyceSingle/Alyce-Agent/blob/master/docs/zh-CN/apply-patch-tool.md)
 - [命令与按键](https://github.com/AlyceSingle/Alyce-Agent/blob/master/docs/zh-CN/commands-and-keys.md)
 - [配置说明](https://github.com/AlyceSingle/Alyce-Agent/blob/master/docs/zh-CN/configuration.md)
 - [记忆与上下文](https://github.com/AlyceSingle/Alyce-Agent/blob/master/docs/zh-CN/memory-and-context.md)
@@ -107,8 +95,6 @@ npm start
 - 项目级运行时状态保存在 `./.alyce/`
 - 用户级运行时状态保存在 `~/.alyce/`
 - 本地技能放在 `.alyce/skills/**/SKILL.md`，MCP server 配置在 `.alyce/mcp.json`
-- 旧的 workspace 级 `.alyce/tasks/tasks.json` 已废弃；子 agent 历史现统一持久化到 `.alyce/sessions/<sessionId>/`
-- `User_Info/` 被视为用户资料目录，不属于项目说明文档
 
 ## 最低验证
 

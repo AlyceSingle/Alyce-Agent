@@ -76,8 +76,8 @@ The auto-managed session state file.
 **What it does:**
 - Keeps a structured markdown memory for the current session.
 - Gets injected as the session memory summary in the prompt.
-- Uses a real file so later extraction can update it like Claude Code's session memory path instead of keeping summary state only in process memory.
-- Automatic extraction is triggered Claude-style: first after the estimated context reaches `AGENT_SESSION_MEMORY_INIT_TOKENS`, then after `AGENT_SESSION_MEMORY_UPDATE_TOKENS` of context growth plus either enough tool calls or a natural assistant break.
+- Uses a real file so later extraction can update persisted session state instead of keeping summary state only in process memory.
+- Automatic extraction is threshold-based: first after the estimated context reaches `AGENT_SESSION_MEMORY_INIT_TOKENS`, then after `AGENT_SESSION_MEMORY_UPDATE_TOKENS` of context growth plus either enough tool calls or a natural assistant break.
 - The updater runs in the background with `querySource: session_memory` semantics: it does not mutate the main transcript, does not recurse into auto-compact, and only writes the managed session memory file after confirming the conversation has not been rewound or cleared.
 
 *Session memory is the durable progress report for the active session. It is separate from `/remember --session` notes and from persistent cross-session memory.*
@@ -102,7 +102,7 @@ The status bar percentage is based on the estimated next request divided by the 
 
 1. `modelContextWindowOverrides` from settings.
 2. Explicit model-name suffixes such as `128k` or `1m`.
-3. Built-in loose matching for common providers, including OpenAI, Claude, Gemini, Kimi, DeepSeek, Qwen, Mistral, xAI, Llama, Cohere, GLM, and MiniMax.
+3. Built-in loose matching for common providers, including OpenAI, Gemini, Kimi, DeepSeek, Qwen, Mistral, xAI, Llama, Cohere, GLM, and MiniMax.
 4. A conservative `128000` token fallback.
 
 Matching is intentionally loose: separators do not matter, so `gemini-2.5-pro`, `gemini 2.5 pro`, and `google/gemini_2_5_pro` match the same built-in rule. `/context` shows whether the window came from an override, the model name, the built-in table, or the fallback.
