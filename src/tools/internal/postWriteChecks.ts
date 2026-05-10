@@ -2,14 +2,21 @@ import { spawn } from "node:child_process";
 import { existsSync, promises as fs } from "node:fs";
 import path from "node:path";
 import { throwIfAborted } from "../../core/abort.js";
+import { registerPendingPostWriteDiagnostics } from "../../services/lsp/LspDiagnosticRegistry.js";
 import {
-  getTypeScriptDiagnosticsForFile,
+  syncLspRuntimeFileChange,
+  syncLspRuntimeFileSave
+} from "../../services/lsp/LspRuntimeService.js";
+import {
+  getTypeScriptDiagnosticsForFileAsync,
   isTypeScriptDiagnosticSupported,
   type TypeScriptDiagnosticIssue
 } from "./typeScriptDiagnostics.js";
 
 const FORMATTER_TIMEOUT_MS = 30_000;
 const MAX_PROCESS_OUTPUT_CHARS = 4_000;
+const DIAGNOSTICS_INLINE_BUDGET_MS = 300;
+const MAX_OBSERVATION_ERROR_CHARS = 300;
 
 const PRETTIER_EXTENSIONS = new Set([
   ".js",
@@ -43,7 +50,7 @@ const PRETTIER_EXTENSIONS = new Set([
 const BIOME_EXTENSIONS = PRETTIER_EXTENSIONS;
 
 export type PostWriteFormatterStatus = "skipped" | "unchanged" | "formatted" | "failed";
-export type PostWriteDiagnosticsStatus = "skipped" | "ok" | "issues" | "failed";
+export type PostWriteDiagnosticsStatus = "skipped" | "pending" | "ok" | "issues" | "failed";
 
 export interface PostWriteFormatterResult {
   status: PostWriteFormatterStatus;
@@ -71,6 +78,47 @@ export interface PostWriteChecksResult {
   diagnostics: PostWriteDiagnosticsResult;
 }
 
+export interface PostWriteDiagnosticsObservation {
+  filePath: string;
+  returnedStatus: PostWriteDiagnosticsStatus;
+  returnedPending: boolean;
+  inlineDurationMs: number;
+  timestamp: string;
+  finalStatus?: PostWriteDiagnosticsStatus;
+  finalDurationMs?: number;
+  finalIssueCount?: number;
+  finalTimestamp?: string;
+  finalMessage?: string;
+}
+
+export interface PostWriteDiagnosticsObservationStatsSnapshot {
+  totalRuns: number;
+  inlineCompletions: number;
+  pendingReturns: number;
+  backgroundCompletions: number;
+  returnedStatusCounts: Record<PostWriteDiagnosticsStatus, number>;
+  finalStatusCounts: Record<PostWriteDiagnosticsStatus, number>;
+  lastObservation: PostWriteDiagnosticsObservation | null;
+}
+
+type PostWriteDiagnosticsObservationStats = {
+  totalRuns: number;
+  inlineCompletions: number;
+  pendingReturns: number;
+  backgroundCompletions: number;
+  returnedStatusCounts: Record<PostWriteDiagnosticsStatus, number>;
+  finalStatusCounts: Record<PostWriteDiagnosticsStatus, number>;
+  lastObservation: PostWriteDiagnosticsObservation | null;
+};
+
+const postWriteDiagnosticsObservationStats = createEmptyPostWriteDiagnosticsObservationStats();
+
+export const __POST_WRITE_CHECKS_TESTING__ = {
+  resolveDiagnosticsForToolResponse,
+  getPostWriteDiagnosticsObservationStatsSnapshot,
+  resetPostWriteDiagnosticsObservationStats
+};
+
 type FormatterCommand = {
   name: string;
   command: string;
@@ -96,9 +144,41 @@ export async function runPostWriteChecks(options: {
 }): Promise<PostWriteChecksResult> {
   const formatter = await runFormatter(options);
   throwIfAborted(options.abortSignal);
+  await syncFileWithLspRuntime(options);
 
-  const diagnostics = runDiagnostics(options);
+  const diagnosticsStartedAtMs = Date.now();
+  const diagnosticsPromise = runDiagnostics(options);
+  const diagnostics = await resolveDiagnosticsForToolResponse({
+    diagnosticsPromise,
+    absolutePath: options.absolutePath,
+    workspaceRoot: options.workspaceRoot,
+    startedAtMs: diagnosticsStartedAtMs
+  });
   return { formatter, diagnostics };
+}
+
+async function syncFileWithLspRuntime(options: {
+  absolutePath: string;
+  workspaceRoot: string;
+  allowedRoots: readonly string[];
+  abortSignal?: AbortSignal;
+}) {
+  try {
+    await syncLspRuntimeFileChange({
+      filePath: options.absolutePath,
+      workspaceRoot: options.workspaceRoot,
+      allowedRoots: options.allowedRoots,
+      abortSignal: options.abortSignal
+    });
+    await syncLspRuntimeFileSave({
+      filePath: options.absolutePath,
+      workspaceRoot: options.workspaceRoot,
+      allowedRoots: options.allowedRoots,
+      abortSignal: options.abortSignal
+    });
+  } catch {
+    // Post-write checks should keep running even if runtime sync fails.
+  }
 }
 
 async function runFormatter(options: {
@@ -177,12 +257,12 @@ async function runFormatter(options: {
   };
 }
 
-function runDiagnostics(options: {
+async function runDiagnostics(options: {
   absolutePath: string;
   workspaceRoot: string;
   allowedRoots: readonly string[];
   abortSignal?: AbortSignal;
-}): PostWriteDiagnosticsResult {
+}): Promise<PostWriteDiagnosticsResult> {
   if (!isTypeScriptDiagnosticSupported(options.absolutePath)) {
     return {
       status: "skipped",
@@ -195,10 +275,11 @@ function runDiagnostics(options: {
 
   try {
     throwIfAborted(options.abortSignal);
-    const result = getTypeScriptDiagnosticsForFile({
+    const result = await getTypeScriptDiagnosticsForFileAsync({
       fileName: options.absolutePath,
       workspaceRoot: options.workspaceRoot,
-      allowedRoots: options.allowedRoots
+      allowedRoots: options.allowedRoots,
+      abortSignal: options.abortSignal
     });
     return {
       status: result.issues.length > 0 ? "issues" : "ok",
@@ -217,6 +298,80 @@ function runDiagnostics(options: {
       message: formatError(error)
     };
   }
+}
+
+async function resolveDiagnosticsForToolResponse(options: {
+  diagnosticsPromise: Promise<PostWriteDiagnosticsResult>;
+  absolutePath: string;
+  workspaceRoot: string;
+  startedAtMs: number;
+  inlineBudgetMs?: number;
+}): Promise<PostWriteDiagnosticsResult> {
+  let timeout: NodeJS.Timeout | undefined;
+  const inlineBudgetMs = Math.max(1, Math.trunc(options.inlineBudgetMs ?? DIAGNOSTICS_INLINE_BUDGET_MS));
+  const timeoutPromise = new Promise<"timeout">((resolve) => {
+    timeout = setTimeout(() => resolve("timeout"), inlineBudgetMs);
+  });
+
+  const raced = await Promise.race([
+    options.diagnosticsPromise.then((result) => ({ kind: "result" as const, result })),
+    timeoutPromise.then(() => ({ kind: "timeout" as const }))
+  ]);
+
+  if (timeout) {
+    clearTimeout(timeout);
+  }
+
+  if (raced.kind === "result") {
+    recordReturnedDiagnosticsObservation({
+      filePath: formatObservationPath(options.workspaceRoot, options.absolutePath),
+      returnedStatus: raced.result.status,
+      returnedPending: false,
+      inlineDurationMs: Date.now() - options.startedAtMs
+    });
+    return raced.result;
+  }
+
+  const filePath = formatObservationPath(options.workspaceRoot, options.absolutePath);
+  recordReturnedDiagnosticsObservation({
+    filePath,
+    returnedStatus: "pending",
+    returnedPending: true,
+    inlineDurationMs: Date.now() - options.startedAtMs
+  });
+  registerPendingPostWriteDiagnostics({
+    filePath,
+    backend: "typescript-language-service",
+    startedAtMs: options.startedAtMs,
+    diagnosticsPromise: options.diagnosticsPromise
+  });
+
+  void options.diagnosticsPromise.then((result) => {
+    recordFinalDiagnosticsObservation({
+      filePath,
+      finalStatus: result.status,
+      finalDurationMs: Date.now() - options.startedAtMs,
+      finalIssueCount: result.totalIssueCount,
+      finalMessage: result.message
+    });
+  }).catch((error) => {
+    recordFinalDiagnosticsObservation({
+      filePath,
+      finalStatus: "failed",
+      finalDurationMs: Date.now() - options.startedAtMs,
+      finalIssueCount: 0,
+      finalMessage: truncateObservationError(error)
+    });
+  });
+
+  return {
+    status: "pending",
+    backend: "typescript-language-service",
+    issues: [],
+    totalIssueCount: 0,
+    truncated: false,
+    message: "Diagnostics are running in the background."
+  };
 }
 
 async function resolveFormatter(
@@ -633,4 +788,121 @@ function truncateProcessOutput(value: string) {
 
 function formatError(error: unknown) {
   return error instanceof Error ? error.message : String(error);
+}
+
+function createStatusCounts(): Record<PostWriteDiagnosticsStatus, number> {
+  return {
+    skipped: 0,
+    pending: 0,
+    ok: 0,
+    issues: 0,
+    failed: 0
+  };
+}
+
+function createEmptyPostWriteDiagnosticsObservationStats(): PostWriteDiagnosticsObservationStats {
+  return {
+    totalRuns: 0,
+    inlineCompletions: 0,
+    pendingReturns: 0,
+    backgroundCompletions: 0,
+    returnedStatusCounts: createStatusCounts(),
+    finalStatusCounts: createStatusCounts(),
+    lastObservation: null
+  };
+}
+
+function recordReturnedDiagnosticsObservation(options: {
+  filePath: string;
+  returnedStatus: PostWriteDiagnosticsStatus;
+  returnedPending: boolean;
+  inlineDurationMs: number;
+}) {
+  const observation: PostWriteDiagnosticsObservation = {
+    filePath: options.filePath,
+    returnedStatus: options.returnedStatus,
+    returnedPending: options.returnedPending,
+    inlineDurationMs: Math.max(0, Math.trunc(options.inlineDurationMs)),
+    timestamp: new Date().toISOString()
+  };
+
+  postWriteDiagnosticsObservationStats.totalRuns += 1;
+  if (options.returnedPending) {
+    postWriteDiagnosticsObservationStats.pendingReturns += 1;
+  } else {
+    postWriteDiagnosticsObservationStats.inlineCompletions += 1;
+  }
+  postWriteDiagnosticsObservationStats.returnedStatusCounts[options.returnedStatus] += 1;
+  postWriteDiagnosticsObservationStats.lastObservation = observation;
+}
+
+function recordFinalDiagnosticsObservation(options: {
+  filePath: string;
+  finalStatus: PostWriteDiagnosticsStatus;
+  finalDurationMs: number;
+  finalIssueCount: number;
+  finalMessage?: string;
+}) {
+  const previous = postWriteDiagnosticsObservationStats.lastObservation;
+  const observation: PostWriteDiagnosticsObservation =
+    previous?.filePath === options.filePath && previous.returnedPending
+      ? { ...previous }
+      : {
+          filePath: options.filePath,
+          returnedStatus: "pending",
+          returnedPending: true,
+          inlineDurationMs: 0,
+          timestamp: new Date().toISOString()
+        };
+
+  observation.finalStatus = options.finalStatus;
+  observation.finalDurationMs = Math.max(0, Math.trunc(options.finalDurationMs));
+  observation.finalIssueCount = Math.max(0, Math.trunc(options.finalIssueCount));
+  observation.finalTimestamp = new Date().toISOString();
+  if (options.finalMessage) {
+    observation.finalMessage = options.finalMessage;
+  }
+
+  postWriteDiagnosticsObservationStats.backgroundCompletions += 1;
+  postWriteDiagnosticsObservationStats.finalStatusCounts[options.finalStatus] += 1;
+  postWriteDiagnosticsObservationStats.lastObservation = observation;
+}
+
+function getPostWriteDiagnosticsObservationStatsSnapshot(): PostWriteDiagnosticsObservationStatsSnapshot {
+  return {
+    totalRuns: postWriteDiagnosticsObservationStats.totalRuns,
+    inlineCompletions: postWriteDiagnosticsObservationStats.inlineCompletions,
+    pendingReturns: postWriteDiagnosticsObservationStats.pendingReturns,
+    backgroundCompletions: postWriteDiagnosticsObservationStats.backgroundCompletions,
+    returnedStatusCounts: { ...postWriteDiagnosticsObservationStats.returnedStatusCounts },
+    finalStatusCounts: { ...postWriteDiagnosticsObservationStats.finalStatusCounts },
+    lastObservation: postWriteDiagnosticsObservationStats.lastObservation
+      ? { ...postWriteDiagnosticsObservationStats.lastObservation }
+      : null
+  };
+}
+
+function resetPostWriteDiagnosticsObservationStats() {
+  const empty = createEmptyPostWriteDiagnosticsObservationStats();
+  postWriteDiagnosticsObservationStats.totalRuns = empty.totalRuns;
+  postWriteDiagnosticsObservationStats.inlineCompletions = empty.inlineCompletions;
+  postWriteDiagnosticsObservationStats.pendingReturns = empty.pendingReturns;
+  postWriteDiagnosticsObservationStats.backgroundCompletions = empty.backgroundCompletions;
+  postWriteDiagnosticsObservationStats.returnedStatusCounts = empty.returnedStatusCounts;
+  postWriteDiagnosticsObservationStats.finalStatusCounts = empty.finalStatusCounts;
+  postWriteDiagnosticsObservationStats.lastObservation = empty.lastObservation;
+}
+
+function formatObservationPath(workspaceRoot: string, absolutePath: string) {
+  const relativePath = path.relative(workspaceRoot, absolutePath);
+  if (relativePath && !relativePath.startsWith("..") && !path.isAbsolute(relativePath)) {
+    return relativePath.replace(/\\/g, "/");
+  }
+
+  return absolutePath.replace(/\\/g, "/");
+}
+
+function truncateObservationError(error: unknown) {
+  const text = error instanceof Error ? error.message : String(error);
+  return text.slice(0, MAX_OBSERVATION_ERROR_CHARS);
 }

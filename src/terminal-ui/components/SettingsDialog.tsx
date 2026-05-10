@@ -85,6 +85,24 @@ const FIELD_DEFINITIONS: FieldDefinition[] = [
     section: "session"
   },
   {
+    key: "diagnosticsPendingTimeoutMs",
+    label: "Diagnostics Timeout",
+    type: "number",
+    section: "session"
+  },
+  {
+    key: "diagnosticsFailureThreshold",
+    label: "Diagnostics Fail Threshold",
+    type: "number",
+    section: "session"
+  },
+  {
+    key: "diagnosticsFailureCooldownMs",
+    label: "Diagnostics Cooldown",
+    type: "number",
+    section: "session"
+  },
+  {
     key: "conversationCompactionEnabled",
     label: "Conversation Compaction",
     type: "toggle",
@@ -545,6 +563,12 @@ export function SettingsDialog(props: {
                   ? "Use comma-separated pattern=tokens entries, for example custom fast=512000."
                   : currentField.key === "markdownToolMessageRenderingEnabled"
                     ? "When off, tool results always use plain/code sections even if markdown-capable."
+                    : currentField.key === "diagnosticsPendingTimeoutMs"
+                      ? "Background diagnostics are marked failed after this timeout."
+                      : currentField.key === "diagnosticsFailureThreshold"
+                        ? "Open diagnostics circuit breaker after this many consecutive failures."
+                        : currentField.key === "diagnosticsFailureCooldownMs"
+                          ? "Circuit breaker cooldown before diagnostics retry automatically."
                     : currentField.key === "scrollSpeed"
                       ? "Scroll speed applies to line-by-line scrolling. Valid range: 1-8."
                       : currentField.key === "scrollAccelerationEnabled"

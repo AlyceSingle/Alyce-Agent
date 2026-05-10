@@ -60,7 +60,7 @@ export interface UiToolFormatterResult {
   message?: string;
 }
 
-export type UiToolDiagnosticsStatus = "skipped" | "ok" | "issues" | "failed";
+export type UiToolDiagnosticsStatus = "skipped" | "pending" | "ok" | "issues" | "failed";
 
 export interface UiToolDiagnosticIssue {
   filePath: string;

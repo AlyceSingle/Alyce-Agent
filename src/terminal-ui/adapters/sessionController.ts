@@ -3,8 +3,10 @@ import { promises as fs } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { runAgentTurn } from "../../agent.js";
+import { createBackgroundDiagnosticsMessage } from "../../core/api/generatedMessages.js";
 import { isTurnInterruptedError, throwIfAborted } from "../../core/abort.js";
 import { parseReplCommand } from "../../cli/commandRouter.js";
+import { getLspDiagnosticRegistry } from "../../services/lsp/LspDiagnosticRegistry.js";
 import {
   ContextOverflowError,
   isContextOverflowError,
@@ -62,7 +64,9 @@ import type {
 } from "../state/types.js";
 import {
   createAssistantMessage,
+  createDiagnosticsFollowUpMessage,
   createErrorMessage,
+  formatDiagnosticsFollowUpForModel,
   createSystemMessage,
   createThinkingMessage,
   createToolResultMessage,
@@ -223,6 +227,8 @@ export function createSessionController(
   let rewindPoints: RewindPoint[] = [];
   let sessionHistoryPaging: SessionHistoryPagingState | null = null;
   const turnEphemeralMessageIds = new Map<"thinking" | "progress", string>();
+  let disposeDiagnosticsSubscription: (() => void) | null = null;
+  const pendingDiagnosticContextMessages: Array<ReturnType<typeof createBackgroundDiagnosticsMessage>> = [];
 
   const resetSessionHistoryPaging = () => {
     sessionHistoryPaging = null;
@@ -300,7 +306,50 @@ export function createSessionController(
   const filterUiMessages = (messages: TerminalUiMessage[]) => messages.filter(shouldKeepUiMessage);
 
   const finishExit = () => {
+    if (disposeDiagnosticsSubscription) {
+      disposeDiagnosticsSubscription();
+      disposeDiagnosticsSubscription = null;
+    }
     void runtime.flushSessionHistory().finally(() => exitHandler?.());
+  };
+
+  const syncDiagnosticsRegistrySettings = () => {
+    const settings = runtime.getSettings();
+    getLspDiagnosticRegistry().configure({
+      pendingTimeoutMs: settings.diagnosticsPendingTimeoutMs,
+      circuitBreakerFailureThreshold: settings.diagnosticsFailureThreshold,
+      circuitBreakerCooldownMs: settings.diagnosticsFailureCooldownMs
+    });
+  };
+
+  const subscribeDiagnosticsFollowUps = () => {
+    if (disposeDiagnosticsSubscription) {
+      return;
+    }
+
+    disposeDiagnosticsSubscription = getLspDiagnosticRegistry().subscribeCompleted((event) => {
+      const uiMessage = createDiagnosticsFollowUpMessage(event);
+      appendUiMessage(uiMessage);
+
+      const apiMessage = createBackgroundDiagnosticsMessage(formatDiagnosticsFollowUpForModel(event));
+      if (activeTurn) {
+        pendingDiagnosticContextMessages.push(apiMessage);
+      } else {
+        runtime.messages.push(apiMessage);
+      }
+      void runtime.recordSessionTurn({
+        apiMessages: [],
+        uiMessages: [uiMessage]
+      }).catch(() => undefined);
+    });
+  };
+
+  const flushPendingDiagnosticContextMessages = () => {
+    if (activeTurn || pendingDiagnosticContextMessages.length === 0) {
+      return;
+    }
+
+    runtime.messages.push(...pendingDiagnosticContextMessages.splice(0));
   };
 
   const requestExit = () => {
@@ -653,6 +702,7 @@ export function createSessionController(
             "Permissions"
           )
         );
+        await waitForUiPaint();
         resolve(approved);
       };
 
@@ -1165,6 +1215,7 @@ export function createSessionController(
         await runtime.updateSettings({
           additionalDirectories: nextPersistentDirectories
         });
+        syncDiagnosticsRegistrySettings();
         const normalizedTarget = normalizePathForComparison(absolutePath);
         const nextSessionDirectories = runtime
           .getSessionAdditionalDirectories()
@@ -1213,6 +1264,8 @@ export function createSessionController(
 
   return {
     initialize: () => {
+      syncDiagnosticsRegistrySettings();
+      subscribeDiagnosticsFollowUps();
       appendUiMessage(createSystemMessage("Alyce terminal UI started.", "Startup"));
       appendUiMessage(
         createSystemMessage(
@@ -1246,6 +1299,7 @@ export function createSessionController(
         return;
       }
 
+      flushPendingDiagnosticContextMessages();
       setDraftInputValue("");
 
       const parsedCommand = parseReplCommand(normalized);
@@ -1591,6 +1645,7 @@ export function createSessionController(
           );
         }
       } finally {
+        flushPendingDiagnosticContextMessages();
         resetTurnEphemeralMessages();
         store.updateState((state) => setLoading(state, false));
 
@@ -1644,6 +1699,7 @@ export function createSessionController(
     saveConfig: async (connectionPatch, settingsPatch, connectionTarget) => {
       await runtime.updateConnectionConfig(connectionPatch, connectionTarget);
       await runtime.updateSettings(settingsPatch);
+      syncDiagnosticsRegistrySettings();
       if (!runtime.getSettings().historyPagingEnabled) {
         resetSessionHistoryPaging();
       }
@@ -1766,8 +1822,15 @@ function mergeThinkingContent(current: string, nextChunk: string): string {
   return `${current}${nextChunk}`;
 }
 
+async function waitForUiPaint(): Promise<void> {
+  await new Promise<void>((resolve) => {
+    setImmediate(resolve);
+  });
+}
+
 export const __SESSION_CONTROLLER_TESTING__ = {
-  mergeThinkingContent
+  mergeThinkingContent,
+  waitForUiPaint
 } as const;
 
 function shouldUseGcliGeminiCompat(baseURL: string | undefined, model: string): boolean {

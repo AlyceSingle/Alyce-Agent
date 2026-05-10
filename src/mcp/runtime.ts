@@ -26,7 +26,7 @@ import type {
 type ChatCompletionTool = OpenAI.Chat.Completions.ChatCompletionTool;
 type FunctionParameters = NonNullable<ChatCompletionTool["function"]["parameters"]>;
 
-const DEFAULT_MCP_STARTUP_TIMEOUT_MS = 20_000;
+const DEFAULT_MCP_STARTUP_TIMEOUT_MS = 120_000;
 const DEFAULT_MCP_OPERATION_TIMEOUT_MS = 60_000;
 const MCP_CLOSE_TIMEOUT_MS = 2_000;
 

@@ -49,7 +49,7 @@ const diagnosticIssueSchema = () =>
 
 const diagnosticsResultSchema = () =>
   z.object({
-    status: z.enum(["skipped", "ok", "issues", "failed"]),
+    status: z.enum(["skipped", "pending", "ok", "issues", "failed"]),
     backend: z.string().optional(),
     issues: z.array(diagnosticIssueSchema()),
     totalIssueCount: z.number().int().nonnegative(),

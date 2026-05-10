@@ -26,4 +26,6 @@ Optional:
 
 documentSymbol and workspaceSymbol do not require line or character.
 
+Tool output may include backendCapabilities and backendHealth metadata so callers can reason about current backend support and runtime health. If an operation is unsupported by the resolved backend, Alyce returns a structured lsp_unsupported_operation error.
+
 In Alyce this tool currently uses the TypeScript language service backend and supports TypeScript/JavaScript files (.ts, .tsx, .js, .jsx, .mts, .cts, .mjs, .cjs). If the file type is unsupported, an error is returned.`;

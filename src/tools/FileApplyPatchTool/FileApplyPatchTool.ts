@@ -2,6 +2,7 @@ import { promises as fs } from "node:fs";
 import path from "node:path";
 import { z } from "zod";
 import { throwIfAborted } from "../../core/abort.js";
+import { syncLspRuntimeFileClose } from "../../services/lsp/LspRuntimeService.js";
 import {
   createStructuredPatch,
   derivePatchedContent,
@@ -409,6 +410,7 @@ async function applyPreparedPatch(
             "apply_patch lost its move source snapshot during rollback."
           ));
           await fs.unlink(assertString(change.sourcePath));
+          await syncDeletedFileWithLsp(change.sourcePath, context);
           break;
         case "delete":
           rollbackEntries.push(buildSourceRollbackEntry(
@@ -416,6 +418,7 @@ async function applyPreparedPatch(
             "apply_patch lost its delete snapshot during rollback."
           ));
           await fs.unlink(assertString(change.sourcePath));
+          await syncDeletedFileWithLsp(change.sourcePath, context);
           completed.push({
             ...change,
             finalContent: ""
@@ -778,18 +781,31 @@ function aggregateDiagnostics(files: readonly FileApplyPatchFileResult[]): PostW
   const issues = results.flatMap((result) => result.issues);
   const totalIssueCount = results.reduce((sum, result) => sum + result.totalIssueCount, 0);
   const hasFailure = results.some((result) => result.status === "failed");
+  const hasPending = results.some((result) => result.status === "pending");
   const hasOk = results.some((result) => result.status === "ok");
   const allSkipped = results.every((result) => result.status === "skipped");
 
   return {
-    status: issues.length > 0 ? "issues" : hasFailure ? "failed" : hasOk ? "ok" : "skipped",
+    status: issues.length > 0
+      ? "issues"
+      : hasFailure
+        ? "failed"
+        : hasPending
+          ? "pending"
+          : hasOk
+            ? "ok"
+            : "skipped",
     backend: results.some((result) => result.backend === "typescript-language-service")
       ? "typescript-language-service"
       : undefined,
     issues,
     totalIssueCount,
     truncated: results.some((result) => result.truncated),
-    message: allSkipped ? "Diagnostics currently support TypeScript/JavaScript files only." : undefined
+    message: allSkipped
+      ? "Diagnostics currently support TypeScript/JavaScript files only."
+      : hasPending
+        ? "Diagnostics are running in the background."
+        : undefined
   };
 }
 
@@ -966,6 +982,26 @@ function isEexistError(error: unknown) {
       "code" in error &&
       (error as { code?: string }).code === "EEXIST"
   );
+}
+
+async function syncDeletedFileWithLsp(
+  absolutePath: string | undefined,
+  context: ToolExecutionContext
+) {
+  if (!absolutePath) {
+    return;
+  }
+
+  try {
+    await syncLspRuntimeFileClose({
+      filePath: absolutePath,
+      workspaceRoot: context.workspaceRoot,
+      allowedRoots: context.allowedRoots,
+      abortSignal: context.abortSignal
+    });
+  } catch {
+    // apply_patch should not fail because runtime sync failed.
+  }
 }
 
 function createSkippedPostWriteChecks(message: string): PostWriteChecksResult {

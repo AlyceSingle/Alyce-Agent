@@ -35,6 +35,9 @@ function testSessionSettingsDefaultsIncludeScrollPerformanceSettings() {
   assert.equal(state.effective.scrollAccelerationEnabled, false);
   assert.equal(state.effective.historyPagingEnabled, false);
   assert.equal(state.effective.maxMessagesWithoutVirtualization, 200);
+  assert.equal(state.effective.diagnosticsPendingTimeoutMs, 120_000);
+  assert.equal(state.effective.diagnosticsFailureThreshold, 3);
+  assert.equal(state.effective.diagnosticsFailureCooldownMs, 300_000);
 }
 
 function testSessionSettingsClampsScrollSpeed() {
@@ -57,13 +60,19 @@ async function testRuntimeConfigReadsScrollPerformanceEnv() {
     AGENT_SCROLL_SPEED: "6",
     AGENT_SCROLL_ACCELERATION_ENABLED: "true",
     AGENT_HISTORY_PAGING_ENABLED: "true",
-    AGENT_MAX_MESSAGES_WITHOUT_VIRTUALIZATION: "75"
+    AGENT_MAX_MESSAGES_WITHOUT_VIRTUALIZATION: "75",
+    AGENT_DIAGNOSTICS_TIMEOUT_MS: "64000",
+    AGENT_DIAGNOSTICS_FAILURE_THRESHOLD: "5",
+    AGENT_DIAGNOSTICS_FAILURE_COOLDOWN_MS: "90000"
   });
 
   assert.equal(config.settings.scrollSpeed, 6);
   assert.equal(config.settings.scrollAccelerationEnabled, true);
   assert.equal(config.settings.historyPagingEnabled, true);
   assert.equal(config.settings.maxMessagesWithoutVirtualization, 75);
+  assert.equal(config.settings.diagnosticsPendingTimeoutMs, 64_000);
+  assert.equal(config.settings.diagnosticsFailureThreshold, 5);
+  assert.equal(config.settings.diagnosticsFailureCooldownMs, 90_000);
 }
 
 async function testSessionSettingsSerializationIncludesScrollPerformanceSettings() {
@@ -82,7 +91,10 @@ async function testSessionSettingsSerializationIncludesScrollPerformanceSettings
     scrollSpeed: 5,
     scrollAccelerationEnabled: true,
     historyPagingEnabled: true,
-    maxMessagesWithoutVirtualization: 90
+    maxMessagesWithoutVirtualization: 90,
+    diagnosticsPendingTimeoutMs: 50_000,
+    diagnosticsFailureThreshold: 4,
+    diagnosticsFailureCooldownMs: 70_000
   });
   const raw = JSON.parse(await fs.readFile(paths.userSettingsConfigPath, "utf8")) as Record<string, unknown>;
 
@@ -90,6 +102,9 @@ async function testSessionSettingsSerializationIncludesScrollPerformanceSettings
   assert.equal(raw.scrollAccelerationEnabled, true);
   assert.equal(raw.historyPagingEnabled, true);
   assert.equal(raw.maxMessagesWithoutVirtualization, 90);
+  assert.equal(raw.diagnosticsPendingTimeoutMs, 50_000);
+  assert.equal(raw.diagnosticsFailureThreshold, 4);
+  assert.equal(raw.diagnosticsFailureCooldownMs, 70_000);
 }
 
 void runTests().catch((error) => {

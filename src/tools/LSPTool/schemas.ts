@@ -60,7 +60,23 @@ export const LSPToolOutputSchema = z
     operation: LspOperationSchema,
     result: z.string(),
     filePath: z.string(),
-    backend: z.literal("typescript-language-service"),
+    backend: z.string().trim().min(1),
+    backendCapabilities: z.object({
+      supportedOperations: z.array(LspOperationSchema),
+      supportsDiagnostics: z.boolean(),
+      fileSync: z.object({
+        change: z.boolean(),
+        save: z.boolean(),
+        close: z.boolean()
+      }),
+      supportedFileExtensions: z.array(z.string().trim().min(1))
+    }).optional(),
+    backendHealth: z.object({
+      backend: z.string().trim().min(1),
+      status: z.enum(["ready", "degraded", "unavailable"]),
+      checkedAt: z.string().trim().min(1),
+      message: z.string().optional()
+    }).optional(),
     resultCount: z.number().int().nonnegative().optional(),
     fileCount: z.number().int().nonnegative().optional()
   })

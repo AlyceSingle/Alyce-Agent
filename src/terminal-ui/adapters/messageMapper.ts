@@ -12,6 +12,7 @@ import type {
   TerminalUiToolWriteResult
 } from "../state/types.js";
 import { serializeMessageBlocks } from "../utils/messageBlocks.js";
+import type { LspDiagnosticCompletedEvent } from "../../services/lsp/LspDiagnosticRegistry.js";
 
 const DEFAULT_PREVIEW_MAX_CHARS = 320;
 const TOOL_PREVIEW_MAX_CHARS = 520;
@@ -38,6 +39,8 @@ type ToolResultError = {
   message: string;
   issues?: ToolResultIssue[];
 };
+
+type DiagnosticsDisplayResult = NonNullable<TerminalUiToolWriteResult["diagnostics"]>;
 
 type ParsedToolCallExecutionResult = {
   toolName: string;
@@ -143,6 +146,54 @@ export function createErrorMessage(content: string) {
     title: "Failure",
     blocks: [createBlock(content, { tone: "danger" })]
   });
+}
+
+export function createDiagnosticsFollowUpMessage(event: LspDiagnosticCompletedEvent) {
+  const diagnostics = toDiagnosticsDisplayResult(event);
+
+  return createMessage({
+    kind: "system",
+    title: `Diagnostics ${truncateInline(event.filePath, TOOL_TITLE_MAX_CHARS - "Diagnostics ".length)}`,
+    blocks: [
+      createBlock(formatDiagnosticsFollowUpSummary(event), {
+        label: "Summary",
+        tone: diagnosticsTone(diagnostics.status),
+        style: "code"
+      }),
+      createBlock(formatDiagnosticsResult(diagnostics), {
+        label: "Diagnostics",
+        tone: diagnosticsTone(diagnostics.status),
+        style: "code"
+      })
+    ],
+    metadata: [
+      "Diagnostics follow-up",
+      "Background",
+      formatDiagnosticsMetadata(diagnostics),
+      `Reason: ${event.completionReason}`,
+      ...(event.duplicateIssueCount > 0 ? [`Deduped: ${event.duplicateIssueCount}`] : []),
+      ...(event.omittedIssueCount > 0 ? [`Omitted: ${event.omittedIssueCount}`] : []),
+      ...(event.groupedFileCount > 1 ? [`Files: ${event.groupedFileCount}`] : []),
+      ...(event.circuitBreakerOpen
+        ? [event.circuitBreakerOpenUntil
+          ? `Circuit: open until ${event.circuitBreakerOpenUntil}`
+          : "Circuit: open"]
+        : []),
+      `${event.durationMs} ms`
+    ],
+    maxPreviewChars: TOOL_PREVIEW_MAX_CHARS
+  });
+}
+
+export function formatDiagnosticsFollowUpForModel(event: LspDiagnosticCompletedEvent) {
+  const diagnostics = toDiagnosticsDisplayResult(event);
+  return [
+    "# Background Diagnostics Completed",
+    formatDiagnosticsFollowUpSummary(event),
+    "",
+    "Diagnostics:",
+    formatDiagnosticsResult(diagnostics)
+  ].join("\n");
 }
 
 export function shouldSkipThinkingContent(content: string) {
@@ -540,6 +591,8 @@ function buildPostWriteCheckBlocks(
         ? "warning"
         : result.diagnostics.status === "failed"
           ? "warning"
+          : result.diagnostics.status === "pending"
+            ? "info"
           : "success",
       style: "code"
     }));
@@ -626,7 +679,7 @@ function isFormatterStatus(value: string | undefined): value is NonNullable<Term
 }
 
 function isDiagnosticsStatus(value: string | undefined): value is NonNullable<TerminalUiToolWriteResult["diagnostics"]>["status"] {
-  return value === "skipped" || value === "ok" || value === "issues" || value === "failed";
+  return value === "skipped" || value === "pending" || value === "ok" || value === "issues" || value === "failed";
 }
 
 function formatFormatterResult(formatter: NonNullable<TerminalUiToolWriteResult["formatter"]>) {
@@ -661,6 +714,10 @@ function formatDiagnosticsResult(diagnostics: NonNullable<TerminalUiToolWriteRes
     return "No TypeScript/JavaScript diagnostics reported.";
   }
 
+  if (diagnostics.status === "pending") {
+    return diagnostics.message ?? "Diagnostics are running in the background.";
+  }
+
   if (diagnostics.status === "failed") {
     return diagnostics.message ?? "Diagnostics failed.";
   }
@@ -689,6 +746,69 @@ function formatDiagnosticsMetadata(diagnostics: NonNullable<TerminalUiToolWriteR
   }
 
   return `Diagnostics: ${diagnostics.status}`;
+}
+
+function toDiagnosticsDisplayResult(event: LspDiagnosticCompletedEvent): DiagnosticsDisplayResult {
+  return {
+    status: event.status,
+    backend: event.backend,
+    issues: event.issues.map((issue) => ({ ...issue })),
+    totalIssueCount: event.totalIssueCount,
+    truncated: event.truncated,
+    message: event.message
+  };
+}
+
+function formatDiagnosticsFollowUpSummary(event: LspDiagnosticCompletedEvent) {
+  const lines = [
+    `File: ${event.filePath}`,
+    `Status: ${event.status}`,
+    `Source: ${event.source}`,
+    `Completion: ${event.completionReason}`,
+    `Started: ${event.startedAt}`,
+    `Completed: ${event.completedAt}`,
+    `Duration: ${event.durationMs} ms`
+  ];
+  if (event.backend) {
+    lines.push(`Backend: ${event.backend}`);
+  }
+  lines.push(`Issues: ${event.totalIssueCount} total, ${event.issues.length} shown`);
+  if (event.duplicateIssueCount > 0) {
+    lines.push(`Deduped duplicates: ${event.duplicateIssueCount}`);
+  }
+  if (event.omittedIssueCount > 0) {
+    lines.push(`Omitted after cap: ${event.omittedIssueCount}`);
+  }
+  if (event.groupedFileCount > 1) {
+    lines.push(`Grouped files: ${event.groupedFileCount}`);
+  }
+  if (event.failureStreak > 0) {
+    lines.push(`Failure streak: ${event.failureStreak}`);
+  }
+  if (event.circuitBreakerOpen) {
+    lines.push(
+      event.circuitBreakerOpenUntil
+        ? `Circuit breaker: open until ${event.circuitBreakerOpenUntil}`
+        : "Circuit breaker: open"
+    );
+  }
+  if (event.message) {
+    lines.push(`Message: ${event.message}`);
+  }
+
+  return lines.join("\n");
+}
+
+function diagnosticsTone(status: DiagnosticsDisplayResult["status"]): TerminalUiMessageBlockTone {
+  if (status === "issues" || status === "failed") {
+    return "warning";
+  }
+
+  if (status === "pending") {
+    return "info";
+  }
+
+  return "success";
 }
 
 function toEditResult(value: unknown): TerminalUiToolEditResult | null {

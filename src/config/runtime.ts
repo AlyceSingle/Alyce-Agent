@@ -65,6 +65,9 @@ export interface SessionSettings extends PromptOverrideConfig {
   markdownMessageRenderingEnabled: boolean;
   markdownToolMessageRenderingEnabled: boolean;
   markdownRenderMaxChars: number;
+  diagnosticsPendingTimeoutMs: number;
+  diagnosticsFailureThreshold: number;
+  diagnosticsFailureCooldownMs: number;
   conversationCompactionEnabled: boolean;
   autoCompactTimeoutMs: number;
   autoCompactMaxFailures: number;
@@ -148,6 +151,9 @@ const SessionSettingsFileSchema: z.ZodType<SessionSettingsFile> = z
     markdownMessageRenderingEnabled: z.boolean().optional(),
     markdownToolMessageRenderingEnabled: z.boolean().optional(),
     markdownRenderMaxChars: z.number().int().positive().optional(),
+    diagnosticsPendingTimeoutMs: z.number().int().positive().optional(),
+    diagnosticsFailureThreshold: z.number().int().positive().optional(),
+    diagnosticsFailureCooldownMs: z.number().int().positive().optional(),
     conversationCompactionEnabled: z.boolean().optional(),
     autoCompactTimeoutMs: z.number().int().positive().optional(),
     autoCompactMaxFailures: z.number().int().positive().optional(),
@@ -580,6 +586,9 @@ function normalizeSessionSettings(
     markdownMessageRenderingEnabled: input.markdownMessageRenderingEnabled ?? true,
     markdownToolMessageRenderingEnabled: input.markdownToolMessageRenderingEnabled ?? true,
     markdownRenderMaxChars: clampPositiveInt(input.markdownRenderMaxChars, 32_000),
+    diagnosticsPendingTimeoutMs: clampPositiveInt(input.diagnosticsPendingTimeoutMs, 120_000),
+    diagnosticsFailureThreshold: clampPositiveInt(input.diagnosticsFailureThreshold, 3),
+    diagnosticsFailureCooldownMs: clampPositiveInt(input.diagnosticsFailureCooldownMs, 300_000),
     conversationCompactionEnabled: input.conversationCompactionEnabled ?? true,
     autoCompactTimeoutMs: clampPositiveInt(input.autoCompactTimeoutMs, 180_000),
     autoCompactMaxFailures: clampPositiveInt(input.autoCompactMaxFailures, 3),
@@ -623,6 +632,18 @@ function serializeSessionSettings(
         : undefined,
     markdownRenderMaxChars:
       "markdownRenderMaxChars" in settings ? settings.markdownRenderMaxChars : undefined,
+    diagnosticsPendingTimeoutMs:
+      "diagnosticsPendingTimeoutMs" in settings
+        ? settings.diagnosticsPendingTimeoutMs
+        : undefined,
+    diagnosticsFailureThreshold:
+      "diagnosticsFailureThreshold" in settings
+        ? settings.diagnosticsFailureThreshold
+        : undefined,
+    diagnosticsFailureCooldownMs:
+      "diagnosticsFailureCooldownMs" in settings
+        ? settings.diagnosticsFailureCooldownMs
+        : undefined,
     conversationCompactionEnabled:
       "conversationCompactionEnabled" in settings
         ? settings.conversationCompactionEnabled
@@ -717,6 +738,9 @@ function resolveSettingsFromEnv(env: NodeJS.ProcessEnv): Partial<SessionSettings
       env.AGENT_MARKDOWN_TOOL_RENDERING_ENABLED
     ),
     markdownRenderMaxChars: parseOptionalPositiveInt(env.AGENT_MARKDOWN_RENDER_MAX_CHARS),
+    diagnosticsPendingTimeoutMs: parseOptionalPositiveInt(env.AGENT_DIAGNOSTICS_TIMEOUT_MS),
+    diagnosticsFailureThreshold: parseOptionalPositiveInt(env.AGENT_DIAGNOSTICS_FAILURE_THRESHOLD),
+    diagnosticsFailureCooldownMs: parseOptionalPositiveInt(env.AGENT_DIAGNOSTICS_FAILURE_COOLDOWN_MS),
     autoCompactTimeoutMs: parseOptionalPositiveInt(env.AGENT_AUTO_COMPACT_TIMEOUT_MS),
     autoCompactMaxFailures: parseOptionalPositiveInt(env.AGENT_AUTO_COMPACT_MAX_FAILURES),
     languagePreference: env.AGENT_LANGUAGE,

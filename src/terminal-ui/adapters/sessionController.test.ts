@@ -1,13 +1,14 @@
 import assert from "node:assert/strict";
 import { __SESSION_CONTROLLER_TESTING__ } from "./sessionController.js";
 
-function runTests() {
+async function runTests() {
   testMergeThinkingContentSkipsWhitespaceChunk();
   testMergeThinkingContentAcceptsInitialChunk();
   testMergeThinkingContentPrefersCumulativeSnapshot();
   testMergeThinkingContentAppendsDeltaChunkWithoutLosingWhitespace();
   testMergeThinkingContentAvoidsDuplicateTailDelta();
   testMergeThinkingContentAppendsOnlyNonOverlappingSuffix();
+  await testWaitForUiPaintYieldsToMacrotask();
   console.log("sessionController tests passed");
 }
 
@@ -44,4 +45,21 @@ function testMergeThinkingContentAppendsOnlyNonOverlappingSuffix() {
   assert.equal(merged, "The quick brown fox jumps");
 }
 
-runTests();
+async function testWaitForUiPaintYieldsToMacrotask() {
+  let settled = false;
+  const paintPromise = __SESSION_CONTROLLER_TESTING__.waitForUiPaint().then(() => {
+    settled = true;
+  });
+
+  assert.equal(settled, false);
+  await Promise.resolve();
+  assert.equal(settled, false);
+
+  await paintPromise;
+  assert.equal(settled, true);
+}
+
+runTests().catch((error) => {
+  console.error(error);
+  process.exitCode = 1;
+});
