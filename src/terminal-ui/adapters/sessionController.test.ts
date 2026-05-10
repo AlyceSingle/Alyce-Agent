@@ -8,6 +8,10 @@ async function runTests() {
   testMergeThinkingContentAppendsDeltaChunkWithoutLosingWhitespace();
   testMergeThinkingContentAvoidsDuplicateTailDelta();
   testMergeThinkingContentAppendsOnlyNonOverlappingSuffix();
+  testExtractThinkingDeltaForInitialSnapshot();
+  testExtractThinkingDeltaForSuffixGrowth();
+  testExtractThinkingDeltaForUnchangedSnapshot();
+  testExtractThinkingDeltaForOverlap();
   await testWaitForUiPaintYieldsToMacrotask();
   console.log("sessionController tests passed");
 }
@@ -43,6 +47,26 @@ function testMergeThinkingContentAppendsOnlyNonOverlappingSuffix() {
     "fox jumps"
   );
   assert.equal(merged, "The quick brown fox jumps");
+}
+
+function testExtractThinkingDeltaForInitialSnapshot() {
+  const delta = __SESSION_CONTROLLER_TESTING__.extractThinkingDelta("", "hello");
+  assert.equal(delta, "hello");
+}
+
+function testExtractThinkingDeltaForSuffixGrowth() {
+  const delta = __SESSION_CONTROLLER_TESTING__.extractThinkingDelta("hello", "hello world");
+  assert.equal(delta, " world");
+}
+
+function testExtractThinkingDeltaForUnchangedSnapshot() {
+  const delta = __SESSION_CONTROLLER_TESTING__.extractThinkingDelta("hello", "hello");
+  assert.equal(delta, "");
+}
+
+function testExtractThinkingDeltaForOverlap() {
+  const delta = __SESSION_CONTROLLER_TESTING__.extractThinkingDelta("The quick brown f", "fox jumps");
+  assert.equal(delta, "ox jumps");
 }
 
 async function testWaitForUiPaintYieldsToMacrotask() {

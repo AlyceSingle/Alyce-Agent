@@ -601,8 +601,6 @@ function buildCollapsedToolBlocks(
   blocks: TerminalUiMessageBlock[];
   truncated: boolean;
 } {
-  const safeWidth = Math.max(16, width);
-
   switch (toolData.resultKind) {
     case "shell": {
       const shell = toolData.shell;
@@ -623,23 +621,19 @@ function buildCollapsedToolBlocks(
           content: "(no output)",
           tone: "muted"
         });
-        return { blocks, truncated: false };
+        return buildCollapsedMessageBlocks(blocks, width, 3);
       }
 
-      const preview = wrapTextClamped(combinedOutput.text, safeWidth, 10);
       blocks.push({
         label: combinedOutput.label,
-        content: preview.lines.join("\n"),
+        content: combinedOutput.text,
         style: "code",
         tone: combinedOutput.tone
       });
-      return {
-        blocks,
-        truncated: preview.truncated
-      };
+      return buildCollapsedMessageBlocks(blocks, width, 3);
     }
     case "read":
-      return buildCollapsedMessageBlocks(message.blocks, width, 12);
+      return buildCollapsedMessageBlocks(message.blocks, width, 3);
     case "generic":
       return buildCollapsedMessageBlocks(message.blocks, width, 3);
     case "write":

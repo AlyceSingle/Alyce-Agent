@@ -1,7 +1,5 @@
-import {
-  executeLspRuntimeQuery,
-  isLspSupportedFile
-} from "../../services/lsp/LspRuntimeService.js";
+import { isLspSupportedFile } from "../../services/lsp/LspRuntimeService.js";
+import { executeLspRuntimeQueryAsync } from "../../services/lsp/LspRuntimeWorkerClient.js";
 import { throwIfAborted } from "../../core/abort.js";
 import type { ToolExecutionContext } from "../types.js";
 import { DESCRIPTION, LSP_TOOL_NAME } from "./prompt.js";
@@ -75,7 +73,7 @@ export async function executeLSPTool(
   throwIfAborted(context.abortSignal);
 
   try {
-    const toolResult = await executeLspRuntimeQuery({
+    const toolResult = await executeLspRuntimeQueryAsync({
       operation: input.operation,
       filePath: input.filePath,
       workspaceRoot: context.workspaceRoot,

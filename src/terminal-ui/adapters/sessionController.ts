@@ -1346,7 +1346,8 @@ export function createSessionController(
       let completedTurnHistoryPlan: CompletedTurnHistoryPlan | null = null;
       let turnRecorded = false;
       let conversationWasCompacted = false;
-      let thinkingContent = "";
+      let thinkingSnapshot = "";
+      let thinkingSegmentContent = "";
 
       try {
         // 每轮都绑定独立的 abort controller 和 tool context，确保取消只影响当前轮次。
@@ -1457,13 +1458,24 @@ export function createSessionController(
               return;
             }
 
-            const nextThinkingContent = mergeThinkingContent(thinkingContent, chunk);
-            if (nextThinkingContent === thinkingContent) {
+            const nextThinkingSnapshot = mergeThinkingContent(thinkingSnapshot, chunk);
+            if (nextThinkingSnapshot === thinkingSnapshot) {
               return;
             }
 
-            thinkingContent = nextThinkingContent;
-            upsertTurnEphemeralMessage("thinking", createThinkingMessage(thinkingContent));
+            const thinkingDelta = extractThinkingDelta(thinkingSnapshot, nextThinkingSnapshot);
+            thinkingSnapshot = nextThinkingSnapshot;
+            if (!thinkingDelta.trim()) {
+              return;
+            }
+
+            const nextThinkingSegmentContent = mergeThinkingContent(thinkingSegmentContent, thinkingDelta);
+            if (nextThinkingSegmentContent === thinkingSegmentContent) {
+              return;
+            }
+
+            thinkingSegmentContent = nextThinkingSegmentContent;
+            upsertTurnEphemeralMessage("thinking", createThinkingMessage(thinkingSegmentContent));
           },
           onReconnect: (event) => {
             if (event.type === "scheduled") {
@@ -1482,6 +1494,10 @@ export function createSessionController(
             store.updateState((state) => setStatusText(state, "Thinking..."));
           },
           onToolCallStart: (toolName) => {
+            if (thinkingSegmentContent.trim().length > 0) {
+              turnEphemeralMessageIds.delete("thinking");
+              thinkingSegmentContent = "";
+            }
             store.updateState((state) => setStatusText(state, `Running ${toolName}...`));
           },
           onToolCallResult: (toolName, result, rawArguments) => {
@@ -1822,6 +1838,29 @@ function mergeThinkingContent(current: string, nextChunk: string): string {
   return `${current}${nextChunk}`;
 }
 
+function extractThinkingDelta(previous: string, next: string): string {
+  if (!previous) {
+    return next;
+  }
+
+  if (next === previous) {
+    return "";
+  }
+
+  if (next.startsWith(previous)) {
+    return next.slice(previous.length);
+  }
+
+  const maxOverlap = Math.min(previous.length, next.length);
+  for (let overlap = maxOverlap; overlap > 0; overlap -= 1) {
+    if (previous.endsWith(next.slice(0, overlap))) {
+      return next.slice(overlap);
+    }
+  }
+
+  return next;
+}
+
 async function waitForUiPaint(): Promise<void> {
   await new Promise<void>((resolve) => {
     setImmediate(resolve);
@@ -1830,6 +1869,7 @@ async function waitForUiPaint(): Promise<void> {
 
 export const __SESSION_CONTROLLER_TESTING__ = {
   mergeThinkingContent,
+  extractThinkingDelta,
   waitForUiPaint
 } as const;
 

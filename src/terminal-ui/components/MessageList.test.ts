@@ -21,6 +21,11 @@ const testing = __MESSAGE_LIST_TESTING__ as unknown as {
     maxLines: number
   ) => { blocks: TerminalUiMessageBlock[]; truncated: boolean };
   combineShellOutput: (stdout: string, stderr: string) => { label: string; text: string; tone?: string } | null;
+  buildCollapsedToolBlocks: (
+    message: TerminalUiMessage,
+    toolData: NonNullable<TerminalUiMessage["toolData"]>,
+    width: number
+  ) => { blocks: TerminalUiMessageBlock[]; truncated: boolean };
   buildRenderedMessageEntries: (
     messages: TerminalUiMessage[],
     selectedMessageId: string | null,
@@ -71,6 +76,8 @@ function runTests() {
   testRenderBlockLinesForPatchSkipsDiffMetaAndHunkHeaders();
   testBuildCollapsedMessageBlocksTruncatesWithEllipsis();
   testCombineShellOutputVariants();
+  testReadToolCollapsedPreviewUsesThreeLines();
+  testShellToolCollapsedPreviewUsesThreeLines();
   testWriteToolMessagesDefaultToCollapsedAndCanExpand(renderPolicy);
   testMarkdownFriendlyToolUsesMarkdownWhenExpanded(renderPolicy);
   testMarkdownFriendlyToolStillUsesMarkdownWhenMessageContentOverBudget();
@@ -151,6 +158,94 @@ function testCombineShellOutputVariants() {
     tone: "warning"
   });
   assert.equal(testing.combineShellOutput("", ""), null);
+}
+
+function testReadToolCollapsedPreviewUsesThreeLines() {
+  const message = createMessage({
+    id: "tool-read-collapse-1",
+    kind: "tool",
+    title: "Read src/demo.ts",
+    content: "Content\nline-1\nline-2\nline-3\nline-4\nline-5",
+    blocks: [
+      {
+        label: "Content",
+        style: "code",
+        content: "line-1\nline-2\nline-3\nline-4\nline-5"
+      }
+    ]
+  });
+  const toolData: NonNullable<TerminalUiMessage["toolData"]> = {
+    phase: "result",
+    toolName: "Read",
+    summary: "Read src/demo.ts",
+    ok: true,
+    resultKind: "read",
+    read: {
+      type: "text",
+      filePath: "src/demo.ts",
+      startLine: 1,
+      numLines: 5,
+      totalLines: 20,
+      truncated: true,
+      nextOffset: 6
+    }
+  };
+
+  const collapsed = testing.buildCollapsedToolBlocks(message, toolData, 80);
+  const renderedLineCount = collapsed.blocks.reduce(
+    (sum, block) => sum + testing.renderBlockLines(block, 80).length,
+    0
+  );
+
+  assert.equal(collapsed.truncated, true);
+  assert.equal(renderedLineCount <= 3, true);
+}
+
+function testShellToolCollapsedPreviewUsesThreeLines() {
+  const message = createMessage({
+    id: "tool-shell-collapse-1",
+    kind: "tool",
+    title: "PowerShell Get-ChildItem",
+    content: "Command\n$ Get-ChildItem\n\nStdout\nline-1\nline-2\nline-3\nline-4",
+    blocks: [
+      {
+        label: "Command",
+        style: "code",
+        content: "$ Get-ChildItem"
+      },
+      {
+        label: "Stdout",
+        style: "code",
+        content: "line-1\nline-2\nline-3\nline-4"
+      }
+    ]
+  });
+  const toolData: NonNullable<TerminalUiMessage["toolData"]> = {
+    phase: "result",
+    toolName: "PowerShell",
+    summary: "PowerShell Get-ChildItem",
+    ok: true,
+    resultKind: "shell",
+    shell: {
+      command: "Get-ChildItem",
+      cwd: ".",
+      exitCode: 0,
+      signal: null,
+      timedOut: false,
+      stdout: "line-1\nline-2\nline-3\nline-4\n",
+      stderr: "",
+      durationMs: 12
+    }
+  };
+
+  const collapsed = testing.buildCollapsedToolBlocks(message, toolData, 80);
+  const renderedLineCount = collapsed.blocks.reduce(
+    (sum, block) => sum + testing.renderBlockLines(block, 80).length,
+    0
+  );
+
+  assert.equal(collapsed.truncated, true);
+  assert.equal(renderedLineCount <= 3, true);
 }
 
 function testWriteToolMessagesDefaultToCollapsedAndCanExpand(
