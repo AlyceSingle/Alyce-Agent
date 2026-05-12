@@ -1,7 +1,8 @@
 import type { z } from "zod";
 import { throwIfAborted } from "../../core/abort.js";
 import { withFileWriteLock } from "../internal/fileWriteLocks.js";
-import { resolvePathFromInput, toWorkspaceRelative } from "../internal/pathSandbox.js";
+import { toWorkspaceRelative } from "../internal/pathSandbox.js";
+import { resolveWritablePathWithExternalApproval } from "../internal/externalDirectoryAccess.js";
 import { runPostWriteChecks } from "../internal/postWriteChecks.js";
 import { ensureFreshFileRead, recordWrittenTextFile } from "../internal/readState.js";
 import {
@@ -24,12 +25,13 @@ export async function executeFileEdit(
   input: z.infer<typeof FileEditInputSchema>,
   context: ToolExecutionContext
 ): Promise<FileEditOutput> {
-  // 统一先解析为工作区内绝对路径，后续读写都基于同一路径。
-  const fullFilePath = resolveEditPath(context.workspaceRoot, context.allowedRoots, input.file_path);
+  // 统一先解析绝对路径；工作区外路径需先经过外部目录审批。
+  const resolvedPath = await resolveEditPath(context, input.file_path);
+  const fullFilePath = resolvedPath.absolutePath;
   const relativePath = toWorkspaceRelative(context.workspaceRoot, fullFilePath);
 
   return withFileWriteLock(fullFilePath, () =>
-    executeFileEditLocked(input, context, fullFilePath, relativePath)
+    executeFileEditLocked(input, context, fullFilePath, relativePath, resolvedPath.allowedRoots)
   );
 }
 
@@ -37,7 +39,8 @@ async function executeFileEditLocked(
   input: z.infer<typeof FileEditInputSchema>,
   context: ToolExecutionContext,
   fullFilePath: string,
-  relativePath: string
+  relativePath: string,
+  allowedRoots: readonly string[]
 ): Promise<FileEditOutput> {
   await ensureFreshFileRead(fullFilePath, context, FILE_EDIT_TOOL_NAME);
 
@@ -94,7 +97,7 @@ async function executeFileEditLocked(
   const postWriteChecks = await runPostWriteChecks({
     absolutePath: fullFilePath,
     workspaceRoot: context.workspaceRoot,
-    allowedRoots: context.allowedRoots,
+    allowedRoots,
     abortSignal: context.abortSignal
   });
   const finalFile = (await readTextFileWithMetadata(fullFilePath)).content;
@@ -125,15 +128,21 @@ async function executeFileEditLocked(
   };
 }
 
-function resolveEditPath(
-  workspaceRoot: string,
-  allowedRoots: readonly string[],
+async function resolveEditPath(
+  context: ToolExecutionContext,
   filePath: string
-): string {
+): Promise<{
+  absolutePath: string;
+  allowedRoots: string[];
+}> {
   const normalized = filePath.trim();
   if (!normalized) {
     throw new Error("Edit requires non-empty 'file_path'");
   }
 
-  return resolvePathFromInput(workspaceRoot, allowedRoots, normalized);
+  return resolveWritablePathWithExternalApproval(context, normalized, {
+    toolName: FILE_EDIT_TOOL_NAME,
+    title: "Edit external path",
+    kind: "file"
+  });
 }

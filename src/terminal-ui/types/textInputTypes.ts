@@ -20,6 +20,7 @@ export type BaseTextInputProps = {
   value: string;
   onChange: (value: string) => void;
   onSubmit?: (value: string) => void;
+  onInputKey?: (input: string, key: TerminalKey) => boolean;
   focus?: boolean;
   multiline?: boolean;
   showCursor?: boolean;

@@ -1,3 +1,139 @@
+export type ReplCommandDefinition = {
+  command: string;
+  usage: string;
+  description: string;
+  completion: string;
+};
+
+export const REPL_COMMAND_DEFINITIONS: ReplCommandDefinition[] = [
+  {
+    command: "/help",
+    usage: "/help",
+    description: "Show this help",
+    completion: "/help"
+  },
+  {
+    command: "/settings",
+    usage: "/settings",
+    description: "Open runtime settings",
+    completion: "/settings"
+  },
+  {
+    command: "/setup",
+    usage: "/setup",
+    description: "Open connection setup",
+    completion: "/setup"
+  },
+  {
+    command: "/clear",
+    usage: "/clear",
+    description: "Clear chat history",
+    completion: "/clear"
+  },
+  {
+    command: "/rewind",
+    usage: "/rewind",
+    description: "Restore to a previous prompt",
+    completion: "/rewind"
+  },
+  {
+    command: "/resume",
+    usage: "/resume [id|text]",
+    description: "Resume a previous project session",
+    completion: "/resume "
+  },
+  {
+    command: "/sessions",
+    usage: "/sessions",
+    description: "List saved project sessions",
+    completion: "/sessions"
+  },
+  {
+    command: "/remember",
+    usage: "/remember <text>",
+    description: "Save note to session and persistent memory",
+    completion: "/remember "
+  },
+  {
+    command: "/remember --session",
+    usage: "/remember --session <text>",
+    description: "Save note to session notes only",
+    completion: "/remember --session "
+  },
+  {
+    command: "/memory",
+    usage: "/memory",
+    description: "Show memory snapshot",
+    completion: "/memory"
+  },
+  {
+    command: "/memory clear",
+    usage: "/memory clear",
+    description: "Clear session memory",
+    completion: "/memory clear"
+  },
+  {
+    command: "/memory clear --all",
+    usage: "/memory clear --all",
+    description: "Clear session and persistent memory",
+    completion: "/memory clear --all"
+  },
+  {
+    command: "/tasks cleanup",
+    usage: "/tasks cleanup [--apply]",
+    description: "Scan or clean stale subagent storage artifacts",
+    completion: "/tasks cleanup"
+  },
+  {
+    command: "/tasks cleanup --apply",
+    usage: "/tasks cleanup --apply",
+    description: "Clean stale subagent storage artifacts",
+    completion: "/tasks cleanup --apply"
+  },
+  {
+    command: "/context",
+    usage: "/context [text]",
+    description: "Show full next-turn AI context payload",
+    completion: "/context"
+  },
+  {
+    command: "/model",
+    usage: "/model <name>",
+    description: "Switch model and persist it",
+    completion: "/model "
+  },
+  {
+    command: "/add-dir",
+    usage: "/add-dir <path>",
+    description: "Allow an extra directory for this session",
+    completion: "/add-dir "
+  },
+  {
+    command: "/add-dir --save",
+    usage: "/add-dir --save <path>",
+    description: "Allow and save an extra directory",
+    completion: "/add-dir --save "
+  },
+  {
+    command: "/exit",
+    usage: "/exit",
+    description: "Quit",
+    completion: "/exit"
+  }
+];
+
+export function getReplCommandHelpLines(currentModel: string) {
+  const usageWidth = REPL_COMMAND_DEFINITIONS.reduce(
+    (width, command) => Math.max(width, command.usage.length),
+    0
+  );
+
+  return REPL_COMMAND_DEFINITIONS.map((command) => {
+    const suffix = command.command === "/model" ? ` (current: ${currentModel})` : "";
+    return `  ${command.usage.padEnd(usageWidth)}  ${command.description}${suffix}`;
+  });
+}
+
 // REPL 内置命令的标准化结果。
 export type ParsedCommand =
   | { type: "none" }

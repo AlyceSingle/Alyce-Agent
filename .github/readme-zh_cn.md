@@ -24,7 +24,6 @@ Alyce 是一套本地优先的编码助手框架，它的核心功能包括：
 - **安全可控的工具箱**：内置了带审批机制的命令执行、文件操作和网页抓取工具。
 - **本地技能加载**：可以从项目级或用户级 `SKILL.md` 加载技能指令。
 - **MCP 扩展接入**：支持通过 `.alyce/mcp.json` 配置 stdio、streamable HTTP 和 SSE MCP server，暴露资源和动态工具。
-- **可靠的编辑回滚**：如果文件修改过程中断，支持自动或手动回滚，保护您的代码安全。
 
 ## 快速开始
 
@@ -95,13 +94,5 @@ npm start
 - 项目级运行时状态保存在 `./.alyce/`
 - 用户级运行时状态保存在 `~/.alyce/`
 - 本地技能放在 `.alyce/skills/**/SKILL.md`，MCP server 配置在 `.alyce/mcp.json`
-
-## 最低验证
-
-提交前至少建议执行：
-
-```bash
-npm run build
-```
 
 如果您计划维护或扩展代码库，建议先阅读 [项目结构](https://github.com/AlyceSingle/Alyce-Agent/blob/master/docs/zh-CN/project-structure.md) 文档。清晰的架构层次将有助于您更高效地进行开发。

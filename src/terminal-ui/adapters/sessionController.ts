@@ -506,8 +506,6 @@ export function createSessionController(
     }
 
     const affected = getAffectedRewindPoints(target);
-    const restoredFiles: string[] = [];
-    const removedFiles: string[] = [];
 
     try {
       if (mode === "code-and-conversation") {
@@ -517,36 +515,17 @@ export function createSessionController(
             continue;
           }
 
-          const result = await runtime.restoreFilesForTurn(point.turnId);
-          restoredFiles.push(...result.restored);
-          removedFiles.push(...result.removed);
+          await runtime.restoreFilesForTurn(point.turnId);
         }
       }
 
       await runtime.restoreVolatileConversationSnapshot(target.volatileSnapshot);
       const baseMessages = store.getState().messages.slice(0, target.uiMessageCount);
-      const summary = [
-        `Rewound to before: ${target.input}`,
-        `Mode: ${mode === "code-and-conversation" ? "code and conversation" : "conversation"}`,
-        `Removed turns: ${affected.length}`
-      ];
-
-      if (mode === "code-and-conversation") {
-        summary.push(`Files restored: ${restoredFiles.length}`);
-        summary.push(`Files removed: ${removedFiles.length}`);
-      } else if (view.hasCodeChanges) {
-        summary.push("File changes were left on disk.");
-      }
-
-      const systemMessage = createSystemMessage(summary.join("\n"), "Rewind");
       store.updateState((state) =>
         setDraftInput(
           setTranscriptSticky(
             setContextBudget(
-              replaceMessages(setStatusText(closeDialog(state), "Rewound"), [
-                ...baseMessages,
-                systemMessage
-              ]),
+              replaceMessages(setStatusText(closeDialog(state), "Rewound"), baseMessages),
               null
             ),
             true
@@ -1605,8 +1584,6 @@ export function createSessionController(
               createSystemMessage(
                 [
                   "Request interrupted by user.",
-                  "You can continue typing to refine the request.",
-                  "Press ESC twice from empty input to choose where to rewind.",
                   checkpoint.hasNonRestorableToolActivity
                     ? "Some non-rewindable tool side effects may remain on disk."
                     : null

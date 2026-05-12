@@ -13,7 +13,8 @@ import {
   type ApplyPatchStructuredPatchHunk
 } from "../internal/applyPatch.js";
 import { withFileWriteLock } from "../internal/fileWriteLocks.js";
-import { resolvePathFromInput, toWorkspaceRelative } from "../internal/pathSandbox.js";
+import { toWorkspaceRelative } from "../internal/pathSandbox.js";
+import { resolveWritablePathWithExternalApproval } from "../internal/externalDirectoryAccess.js";
 import {
   runPostWriteChecks,
   type PostWriteChecksResult,
@@ -129,18 +130,19 @@ export async function executeFileApplyPatch(
   }
 
   const operations = parsePatchForTool(input.patchText);
-  const specs = resolvePatchSpecs(operations, context);
+  const { specs, allowedRoots } = await resolvePatchSpecs(operations, context);
   assertNoDuplicateTouchedPaths(specs);
 
   return withFileWriteLocks(
     specs.flatMap((spec) => [spec.sourcePath, spec.targetPath].filter(isString)),
-    () => executeFileApplyPatchLocked(specs, context)
+    () => executeFileApplyPatchLocked(specs, context, allowedRoots)
   );
 }
 
 async function executeFileApplyPatchLocked(
   specs: readonly ResolvedPatchSpec[],
-  context: ToolExecutionContext
+  context: ToolExecutionContext,
+  allowedRoots: readonly string[]
 ): Promise<FileApplyPatchResult> {
   const prepared = await preparePatchChanges(specs, context);
   const approved = await context.requestApproval({
@@ -160,7 +162,7 @@ async function executeFileApplyPatchLocked(
   }
 
   await capturePatchSnapshots(prepared, context);
-  const completed = await applyPreparedPatch(prepared, context);
+  const completed = await applyPreparedPatch(prepared, context, allowedRoots);
   return buildApplyPatchResult(completed);
 }
 
@@ -184,38 +186,51 @@ function parsePatchForTool(patchText: string) {
   return operations;
 }
 
-function resolvePatchSpecs(
+async function resolvePatchSpecs(
   operations: readonly ApplyPatchOperation[],
   context: ToolExecutionContext
-): ResolvedPatchSpec[] {
-  return operations.map((operation) => {
+): Promise<{
+  specs: ResolvedPatchSpec[];
+  allowedRoots: string[];
+}> {
+  let allowedRoots = context.allowedRoots;
+  const specs: ResolvedPatchSpec[] = [];
+  for (const operation of operations) {
     if (operation.type === "add") {
-      const targetPath = resolvePatchPath(operation.path, context);
-      return {
+      const resolvedTarget = await resolvePatchPath(operation.path, context, allowedRoots);
+      allowedRoots = resolvedTarget.allowedRoots;
+      specs.push({
         operation,
-        targetPath,
-        targetRelative: toWorkspaceRelative(context.workspaceRoot, targetPath)
-      };
+        targetPath: resolvedTarget.absolutePath,
+        targetRelative: toWorkspaceRelative(context.workspaceRoot, resolvedTarget.absolutePath)
+      });
+      continue;
     }
 
-    const sourcePath = resolvePatchPath(operation.path, context);
-    const targetPath =
-      operation.type === "update" && operation.movePath
-        ? resolvePatchPath(operation.movePath, context)
-        : sourcePath;
+    const resolvedSource = await resolvePatchPath(operation.path, context, allowedRoots);
+    allowedRoots = resolvedSource.allowedRoots;
+    const sourcePath = resolvedSource.absolutePath;
+    let targetPath = sourcePath;
+    if (operation.type === "update" && operation.movePath) {
+      const resolvedTarget = await resolvePatchPath(operation.movePath, context, allowedRoots);
+      allowedRoots = resolvedTarget.allowedRoots;
+      targetPath = resolvedTarget.absolutePath;
+    }
 
     if (operation.type === "update" && operation.movePath && isSamePath(sourcePath, targetPath)) {
       throw new Error(`apply_patch verification failed: Move destination matches source: ${operation.path}`);
     }
 
-    return {
+    specs.push({
       operation,
       sourcePath,
       targetPath,
       sourceRelative: toWorkspaceRelative(context.workspaceRoot, sourcePath),
       targetRelative: toWorkspaceRelative(context.workspaceRoot, targetPath)
-    };
-  });
+    });
+  }
+
+  return { specs, allowedRoots };
 }
 
 async function preparePatchChanges(
@@ -388,7 +403,8 @@ async function readMoveTargetIfExists(
 
 async function applyPreparedPatch(
   prepared: readonly PreparedPatchChange[],
-  context: ToolExecutionContext
+  context: ToolExecutionContext,
+  allowedRoots: readonly string[]
 ): Promise<CompletedPatchChange[]> {
   const completed: CompletedPatchChange[] = [];
   const rollbackEntries: PatchRollbackEntry[] = [];
@@ -410,7 +426,7 @@ async function applyPreparedPatch(
             "apply_patch lost its move source snapshot during rollback."
           ));
           await fs.unlink(assertString(change.sourcePath));
-          await syncDeletedFileWithLsp(change.sourcePath, context);
+          await syncDeletedFileWithLsp(change.sourcePath, context, allowedRoots);
           break;
         case "delete":
           rollbackEntries.push(buildSourceRollbackEntry(
@@ -418,7 +434,7 @@ async function applyPreparedPatch(
             "apply_patch lost its delete snapshot during rollback."
           ));
           await fs.unlink(assertString(change.sourcePath));
-          await syncDeletedFileWithLsp(change.sourcePath, context);
+          await syncDeletedFileWithLsp(change.sourcePath, context, allowedRoots);
           completed.push({
             ...change,
             finalContent: ""
@@ -430,7 +446,7 @@ async function applyPreparedPatch(
         ? await runPostWriteChecks({
             absolutePath: change.targetPath,
             workspaceRoot: context.workspaceRoot,
-            allowedRoots: context.allowedRoots,
+            allowedRoots,
             abortSignal: context.abortSignal
           })
         : createSkippedPostWriteChecks("Content already matched; no file write was performed.");
@@ -854,13 +870,22 @@ function summarizeResultPath(files: readonly FileApplyPatchFileResult[]) {
   return `${files.length} files`;
 }
 
-function resolvePatchPath(inputPath: string, context: ToolExecutionContext) {
+async function resolvePatchPath(
+  inputPath: string,
+  context: ToolExecutionContext,
+  currentAllowedRoots: readonly string[]
+) {
   const normalized = inputPath.trim();
   if (!normalized) {
     throw new Error("apply_patch requires non-empty file paths");
   }
 
-  return resolvePathFromInput(context.workspaceRoot, context.allowedRoots, normalized);
+  return resolveWritablePathWithExternalApproval(context, normalized, {
+    toolName: FILE_APPLY_PATCH_TOOL_NAME,
+    title: "apply_patch external path",
+    kind: "file",
+    currentAllowedRoots
+  });
 }
 
 async function assertExistingFileForPatch(
@@ -986,7 +1011,8 @@ function isEexistError(error: unknown) {
 
 async function syncDeletedFileWithLsp(
   absolutePath: string | undefined,
-  context: ToolExecutionContext
+  context: ToolExecutionContext,
+  allowedRoots: readonly string[]
 ) {
   if (!absolutePath) {
     return;
@@ -996,7 +1022,7 @@ async function syncDeletedFileWithLsp(
     await syncLspRuntimeFileClose({
       filePath: absolutePath,
       workspaceRoot: context.workspaceRoot,
-      allowedRoots: context.allowedRoots,
+      allowedRoots,
       abortSignal: context.abortSignal
     });
   } catch {

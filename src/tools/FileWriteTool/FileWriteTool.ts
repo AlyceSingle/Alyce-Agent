@@ -3,7 +3,8 @@ import path from "node:path";
 import { z } from "zod";
 import { throwIfAborted } from "../../core/abort.js";
 import { withFileWriteLock } from "../internal/fileWriteLocks.js";
-import { resolvePathFromInput, toWorkspaceRelative } from "../internal/pathSandbox.js";
+import { toWorkspaceRelative } from "../internal/pathSandbox.js";
+import { resolveWritablePathWithExternalApproval } from "../internal/externalDirectoryAccess.js";
 import {
   runPostWriteChecks,
   type PostWriteChecksResult,
@@ -56,12 +57,13 @@ export async function executeFileWrite(
   input: z.infer<typeof FileWriteInputSchema>,
   context: ToolExecutionContext
 ): Promise<FileWriteResult> {
-  // 路径解析统一走工作区沙箱，避免写入越界。
-  const fullFilePath = resolveWritePath(context.workspaceRoot, context.allowedRoots, input.file_path);
+  // 路径解析统一走沙箱；工作区外路径需先经过外部目录审批。
+  const resolvedPath = await resolveWritePath(context, input.file_path);
+  const fullFilePath = resolvedPath.absolutePath;
   const relativePath = toWorkspaceRelative(context.workspaceRoot, fullFilePath);
 
   return withFileWriteLock(fullFilePath, () =>
-    executeFileWriteLocked(input, context, fullFilePath, relativePath)
+    executeFileWriteLocked(input, context, fullFilePath, relativePath, resolvedPath.allowedRoots)
   );
 }
 
@@ -69,7 +71,8 @@ async function executeFileWriteLocked(
   input: z.infer<typeof FileWriteInputSchema>,
   context: ToolExecutionContext,
   fullFilePath: string,
-  relativePath: string
+  relativePath: string,
+  allowedRoots: readonly string[]
 ): Promise<FileWriteResult> {
   const exists = await fileExists(fullFilePath);
   if (exists) {
@@ -136,7 +139,7 @@ async function executeFileWriteLocked(
   const postWriteChecks = await runPostWriteChecks({
     absolutePath: fullFilePath,
     workspaceRoot: context.workspaceRoot,
-    allowedRoots: context.allowedRoots,
+    allowedRoots,
     abortSignal: context.abortSignal
   });
   const finalMetadata = await readTextFileWithMetadata(fullFilePath);
@@ -170,17 +173,23 @@ async function fileExists(targetPath: string): Promise<boolean> {
   }
 }
 
-function resolveWritePath(
-  workspaceRoot: string,
-  allowedRoots: readonly string[],
+async function resolveWritePath(
+  context: ToolExecutionContext,
   filePath: string
-): string {
+): Promise<{
+  absolutePath: string;
+  allowedRoots: string[];
+}> {
   const normalized = filePath.trim();
   if (!normalized) {
     throw new Error("Write requires non-empty 'file_path'");
   }
 
-  return resolvePathFromInput(workspaceRoot, allowedRoots, normalized);
+  return resolveWritablePathWithExternalApproval(context, normalized, {
+    toolName: FILE_WRITE_TOOL_NAME,
+    title: "Write external path",
+    kind: "file"
+  });
 }
 
 async function assertTargetUnchangedAfterApproval(

@@ -78,6 +78,7 @@ import {
   type SubagentTranscriptToolEvent
 } from "../core/subagent-history/types.js";
 import { formatCurrentDateLabel, formatSystemDateTime, getSystemTimeZone } from "../core/time/systemTime.js";
+import { getReplCommandHelpLines } from "./commandRouter.js";
 import { createProjectMcpRuntime } from "../mcp/runtime.js";
 import { getRegisteredToolNames, getToolSchemasByName } from "../tools/registry.js";
 import { TOOL_SCHEMAS } from "../tools.js";
@@ -287,22 +288,7 @@ function getCurrentDateLabel(now = new Date()) {
 export function getHelpText(currentModel: string) {
   return [
     "Commands:",
-    "  /help              Show this help",
-    "  /settings          Open runtime settings",
-    "  /setup             Open connection setup",
-    "  /clear             Clear chat history",
-    "  /rewind            Restore to a previous prompt",
-    "  /resume [id|text]  Resume a previous project session",
-    "  /sessions          List saved project sessions",
-    "  /remember <text>   Save note to session and persistent memory",
-    "  /remember --session <text>  Save note to session notes only",
-    "  /memory            Show memory snapshot",
-    "  /memory clear      Clear session memory",
-    "  /memory clear --all  Clear session and persistent memory",
-    "  /tasks cleanup [--apply]  Scan or clean stale subagent storage artifacts",
-    "  /context [text]    Show full next-turn AI context payload",
-    "  /model <name>      Switch model and persist it (current: " + currentModel + ")",
-    "  /exit              Quit",
+    ...getReplCommandHelpLines(currentModel),
     "",
     "Shortcuts:",
     "  Ctrl+X  Open settings",

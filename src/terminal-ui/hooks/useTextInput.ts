@@ -8,6 +8,7 @@ type UseTextInputProps = {
   value: string;
   onChange: (value: string) => void;
   onSubmit?: (value: string) => void;
+  onInputKey?: (input: string, key: TerminalKey) => boolean;
   multiline?: boolean;
   columns: number;
   maxVisibleLines?: number;
@@ -111,6 +112,10 @@ export function useTextInput(props: UseTextInputProps): BaseInputState {
       props.onChange(nextValue);
       props.onChangeCursorOffset(nextCursor);
     };
+
+    if (props.onInputKey?.(input, key)) {
+      return;
+    }
 
     if (key.escape) {
       if (!props.value.length) {

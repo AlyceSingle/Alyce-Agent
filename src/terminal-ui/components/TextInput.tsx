@@ -12,6 +12,7 @@ export default function TextInput(props: BaseTextInputProps): React.ReactNode {
     value: props.value,
     onChange: props.onChange,
     onSubmit: props.onSubmit,
+    onInputKey: props.onInputKey,
     multiline: props.multiline,
     columns,
     maxVisibleLines: props.maxVisibleLines,

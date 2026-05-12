@@ -1,7 +1,8 @@
 import type { z } from "zod";
 import { throwIfAborted } from "../../core/abort.js";
 import { withFileWriteLock } from "../internal/fileWriteLocks.js";
-import { resolvePathFromInput, toWorkspaceRelative } from "../internal/pathSandbox.js";
+import { toWorkspaceRelative } from "../internal/pathSandbox.js";
+import { resolveWritablePathWithExternalApproval } from "../internal/externalDirectoryAccess.js";
 import { runPostWriteChecks } from "../internal/postWriteChecks.js";
 import { ensureFreshFileRead, recordWrittenTextFile } from "../internal/readState.js";
 import {
@@ -25,15 +26,12 @@ export async function executeFileMultiEdit(
   input: z.infer<typeof FileMultiEditInputSchema>,
   context: ToolExecutionContext
 ): Promise<FileMultiEditOutput> {
-  const fullFilePath = resolveMultiEditPath(
-    context.workspaceRoot,
-    context.allowedRoots,
-    input.file_path
-  );
+  const resolvedPath = await resolveMultiEditPath(context, input.file_path);
+  const fullFilePath = resolvedPath.absolutePath;
   const relativePath = toWorkspaceRelative(context.workspaceRoot, fullFilePath);
 
   return withFileWriteLock(fullFilePath, () =>
-    executeFileMultiEditLocked(input, context, fullFilePath, relativePath)
+    executeFileMultiEditLocked(input, context, fullFilePath, relativePath, resolvedPath.allowedRoots)
   );
 }
 
@@ -41,7 +39,8 @@ async function executeFileMultiEditLocked(
   input: z.infer<typeof FileMultiEditInputSchema>,
   context: ToolExecutionContext,
   fullFilePath: string,
-  relativePath: string
+  relativePath: string,
+  allowedRoots: readonly string[]
 ): Promise<FileMultiEditOutput> {
   await ensureFreshFileRead(fullFilePath, context, FILE_MULTI_EDIT_TOOL_NAME);
 
@@ -112,7 +111,7 @@ async function executeFileMultiEditLocked(
   const postWriteChecks = await runPostWriteChecks({
     absolutePath: fullFilePath,
     workspaceRoot: context.workspaceRoot,
-    allowedRoots: context.allowedRoots,
+    allowedRoots,
     abortSignal: context.abortSignal
   });
   const finalFile = (await readTextFileWithMetadata(fullFilePath)).content;
@@ -138,15 +137,21 @@ async function executeFileMultiEditLocked(
   };
 }
 
-function resolveMultiEditPath(
-  workspaceRoot: string,
-  allowedRoots: readonly string[],
+async function resolveMultiEditPath(
+  context: ToolExecutionContext,
   filePath: string
-): string {
+): Promise<{
+  absolutePath: string;
+  allowedRoots: string[];
+}> {
   const normalized = filePath.trim();
   if (!normalized) {
     throw new Error("MultiEdit requires non-empty 'file_path'");
   }
 
-  return resolvePathFromInput(workspaceRoot, allowedRoots, normalized);
+  return resolveWritablePathWithExternalApproval(context, normalized, {
+    toolName: FILE_MULTI_EDIT_TOOL_NAME,
+    title: "MultiEdit external path",
+    kind: "file"
+  });
 }

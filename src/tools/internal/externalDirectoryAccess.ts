@@ -9,11 +9,15 @@ import {
 } from "./pathSandbox.js";
 
 export type ReadablePathKind = "file" | "directory" | "file-or-directory";
+export type WritablePathKind = ReadablePathKind;
 
-export interface ExternalReadablePathResolution {
+export interface ExternalPathResolution {
   absolutePath: string;
   allowedRoots: string[];
 }
+
+export type ExternalReadablePathResolution = ExternalPathResolution;
+export type ExternalWritablePathResolution = ExternalPathResolution;
 
 export async function resolveReadablePathWithExternalApproval(
   context: ToolExecutionContext,
@@ -22,14 +26,54 @@ export async function resolveReadablePathWithExternalApproval(
     toolName: string;
     title?: string;
     kind?: ReadablePathKind;
+    currentAllowedRoots?: readonly string[];
   }
 ): Promise<ExternalReadablePathResolution> {
+  return resolvePathWithExternalApproval(context, inputPath, {
+    toolName: options.toolName,
+    title: options.title ?? "Access external directory",
+    kind: options.kind ?? "file-or-directory",
+    currentAllowedRoots: options.currentAllowedRoots,
+    accessLabel: "read/search only"
+  });
+}
+
+export async function resolveWritablePathWithExternalApproval(
+  context: ToolExecutionContext,
+  inputPath: string,
+  options: {
+    toolName: string;
+    title?: string;
+    kind?: WritablePathKind;
+    currentAllowedRoots?: readonly string[];
+  }
+): Promise<ExternalWritablePathResolution> {
+  return resolvePathWithExternalApproval(context, inputPath, {
+    toolName: options.toolName,
+    title: options.title ?? "Access external directory",
+    kind: options.kind ?? "file",
+    currentAllowedRoots: options.currentAllowedRoots,
+    accessLabel: "read/write"
+  });
+}
+
+async function resolvePathWithExternalApproval(
+  context: ToolExecutionContext,
+  inputPath: string,
+  options: {
+    toolName: string;
+    title: string;
+    kind: ReadablePathKind;
+    currentAllowedRoots?: readonly string[];
+    accessLabel: string;
+  }
+): Promise<ExternalPathResolution> {
   const normalizedPath = inputPath.trim();
   if (!normalizedPath) {
     throw new Error("Path must not be empty");
   }
 
-  const currentAllowedRoots = context.allowedRoots;
+  const currentAllowedRoots = normalizeAllowedRoots(options.currentAllowedRoots ?? context.allowedRoots);
   const absolutePath = resolvePathFromInputUnchecked(context.workspaceRoot, normalizedPath);
   if (isPathAllowed(currentAllowedRoots, absolutePath)) {
     return {
@@ -40,17 +84,17 @@ export async function resolveReadablePathWithExternalApproval(
 
   const externalDirectory = await resolveExternalDirectoryScope(
     absolutePath,
-    options.kind ?? "file-or-directory"
+    options.kind
   );
   const approved = await context.requestApproval({
     kind: "external-directory",
     toolName: options.toolName,
-    title: options.title ?? "Access external directory",
+    title: options.title,
     summary: externalDirectory,
     details: [
       `Requested path: ${absolutePath}`,
       `Directory scope: ${externalDirectory}`,
-      "Access: read/search only"
+      `Access: ${options.accessLabel}`
     ],
     scope: {
       type: "external-directory",
@@ -64,7 +108,7 @@ export async function resolveReadablePathWithExternalApproval(
 
   return {
     absolutePath,
-    allowedRoots: normalizeAllowedRoots([...context.allowedRoots, externalDirectory])
+    allowedRoots: normalizeAllowedRoots([...currentAllowedRoots, externalDirectory])
   };
 }
 

@@ -30,7 +30,6 @@ Alyce is a local coding assistant framework with:
 - approval-aware command, file, and web tooling
 - local `SkillTool` loading from project/user `SKILL.md` files
 - MCP server integration for stdio, streamable HTTP, and SSE tools/resources
-- rollback support for interrupted file edits
 
 ## Quick Start
 
@@ -103,13 +102,5 @@ npm start
 - Project-level runtime state lives in `./.alyce/`
 - User-level runtime state lives in `~/.alyce/`
 - Local skills live in `.alyce/skills/**/SKILL.md`; MCP servers are configured in `.alyce/mcp.json`
-
-## Validation
-
-The minimum validation step before submitting changes is:
-
-```bash
-npm run build
-```
 
 I recommend reading the [Project Structure](https://github.com/AlyceSingle/Alyce-Agent/blob/master/docs/project-structure.md) documentation if you plan to maintain or extend the codebase. Understanding the architectural layers will ensure a more predictable development experience.
