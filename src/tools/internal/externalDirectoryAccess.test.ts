@@ -69,6 +69,10 @@ async function testWritablePathRequestsApprovalOutsideWorkspace() {
     assert.equal(context.approvalRequests[0]?.kind, "external-directory");
     assert.equal(context.approvalRequests[0]?.scope?.type, "external-directory");
     assert.equal(context.approvalRequests[0]?.scope?.directory, path.resolve(externalDirectory));
+    assert.deepEqual(context.approvalRequests[0]?.permission, {
+      permission: "directory.external",
+      pattern: path.resolve(externalDirectory)
+    });
     assert.match(context.approvalRequests[0]?.details.join("\n") ?? "", /Access: read\/write/);
     assert.equal(
       result.allowedRoots.some((root) => path.resolve(root) === path.resolve(externalDirectory)),

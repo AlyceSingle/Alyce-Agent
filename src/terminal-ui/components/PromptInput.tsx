@@ -176,7 +176,7 @@ export function PromptInput(props: {
     setEscClearPending(false);
   }, [handleChange, handleCursorOffsetChange]);
 
-  const handleInputKey = useCallback((input: string, key: TerminalKey) => {
+  const handleInputKey = useCallback((_input: string, key: TerminalKey) => {
     const slashInputActive = !props.disabled && isSlashCommandInput(props.value);
     if (!slashInputActive) {
       return false;

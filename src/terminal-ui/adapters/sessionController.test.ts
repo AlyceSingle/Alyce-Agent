@@ -12,6 +12,7 @@ async function runTests() {
   testExtractThinkingDeltaForSuffixGrowth();
   testExtractThinkingDeltaForUnchangedSnapshot();
   testExtractThinkingDeltaForOverlap();
+  testShouldSkipApprovalDialog();
   await testWaitForUiPaintYieldsToMacrotask();
   console.log("sessionController tests passed");
 }
@@ -67,6 +68,16 @@ function testExtractThinkingDeltaForUnchangedSnapshot() {
 function testExtractThinkingDeltaForOverlap() {
   const delta = __SESSION_CONTROLLER_TESTING__.extractThinkingDelta("The quick brown f", "fox jumps");
   assert.equal(delta, "ox jumps");
+}
+
+function testShouldSkipApprovalDialog() {
+  const shouldSkip = __SESSION_CONTROLLER_TESTING__.shouldSkipApprovalDialog;
+
+  assert.equal(shouldSkip({ action: "allow" }, { forceAsk: false }, false), true);
+  assert.equal(shouldSkip({ action: "allow" }, { forceAsk: true }, false), false);
+  assert.equal(shouldSkip({ action: "allow" }, { forceAsk: true }, true), true);
+  assert.equal(shouldSkip(null, { forceAsk: true }, true), true);
+  assert.equal(shouldSkip({ action: "deny" }, { forceAsk: false }, true), false);
 }
 
 async function testWaitForUiPaintYieldsToMacrotask() {

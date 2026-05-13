@@ -41,6 +41,8 @@ Loaded in this priority order — **again, earlier wins**:
 | User skills | `~/.alyce/skills/**/SKILL.md` |
 | MCP binary resource output | `./.alyce/mcp-output/` |
 
+Do not commit `.env`, `./.alyce/`, `~/.alyce/`, or generated `dist/` output. Project settings can contain local paths, permission rules, memory, session history, MCP output, and sometimes credentials.
+
 ## Environment Variables
 
 ### Required (the app won't start without these)
@@ -49,7 +51,7 @@ Loaded in this priority order — **again, earlier wins**:
 - `OPENAI_MODEL`
 
 ### Optional (memory tuning, mostly)
-- `AGENT_ADDITIONAL_DIRECTORIES` — comma-separated extra paths
+- `AGENT_ADDITIONAL_DIRECTORIES` — extra paths separated by the system path delimiter (`;` on Windows, `:` on Linux/macOS)
 - `AGENT_MEMORY_DIR` — override memory storage directory
 - `AGENT_MEMORY_FILE` — override memory file name
 - `AGENT_SESSION_MEMORY_FILE` — override the auto-managed session memory file name, default `SESSION_MEMORY.md`
@@ -76,6 +78,8 @@ Loaded in this priority order — **again, earlier wins**:
 - `AGENT_MODEL_CONTEXT_WINDOW_OVERRIDES` — comma-separated model context overrides, for example `custom fast=512000,my alias=1000000`
 
 Compatibility note: `AGENT_MEMORY_AUTO_SUMMARY` is still accepted as an alias for `AGENT_SESSION_MEMORY_ENABLED`, but the old message-count summary variables are retired.
+
+`permissionRules` are configured in `./.alyce/settings.json` or `~/.alyce/settings.json`, not through environment variables. This keeps persistent trust decisions reviewable in JSON instead of hiding them in shell startup files.
 
 ### Optional Web Search Settings
 
@@ -206,6 +210,100 @@ These appear in the **Session** tab of settings.
 - `scrollAccelerationEnabled` — when enabled, repeated line-scroll actions in a short window accelerate progressively.
 - `maxMessagesWithoutVirtualization` — non-virtual transcript safety cap that prevents fallback mode from growing without bound.
 - `historyPagingEnabled` — experimental setting that resumes long sessions with a recent window first and lazily prepends older transcript chunks near the top.
+
+### Permission Rules
+
+`permissionRules` is an optional array in session settings. Rules can live in project settings or user settings:
+
+```json
+{
+  "approvalMode": "manual",
+  "permissionRules": [
+    {
+      "permission": "shell",
+      "pattern": "npm run build",
+      "action": "allow",
+      "scope": "persistent",
+      "reason": "Known local validation command."
+    },
+    {
+      "permission": "file.read",
+      "pattern": "sensitive:*",
+      "action": "ask",
+      "reason": "Review secret-like files before reading."
+    }
+  ]
+}
+```
+
+Supported `permission` values are:
+
+```text
+*
+shell
+powershell
+file.read
+file.write
+file.edit
+file.patch
+directory.external
+web.fetch
+web.search
+mcp.tool
+mcp.resource
+skill.load
+task.spawn
+```
+
+Supported `action` values are `allow`, `ask`, and `deny`. `pattern` defaults to `*` when omitted. A few common pattern forms are:
+
+- `workspace:src/index.ts` for workspace-relative file paths.
+- `workspace:*` for any workspace path.
+- `external:C:\Some\Path` or an absolute external path pattern for outside directories.
+- `sensitive:*` for `.env`, `.alyce`, private keys, credential files, and similar paths.
+- exact shell/PowerShell command text such as `npm run build`.
+- URL or MCP patterns such as `https://docs.example.com/*` or `*`.
+
+Rule precedence is source-aware: built-in defaults are lowest, then project settings, then user settings, then approvals made during the current session, then the Plan Mode overlay. When multiple rules match, stricter actions win, so `deny` beats `allow`, and `allow` beats `ask` only when no stricter matching rule applies. Some requests set `forceAsk`; sensitive/generated file paths and high-risk commands still prompt even if a broad session allow rule exists.
+
+The approval dialog can also create temporary session rules:
+
+- **Allow once** approves only the current request.
+- **Allow this kind for session** allows ordinary requests of the same permission kind until restart.
+- **Allow directory for session** allows the requested external directory until restart.
+- **Auto approve this session** allows ordinary requests until restart. High-risk `forceAsk` requests can still ask.
+
+### Plan Mode
+
+Use `/plan` to enter Plan Mode and `/plan exit` or `/build` to leave it. This is a runtime mode, not a persisted setting.
+
+While active, Alyce adds a high-priority Plan Mode permission overlay:
+
+- workspace reads are allowed for exploration.
+- external directory reads/searches still require approval.
+- file writes, edits, patches, arbitrary MCP tools, skill loading, and subagent spawning are denied.
+- web fetch/search and MCP resource listing/reading are allowed.
+- shell and PowerShell commands are approval-gated and must be classified as read-only inspection commands.
+
+Plan Mode also removes mutating tool schemas from the model-facing tool list where possible. A second enforcement layer still runs at tool execution time, so blocked tools return a Plan Mode violation instead of silently executing.
+
+### Doctor Checks
+
+`/doctor` runs local diagnostics and prints a report into the conversation. It checks:
+
+- Node version (`>=20.10.0`).
+- interactive stdin/stdout TTY.
+- workspace readability.
+- project files (`package.json`, `src/index.ts`, and `dist/index.js`).
+- API key, base URL, and model configuration.
+- runtime settings and approval risk.
+- MCP config parseability.
+- project and user skill discovery.
+- `rg` and `git` availability.
+- `.alyce` storage writability.
+- active request patch overrides.
+
+Use `/doctor` when startup succeeds but tool behavior, config, or local environment state feels wrong.
 
 ### Prompt & Persona
 

@@ -3,6 +3,7 @@ import path from "node:path";
 import { z } from "zod";
 import { throwIfAborted } from "../../core/abort.js";
 import { resolveReadablePathWithExternalApproval } from "../internal/externalDirectoryAccess.js";
+import { requestSensitiveFileReadApproval } from "../internal/filePermissions.js";
 import {
   runRipgrep,
   sortWorkspaceRelativePathsByModifiedTime,
@@ -110,6 +111,11 @@ async function resolveDirectoryTarget(
   if (!stats.isDirectory()) {
     throw new Error(`Glob requires a directory path: ${requestedPath}`);
   }
+
+  await requestSensitiveFileReadApproval(context, absolutePath, {
+    toolName: GLOB_TOOL_NAME,
+    actionLabel: "search directory names"
+  });
 
   return {
     absolutePath,

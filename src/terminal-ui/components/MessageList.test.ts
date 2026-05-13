@@ -1,6 +1,12 @@
 import assert from "node:assert/strict";
 import { __MESSAGE_LIST_TESTING__ } from "./MessageList.js";
-import type { TerminalUiMessage, TerminalUiMessageBlock } from "../state/types.js";
+import type {
+  TerminalUiMessage,
+  TerminalUiMessageBlock,
+  TerminalUiMessageBlockStyle,
+  TerminalUiMessageBlockTone
+} from "../state/types.js";
+import { terminalUiTheme } from "../theme/theme.js";
 import { createRenderPolicy } from "../utils/renderPolicy.js";
 
 type TestMessageEntry = {
@@ -14,6 +20,17 @@ type TestMessageEntry = {
 };
 
 const testing = __MESSAGE_LIST_TESTING__ as unknown as {
+  getMessagePalette: (kind: TerminalUiMessage["kind"], isSelected: boolean) => unknown;
+  getRenderedLineColors: (
+    line: { content: string; diffKind?: string },
+    section: {
+      lines: Array<{ content: string; diffKind?: string }>;
+      tone: TerminalUiMessageBlockTone;
+      style: TerminalUiMessageBlockStyle;
+    },
+    messageKind: TerminalUiMessage["kind"],
+    palette: unknown
+  ) => { color: string; backgroundColor?: string };
   renderBlockLines: (block: TerminalUiMessageBlock, width: number) => Array<{ content: string; diffKind?: string }>;
   buildCollapsedMessageBlocks: (
     blocks: TerminalUiMessageBlock[],
@@ -78,6 +95,8 @@ function runTests() {
   testCombineShellOutputVariants();
   testReadToolCollapsedPreviewUsesThreeLines();
   testShellToolCollapsedPreviewUsesThreeLines();
+  testToolCodeLinesUseToolHeaderColor();
+  testSystemLinesUseSystemColor();
   testWriteToolMessagesDefaultToCollapsedAndCanExpand(renderPolicy);
   testMarkdownFriendlyToolUsesMarkdownWhenExpanded(renderPolicy);
   testMarkdownFriendlyToolStillUsesMarkdownWhenMessageContentOverBudget();
@@ -246,6 +265,48 @@ function testShellToolCollapsedPreviewUsesThreeLines() {
 
   assert.equal(collapsed.truncated, true);
   assert.equal(renderedLineCount <= 3, true);
+}
+
+function testToolCodeLinesUseToolHeaderColor() {
+  const section = {
+    lines: [{ content: "$ npm run build" }],
+    tone: "default" as const,
+    style: "code" as const
+  };
+  const toolPalette = testing.getMessagePalette("tool", false);
+  const assistantPalette = testing.getMessagePalette("assistant", false);
+
+  assert.equal(
+    testing.getRenderedLineColors(section.lines[0]!, section, "tool", toolPalette).color,
+    terminalUiTheme.colors.tool
+  );
+  assert.equal(
+    testing.getRenderedLineColors(section.lines[0]!, section, "assistant", assistantPalette).color,
+    terminalUiTheme.colors.code
+  );
+}
+
+function testSystemLinesUseSystemColor() {
+  const plainSection = {
+    lines: [{ content: "Alyce terminal UI started." }],
+    tone: "default" as const,
+    style: "plain" as const
+  };
+  const codeSection = {
+    lines: [{ content: "Workspace: D:\\Code\\AlyceAgent" }],
+    tone: "default" as const,
+    style: "code" as const
+  };
+  const systemPalette = testing.getMessagePalette("system", false);
+
+  assert.equal(
+    testing.getRenderedLineColors(plainSection.lines[0]!, plainSection, "system", systemPalette).color,
+    terminalUiTheme.colors.system
+  );
+  assert.equal(
+    testing.getRenderedLineColors(codeSection.lines[0]!, codeSection, "system", systemPalette).color,
+    terminalUiTheme.colors.system
+  );
 }
 
 function testWriteToolMessagesDefaultToCollapsedAndCanExpand(

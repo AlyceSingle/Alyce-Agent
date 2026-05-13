@@ -1,6 +1,11 @@
 import assert from "node:assert/strict";
 import type { SessionSettingsState } from "../../config/runtime.js";
-import { createInitialTerminalUiState, prependMessages } from "./actions.js";
+import {
+  createInitialTerminalUiState,
+  prependMessages,
+  setPlanModeEnabled,
+  setSessionFullApprovalEnabled
+} from "./actions.js";
 import type { TerminalUiMessage } from "./types.js";
 
 function createMessage(id: string): TerminalUiMessage {
@@ -38,7 +43,8 @@ function createSettingsState(): SessionSettingsState {
       autoCompactTimeoutMs: 180_000,
       autoCompactMaxFailures: 3,
       modelContextWindowOverrides: {},
-      additionalDirectories: []
+      additionalDirectories: [],
+      permissionRules: []
     },
     project: {},
     user: {},
@@ -68,7 +74,8 @@ function createSettingsState(): SessionSettingsState {
       personaPreset: "default",
       aiPersonalityPrompt: "default",
       appendSystemPrompt: "default",
-      additionalDirectories: "default"
+      additionalDirectories: "default",
+      permissionRules: "default"
     },
     saveTargetPath: "C:\\tmp\\settings.json",
     projectPath: "C:\\tmp\\project-settings.json"
@@ -76,13 +83,17 @@ function createSettingsState(): SessionSettingsState {
 }
 
 function runTests() {
+  testInitialStateDisablesPlanMode();
+  testSetPlanModeEnabled();
+  testInitialStateDisablesFullApproval();
+  testSetSessionFullApprovalEnabled();
   testPrependMessagesAddsUniqueMessagesAtTop();
   testPrependMessagesPreservesSelectedMessage();
   console.log("actions tests passed");
 }
 
-function testPrependMessagesAddsUniqueMessagesAtTop() {
-  const initial = createInitialTerminalUiState({
+function createInitialState() {
+  return createInitialTerminalUiState({
     connectionState: {
       effective: { apiKey: "key", baseURL: "https://example.com", model: "gpt-4.1-mini" },
       user: {},
@@ -103,6 +114,38 @@ function testPrependMessagesAddsUniqueMessagesAtTop() {
     workspaceRoot: "C:\\workspace",
     requestPatchCount: 0
   });
+}
+
+function testInitialStateDisablesPlanMode() {
+  const initial = createInitialState();
+
+  assert.equal(initial.planModeEnabled, false);
+}
+
+function testSetPlanModeEnabled() {
+  const initial = createInitialState();
+  const next = setPlanModeEnabled(initial, true);
+
+  assert.equal(next.planModeEnabled, true);
+  assert.equal(setPlanModeEnabled(next, true), next);
+}
+
+function testInitialStateDisablesFullApproval() {
+  const initial = createInitialState();
+
+  assert.equal(initial.sessionFullApprovalEnabled, false);
+}
+
+function testSetSessionFullApprovalEnabled() {
+  const initial = createInitialState();
+  const next = setSessionFullApprovalEnabled(initial, true);
+
+  assert.equal(next.sessionFullApprovalEnabled, true);
+  assert.equal(setSessionFullApprovalEnabled(next, true), next);
+}
+
+function testPrependMessagesAddsUniqueMessagesAtTop() {
+  const initial = createInitialState();
   const withMessages = {
     ...initial,
     messages: [createMessage("b"), createMessage("c")]
@@ -113,27 +156,7 @@ function testPrependMessagesAddsUniqueMessagesAtTop() {
 }
 
 function testPrependMessagesPreservesSelectedMessage() {
-  const initial = createInitialTerminalUiState({
-    connectionState: {
-      effective: { apiKey: "key", baseURL: "https://example.com", model: "gpt-4.1-mini" },
-      user: {},
-      project: {},
-      env: {},
-      cli: {},
-      sources: {
-        apiKey: "default",
-        baseURL: "default",
-        model: "default"
-      },
-      saveTarget: "user",
-      saveTargetPath: "C:\\tmp\\config.json",
-      userPath: "C:\\tmp\\user-config.json",
-      projectPath: "C:\\tmp\\project-config.json"
-    },
-    settingsState: createSettingsState(),
-    workspaceRoot: "C:\\workspace",
-    requestPatchCount: 0
-  });
+  const initial = createInitialState();
   const withMessages = {
     ...initial,
     messages: [createMessage("b"), createMessage("c")],

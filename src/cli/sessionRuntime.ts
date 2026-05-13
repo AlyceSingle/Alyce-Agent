@@ -31,6 +31,11 @@ import {
   type ContextBudgetSnapshot
 } from "../core/context/contextBudget.js";
 import { normalizeModelContextWindowOverrides } from "../core/context/modelContextWindows.js";
+import {
+  isToolAllowedInPlanMode,
+  PLAN_MODE_SYSTEM_INSTRUCTIONS,
+  type PlanModeState
+} from "../core/planMode/planMode.js";
 import { MemoryService } from "../core/memory/memoryService.js";
 import {
   SessionMemoryExtractor,
@@ -190,6 +195,8 @@ export interface SessionRuntime {
   getConnectionConfigState: () => ConnectionConfigState;
   getSettings: () => SessionSettings;
   getSettingsState: () => SessionSettingsState;
+  getPlanModeState: () => PlanModeState;
+  setPlanModeEnabled: (enabled: boolean) => Promise<PlanModeState>;
   requireClient: () => OpenAI;
   getCurrentModel: () => string;
   setCurrentModel: (model: string) => Promise<void>;
@@ -347,6 +354,7 @@ export async function createSessionRuntime(
   let settingsState = cloneSessionSettingsState(config.settingsState);
   let connection = connectionState.effective;
   let settings = settingsState.effective;
+  let planModeState: PlanModeState = { enabled: false };
   let sessionAdditionalDirectories: string[] = [];
   let connectionSaveTarget = connectionState.saveTarget;
   let client: OpenAI | null = createClientFromConnection(connection);
@@ -404,13 +412,22 @@ export async function createSessionRuntime(
   const getAllowedRootsSnapshot = () =>
     resolveAllowedRoots(config.paths.workspaceRoot, settings, sessionAdditionalDirectories);
 
-  const getMainAgentToolSchemas = async (options: { abortSignal?: AbortSignal } = {}) => [
-    ...TOOL_SCHEMAS,
-    ...await mcpRuntime.getToolSchemas({
-      abortSignal: options.abortSignal,
-      initialize: false
-    })
-  ];
+  const getMainAgentToolSchemas = async (options: { abortSignal?: AbortSignal } = {}) => {
+    const staticSchemas = planModeState.enabled
+      ? TOOL_SCHEMAS.filter((tool) => isToolAllowedInPlanMode(tool.function.name))
+      : TOOL_SCHEMAS;
+    const mcpSchemas = planModeState.enabled
+      ? []
+      : await mcpRuntime.getToolSchemas({
+          abortSignal: options.abortSignal,
+          initialize: false
+        });
+
+    return [
+      ...staticSchemas,
+      ...mcpSchemas
+    ];
+  };
 
   const getToolNamesFromSchemas = (
     tools: OpenAI.Chat.Completions.ChatCompletionTool[]
@@ -443,7 +460,13 @@ export async function createSessionRuntime(
   const buildSystemPrompt = async (options: { availableTools?: string[] } = {}) =>
     buildEffectiveSystemPrompt(
       await getPromptRuntimeContext(options),
-      settings,
+      {
+        ...settings,
+        appendSystemPrompt: [
+          planModeState.enabled ? PLAN_MODE_SYSTEM_INSTRUCTIONS : "",
+          settings.appendSystemPrompt?.trim() ? settings.appendSystemPrompt.trim() : ""
+        ].filter(Boolean).join("\n\n")
+      },
       promptResolver
     );
 
@@ -621,6 +644,20 @@ export async function createSessionRuntime(
     getConnectionConfigState: () => cloneConnectionConfigState(connectionState),
     getSettings: () => ({ ...settings }),
     getSettingsState: () => cloneSessionSettingsState(settingsState),
+    getPlanModeState: () => ({ ...planModeState }),
+    setPlanModeEnabled: async (enabled) => {
+      if (planModeState.enabled === enabled) {
+        return { ...planModeState };
+      }
+
+      planModeState = {
+        enabled,
+        ...(enabled ? { enteredAt: new Date().toISOString() } : {})
+      };
+      promptResolver.clearSessionCache();
+      await resetSystemMessage();
+      return { ...planModeState };
+    },
     getAllowedRoots: () => getAllowedRootsSnapshot(),
     getSessionAdditionalDirectories: () => [...sessionAdditionalDirectories],
     setSessionAdditionalDirectories: async (directories) => {
@@ -912,6 +949,7 @@ export async function createSessionRuntime(
         );
       },
       commandTimeoutMs: settings.commandTimeoutMs,
+      planMode: planModeState.enabled,
       turnId,
       abortSignal,
       requestApproval: (request) => requestApproval(request, { signal: abortSignal }),
@@ -2399,6 +2437,10 @@ function normalizeSettingsPatch(
       patch.additionalDirectories,
       workspaceRoot
     );
+  }
+
+  if ("permissionRules" in patch) {
+    normalized.permissionRules = patch.permissionRules ?? [];
   }
 
   return normalized;

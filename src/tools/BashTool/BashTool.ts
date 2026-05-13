@@ -8,6 +8,10 @@ import {
   toOutputBuffer,
   wrapPowerShellCommand
 } from "../internal/commandOutput.js";
+import {
+  analyzeCommandSafety,
+  formatCommandSafetyDetails
+} from "../internal/commandSafety.js";
 import { shouldSpawnDetachedProcessGroup, terminateProcessTree } from "../internal/processTree.js";
 import { truncate } from "../internal/values.js";
 import type { ToolExecutionContext } from "../types.js";
@@ -70,6 +74,25 @@ export async function executeBashTool(
     input.cwd
   );
   const timeoutMs = normalizeTimeout(input.timeout_ms, context.commandTimeoutMs);
+  const safety = analyzeCommandSafety("shell", input.command);
+
+  if (context.planMode && safety.category !== "safe-read-only") {
+    throw new Error([
+      "Shell command blocked by Plan Mode.",
+      `Risk: ${safety.category} (${safety.level})`,
+      ...safety.reasons,
+      "Plan Mode only allows read-only shell inspection commands.",
+      `Command: ${safety.normalizedCommand}`
+    ].join("\n"));
+  }
+
+  if (safety.action === "deny") {
+    throw new Error([
+      "Shell command blocked by safety policy.",
+      ...safety.reasons,
+      `Command: ${safety.normalizedCommand}`
+    ].join("\n"));
+  }
 
   const approved = await context.requestApproval({
     kind: "command",
@@ -78,8 +101,14 @@ export async function executeBashTool(
     summary: summarizeCommand(input.command),
     details: [
       `Working directory: ${toWorkspaceRelative(context.workspaceRoot, workingDirectory)}`,
-      `Timeout: ${timeoutMs} ms`
-    ]
+      `Timeout: ${timeoutMs} ms`,
+      ...formatCommandSafetyDetails(safety)
+    ],
+    permission: {
+      permission: "shell",
+      pattern: safety.permissionPattern
+    },
+    forceAsk: context.planMode || safety.forceAsk
   });
 
   if (!approved) {

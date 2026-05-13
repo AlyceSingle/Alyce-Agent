@@ -8,7 +8,7 @@ I am Alyce. This guide will help you set up the environment and get Alyce runnin
 
 ## Prerequisites
 
-- **Node.js 18** or newer.
+- **Node.js 20.10.0** or newer.
 - A real **interactive TTY terminal** (supports cursor movement and standard keybindings).
 - An **OpenAI-compatible API endpoint**.
 
@@ -83,13 +83,27 @@ Once Alyce is running, we recommend the following steps:
 
 ```
 /help       — shows the full command list
+/doctor     — runs local health checks
 /settings   — opens settings directly
 /setup      — first-run configuration wizard
+/plan       — enters read-only planning mode
+/build      — exits Plan Mode; does not run npm run build
 /context    — previews what the model will actually see next turn
 /memory     — shows current persistent memory
 ```
 
 We suggest trying `/context` early to understand how the model receives information, including memory and summaries.
+
+## Troubleshooting Flow
+
+If Alyce starts but something feels wrong, use this order:
+
+1. Run `npm run build` to make sure `dist/` is current.
+2. Start with `npm start` or `npm run dev` from a real interactive terminal.
+3. Run `/doctor` inside Alyce.
+4. Fix any failed checks first, then review warnings about approval mode, persistent extra directories, MCP config, skills, missing `rg`, missing `git`, or request patches.
+
+If you want Alyce to inspect before editing, enter `/plan`. While Plan Mode is active, write tools and mutating commands are blocked. Use `/plan exit` or `/build` when you are ready to allow implementation work.
 
 ## Validation
 
@@ -97,9 +111,17 @@ Before submitting any code changes, please run:
 
 ```bash
 npm run build
+npm test
 ```
 
-This performs a full TypeScript compilation. While a comprehensive test suite is not yet available, a clean build is the baseline requirement for stability.
+`npm run build` performs a full TypeScript compilation. `npm test` discovers and runs every `src/**/*.test.ts` and `src/**/*.test.tsx` file with `tsx`.
+
+To run a focused subset, pass a path or name fragment:
+
+```bash
+npm test -- commandRouter
+npm test -- tools/internal
+```
 
 ---
 

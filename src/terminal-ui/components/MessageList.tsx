@@ -220,8 +220,8 @@ function getMessagePalette(
     case "system":
     default:
       return makePalette(
-        terminalUiTheme.colors.code,
-        terminalUiTheme.colors.code,
+        terminalUiTheme.colors.system,
+        terminalUiTheme.colors.system,
         terminalUiTheme.colors.muted
       );
   }
@@ -233,7 +233,7 @@ function getToneColor(
   palette: MessagePalette
 ) {
   if (kind === "system" && tone !== "danger") {
-    return terminalUiTheme.colors.code;
+    return palette.bodyColor;
   }
 
   switch (tone) {
@@ -354,7 +354,9 @@ function getRenderedLineColors(
       return {
         color:
           section.style === "code"
-            ? terminalUiTheme.colors.code
+            ? messageKind === "tool" || messageKind === "system"
+              ? palette.headerColor
+              : terminalUiTheme.colors.code
             : getToneColor(section.tone, messageKind, palette)
       };
   }
@@ -886,6 +888,8 @@ function sliceMessagesForNonVirtualizedList(options: {
 }
 
 export const __MESSAGE_LIST_TESTING__ = {
+  getMessagePalette,
+  getRenderedLineColors,
   renderBlockLines,
   buildCollapsedMessageBlocks,
   buildCollapsedToolBlocks,

@@ -16,6 +16,10 @@ import { withFileWriteLock } from "../internal/fileWriteLocks.js";
 import { toWorkspaceRelative } from "../internal/pathSandbox.js";
 import { resolveWritablePathWithExternalApproval } from "../internal/externalDirectoryAccess.js";
 import {
+  getAggregateFilePermissionDetails,
+  getPatchPermissionPattern
+} from "../internal/filePermissions.js";
+import {
   runPostWriteChecks,
   type PostWriteChecksResult,
   type PostWriteDiagnosticsResult,
@@ -145,12 +149,22 @@ async function executeFileApplyPatchLocked(
   allowedRoots: readonly string[]
 ): Promise<FileApplyPatchResult> {
   const prepared = await preparePatchChanges(specs, context);
+  const touchedPaths = getPreparedTouchedPaths(prepared);
+  const permissionDetails = getAggregateFilePermissionDetails(context.workspaceRoot, touchedPaths);
   const approved = await context.requestApproval({
     kind: "file-write",
     toolName: FILE_APPLY_PATCH_TOOL_NAME,
     title: "Apply patch",
     summary: formatApprovalSummary(prepared),
-    details: buildApprovalDetails(prepared)
+    details: [
+      ...buildApprovalDetails(prepared),
+      ...permissionDetails.details
+    ],
+    permission: {
+      permission: "file.patch",
+      pattern: getPatchPermissionPattern(context.workspaceRoot, touchedPaths)
+    },
+    forceAsk: permissionDetails.forceAsk
   });
   if (!approved) {
     throw new Error("User rejected apply_patch tool request");
@@ -860,6 +874,17 @@ function buildApprovalDetails(prepared: readonly PreparedPatchChange[]) {
   }
 
   return details;
+}
+
+function getPreparedTouchedPaths(prepared: readonly PreparedPatchChange[]) {
+  return [
+    ...new Set(
+      prepared
+        .flatMap((change) => [change.sourcePath, change.targetPath])
+        .filter(isString)
+        .map((targetPath) => path.resolve(targetPath))
+    )
+  ];
 }
 
 function summarizeResultPath(files: readonly FileApplyPatchFileResult[]) {

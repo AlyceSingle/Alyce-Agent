@@ -214,7 +214,7 @@ export function snipOversizedToolOutputs(
     snippedMessages,
     originalChars,
     retainedChars,
-    estimatedTokensSaved: Math.max(0, estimateTextTokens("x".repeat(originalChars - retainedChars)))
+    estimatedTokensSaved: estimateTextTokens("x".repeat(Math.max(0, originalChars - retainedChars)))
   };
 }
 

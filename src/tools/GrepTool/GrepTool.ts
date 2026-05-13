@@ -5,6 +5,10 @@ import { throwIfAborted } from "../../core/abort.js";
 import { truncate } from "../internal/values.js";
 import { resolveReadablePathWithExternalApproval } from "../internal/externalDirectoryAccess.js";
 import {
+  requestSensitiveFileReadApproval,
+  SENSITIVE_RIPGREP_EXCLUDE_GLOBS
+} from "../internal/filePermissions.js";
+import {
   runRipgrep,
   sortWorkspaceRelativePathsByModifiedTime,
   splitRipgrepLines
@@ -92,6 +96,11 @@ export async function executeGrepTool(
 
   for (const excludedDirectory of VCS_DIRECTORIES_TO_EXCLUDE) {
     args.push("--glob", `!${excludedDirectory}`);
+  }
+  if (!searchTarget.includeSensitivePaths) {
+    for (const sensitiveGlob of SENSITIVE_RIPGREP_EXCLUDE_GLOBS) {
+      args.push("--glob", sensitiveGlob);
+    }
   }
 
   if (input.multiline) {
@@ -257,7 +266,8 @@ async function resolveSearchTarget(
     return {
       absolutePath: context.workspaceRoot,
       allowedRoots: context.allowedRoots,
-      ripgrepPath: "."
+      ripgrepPath: ".",
+      includeSensitivePaths: false
     };
   }
 
@@ -269,13 +279,18 @@ async function resolveSearchTarget(
   });
   const absolutePath = resolved.absolutePath;
   await fs.stat(absolutePath);
+  const permissionMetadata = await requestSensitiveFileReadApproval(context, absolutePath, {
+    toolName: GREP_TOOL_NAME,
+    actionLabel: "search file contents"
+  });
 
   const relativePath = path.relative(context.workspaceRoot, absolutePath);
   const isInsideWorkspace = !relativePath.startsWith("..") && !path.isAbsolute(relativePath);
   return {
     absolutePath,
     allowedRoots: resolved.allowedRoots,
-    ripgrepPath: isInsideWorkspace ? (relativePath.length > 0 ? relativePath : ".") : absolutePath
+    ripgrepPath: isInsideWorkspace ? (relativePath.length > 0 ? relativePath : ".") : absolutePath,
+    includeSensitivePaths: permissionMetadata.sensitiveReasons.length > 0
   };
 }
 

@@ -8,7 +8,7 @@
 
 ## 运行环境要求
 
-- **Node.js 18** 或更新版本。
+- **Node.js 20.10.0** 或更新版本。
 - 一个真正的**交互式 TTY 终端**（支持光标移动和标准快捷键）。
 - 一个**兼容 OpenAI 协议的 API 端点**。
 - 三者缺一不可，否则程序在启动时会提示相关错误。
@@ -82,13 +82,27 @@ npm start
 
 ```
 /help       — 列出所有可用命令
+/doctor     — 运行本地健康检查
 /settings   — 直接打开设置面板
 /setup      — 首次配置引导
+/plan       — 进入只读计划模式
+/build      — 退出 Plan Mode，不会执行 npm run build
 /context    — 预览模型下一轮实际接收到的内容
 /memory     — 查看当前持久记忆内容
 ```
 
 建议尝试使用 `/context` 命令，它可以让您预览模型实际接收到的上下文内容。
+
+## 排错流程
+
+如果 Alyce 能启动，但工具、配置或本地环境表现不对，建议按这个顺序处理：
+
+1. 先跑 `npm run build`，确认 `dist/` 是最新编译结果。
+2. 在真实交互式终端里用 `npm start` 或 `npm run dev` 启动。
+3. 进入 Alyce 后运行 `/doctor`。
+4. 先修复 fail 项，再看 approval mode、持久外部目录、MCP、技能、`rg`、`git`、`.alyce` 存储和 request patch 相关 warning。
+
+如果你希望 Alyce 先分析再动手，输入 `/plan`。Plan Mode 中写文件和修改型命令会被阻止。准备进入实现阶段时，用 `/plan exit` 或 `/build` 退出。
 
 ## 基础验证
 
@@ -96,9 +110,17 @@ npm start
 
 ```bash
 npm run build
+npm test
 ```
 
-这会执行全量 TypeScript 编译。目前项目尚未建立完整的自动化测试框架，通过全量编译是确保代码基本可靠的底线。
+`npm run build` 会执行全量 TypeScript 编译。`npm test` 会自动发现并运行 `src/**/*.test.ts` 和 `src/**/*.test.tsx`。
+
+如需只跑部分测试，可以传入路径或名称片段：
+
+```bash
+npm test -- commandRouter
+npm test -- tools/internal
+```
 
 ---
 

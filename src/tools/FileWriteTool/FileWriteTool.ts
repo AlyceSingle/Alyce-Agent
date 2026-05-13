@@ -5,6 +5,7 @@ import { throwIfAborted } from "../../core/abort.js";
 import { withFileWriteLock } from "../internal/fileWriteLocks.js";
 import { toWorkspaceRelative } from "../internal/pathSandbox.js";
 import { resolveWritablePathWithExternalApproval } from "../internal/externalDirectoryAccess.js";
+import { requestFilePermission } from "../internal/filePermissions.js";
 import {
   runPostWriteChecks,
   type PostWriteChecksResult,
@@ -91,16 +92,13 @@ async function executeFileWriteLocked(
   const expectedWriteBytes = encodeTextFileContent(input.content, writeOptions);
   const byteSize = expectedWriteBytes.length;
 
-  const approved = await context.requestApproval({
-    kind: "file-write",
+  await requestFilePermission(context, fullFilePath, {
     toolName: FILE_WRITE_TOOL_NAME,
     title: `${mode === "create" ? "Create" : "Update"} file`,
-    summary: relativePath,
+    permission: "file.write",
+    actionLabel: `${mode === "create" ? "create" : "update"} file`,
     details: [`Mode: ${mode}`, `Size: ${byteSize} bytes`]
   });
-  if (!approved) {
-    throw new Error("User rejected Write tool request");
-  }
 
   throwIfAborted(context.abortSignal);
 

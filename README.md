@@ -28,6 +28,7 @@ Alyce is a local coding assistant framework with:
 - prompt composition with persona and runtime sections
 - resumable project session history, session memory, persistent memory, auto-summary, and conversation compaction
 - approval-aware command, file, and web tooling
+- `/doctor` local diagnostics and read-only `/plan` mode
 - local `SkillTool` loading from project/user `SKILL.md` files
 - MCP server integration for stdio, streamable HTTP, and SSE tools/resources
 
@@ -82,6 +83,32 @@ Or build first, then run:
 npm run build
 npm start
 ```
+
+Run the local validation suite with:
+
+```bash
+npm test
+```
+
+You can run a subset by passing a path or name fragment, for example `npm test -- commandRouter`.
+
+### First Checks
+
+After Alyce starts, run:
+
+```text
+/doctor
+```
+
+Use the doctor report to fix missing config, TTY problems, stale build output, approval risk, MCP config issues, skill discovery issues, missing `rg`/`git`, or `.alyce` storage problems.
+
+For analysis before edits, enter:
+
+```text
+/plan
+```
+
+Plan Mode keeps exploration read-only. Use `/plan exit` or `/build` to leave it when you are ready for implementation work. In Alyce, `/build` is only a Plan Mode exit alias; it does not run `npm run build`.
 
 ## Documentation
 

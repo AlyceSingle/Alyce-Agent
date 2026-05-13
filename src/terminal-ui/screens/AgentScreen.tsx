@@ -93,9 +93,13 @@ export function AgentScreen(props: { controller: SessionController }) {
   const settingsState = useTerminalUiSelector((value) => value.settingsState);
   const workspaceRoot = useTerminalUiSelector((value) => value.workspaceRoot);
   const sessionApprovalMode = useTerminalUiSelector((value) => value.sessionApprovalMode);
+  const sessionFullApprovalEnabled = useTerminalUiSelector(
+    (value) => value.sessionFullApprovalEnabled
+  );
   const sessionAllowedKinds = useTerminalUiSelector((value) => value.sessionAllowedKinds);
   const requestPatchCount = useTerminalUiSelector((value) => value.requestPatchCount);
   const statusText = useTerminalUiSelector((value) => value.statusText);
+  const planModeEnabled = useTerminalUiSelector((value) => value.planModeEnabled);
   const contextBudget = useTerminalUiSelector((value) => value.contextBudget);
   const isLoading = useTerminalUiSelector((value) => value.isLoading);
   const draftInput = useTerminalUiSelector((value) => value.draftInput);
@@ -393,6 +397,7 @@ export function AgentScreen(props: { controller: SessionController }) {
 
   const displayedStatusText =
     copyStatusText ?? (historyEscPending ? "Press ESC again to open input history." : statusText);
+  const currentModeLabel = planModeEnabled ? "Plan" : "Build";
   const completedTodoCount = todos.filter((todo) => todo.status === "completed").length;
   const todoSummary = todos.length > 0 ? `${completedTodoCount}/${todos.length}` : undefined;
   const promptDisabledReason =
@@ -480,6 +485,7 @@ export function AgentScreen(props: { controller: SessionController }) {
         <StatusBar
           connection={connection}
           sessionApprovalMode={sessionApprovalMode}
+          sessionFullApprovalEnabled={sessionFullApprovalEnabled}
           sessionAllowedKinds={sessionAllowedKinds}
           requestPatchCount={requestPatchCount}
           todoSummary={todoSummary}
@@ -508,7 +514,7 @@ export function AgentScreen(props: { controller: SessionController }) {
           viewportWidth={terminalWidth}
           disabled={isLoading || hasDialog}
           disabledReason={promptDisabledReason}
-          sublineText={`${connection.model} | ${workspaceRoot}`}
+          sublineText={`${connection.model} | ${workspaceRoot} | ${currentModeLabel}`}
           onChange={(value) => props.controller.setDraftInput(value)}
           onCtrlCCaptureChange={setCtrlCCapture}
           onSubmit={async (value) => {

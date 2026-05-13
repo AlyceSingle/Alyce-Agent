@@ -30,6 +30,7 @@ Alyce 的配置采用分层加载机制，优先级从高到低排列如下（�
 - `OPENAI_MODEL`：使用的模型标识符。
 
 ### 搜索与抓取（可选）
+- `AGENT_ADDITIONAL_DIRECTORIES`：工作区外的额外允许目录，使用系统路径分隔符分隔；Windows 是 `;`，Linux/macOS 是 `:`。
 - `AGENT_SESSION_MEMORY_FILE`：自动管理的会话记忆文件名，默认 `SESSION_MEMORY.md`。
 - `AGENT_SESSION_MEMORY_ENABLED`：是否启用自动会话记忆提取，默认 `true`。
 - `AGENT_SESSION_MEMORY_INIT_TOKENS`：首次初始化会话记忆所需的估算上下文 token 数，默认 `10000`。
@@ -55,6 +56,8 @@ Alyce 的配置采用分层加载机制，优先级从高到低排列如下（�
 
 兼容说明：`AGENT_MEMORY_AUTO_SUMMARY` 仍会作为 `AGENT_SESSION_MEMORY_ENABLED` 的旧别名读取，但旧的按消息数摘要变量已经废弃。
 
+`permissionRules` 通过 `./.alyce/settings.json` 或 `~/.alyce/settings.json` 配置，不走环境变量。这样持久授权规则可以在 JSON 里明确审查，而不是藏在 shell 启动环境里。
+
 ## 文件位置速查
 
 | 内容 | 路径 |
@@ -69,6 +72,8 @@ Alyce 的配置采用分层加载机制，优先级从高到低排列如下（�
 | MCP 二进制资源输出 | `./.alyce/mcp-output/` |
 
 `./` 开头的是项目级配置，只影响当前仓库；`~/` 开头的是用户级配置，对本机所有项目生效。请不要把包含密钥或本地运行状态的 `.alyce/` 提交到仓库。
+
+也不要提交 `.env`、`~/.alyce/` 或生成的 `dist/`。`.alyce` 里可能有连接配置、权限规则、会话记录、记忆、MCP 输出和本地任务产物。
 
 ## 本地技能
 
@@ -164,6 +169,100 @@ description: 用于重复项目任务的流程。
 - **滚动加速**（`scrollAccelerationEnabled`）：开启后，短时间连续逐行滚动会逐级提速。
 - **非虚拟消息上限**（`maxMessagesWithoutVirtualization`）：禁用虚拟滚动时的安全上限，避免回退路径无限增长。
 - **历史分页**（`historyPagingEnabled`）：实验开关，恢复长会话时先挂载近期消息，滚到顶部再按块加载旧消息。
+
+### 权限规则
+
+`permissionRules` 是会话设置中的可选数组，可以写在项目级或用户级 settings 里：
+
+```json
+{
+  "approvalMode": "manual",
+  "permissionRules": [
+    {
+      "permission": "shell",
+      "pattern": "npm run build",
+      "action": "allow",
+      "scope": "persistent",
+      "reason": "Known local validation command."
+    },
+    {
+      "permission": "file.read",
+      "pattern": "sensitive:*",
+      "action": "ask",
+      "reason": "Review secret-like files before reading."
+    }
+  ]
+}
+```
+
+支持的 `permission`：
+
+```text
+*
+shell
+powershell
+file.read
+file.write
+file.edit
+file.patch
+directory.external
+web.fetch
+web.search
+mcp.tool
+mcp.resource
+skill.load
+task.spawn
+```
+
+支持的 `action` 是 `allow`、`ask`、`deny`。`pattern` 不写时默认是 `*`。常见 pattern：
+
+- `workspace:src/index.ts`：工作区内的相对文件路径。
+- `workspace:*`：工作区内任意路径。
+- `external:C:\Some\Path` 或外部绝对路径 pattern。
+- `sensitive:*`：`.env`、`.alyce`、私钥、凭据文件等敏感路径。
+- `npm run build` 这类精确 shell/PowerShell 命令文本。
+- `https://docs.example.com/*` 或 `*` 这类 URL/MCP pattern。
+
+规则优先级从低到高是：内置默认、项目设置、用户设置、本会话审批、Plan Mode 覆盖层。多个规则同时命中时，更严格的动作优先，`deny` 高于 `allow`，`allow` 高于 `ask`。某些请求会强制再次询问，例如敏感/生成目录文件和高风险命令，宽泛的会话允许规则不会跳过这些提示。
+
+审批弹窗也会创建临时会话规则：
+
+- **Allow once**：只允许当前请求。
+- **Allow this kind for session**：本次运行期间允许同类普通请求。
+- **Allow directory for session**：本次运行期间允许该外部目录。
+- **Auto approve this session**：本次运行期间普通请求自动批准；高风险强制审批请求仍可能弹窗。
+
+### Plan Mode
+
+`/plan` 进入 Plan Mode，`/plan exit` 或 `/build` 退出。它是运行时模式，不会持久化到配置文件。
+
+启用后，Alyce 会加一层高优先级权限覆盖：
+
+- 工作区读取允许，用于探索。
+- 外部目录读取/搜索仍需审批。
+- 文件写入、编辑、patch、任意 MCP 工具、技能加载、子代理启动会被拒绝。
+- Web 抓取/搜索和 MCP 资源列表/读取允许。
+- Shell/PowerShell 必须经过审批，并且命令要被判定为只读检查。
+
+Plan Mode 会尽量从模型可见工具列表里移除修改型工具，同时工具执行层也会再次拦截，所以不应执行的工具会返回 Plan Mode violation。
+
+### Doctor 检查
+
+`/doctor` 会在对话里输出本地诊断报告，检查内容包括：
+
+- Node 版本（需要 `>=20.10.0`）。
+- stdin/stdout 是否为交互式 TTY。
+- 工作区是否可读。
+- 项目文件：`package.json`、`src/index.ts`、`dist/index.js`。
+- API key、base URL、model 配置。
+- 运行时设置和审批风险。
+- MCP 配置是否能解析。
+- 项目/用户技能发现。
+- `rg` 和 `git` 是否可用。
+- `.alyce` 存储是否可写。
+- 是否存在 request patch 覆盖。
+
+当启动成功但工具、配置或本地环境表现不对时，优先跑 `/doctor`。
 
 ### 角色与语言
 - **语言偏好**：助手回复时使用的语言。

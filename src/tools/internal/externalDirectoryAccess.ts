@@ -99,6 +99,10 @@ async function resolvePathWithExternalApproval(
     scope: {
       type: "external-directory",
       directory: externalDirectory
+    },
+    permission: {
+      permission: "directory.external",
+      pattern: externalDirectory
     }
   });
 

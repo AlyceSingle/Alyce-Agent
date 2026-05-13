@@ -36,6 +36,7 @@ type ToolResultIssue = {
 
 type ToolResultError = {
   type?: string;
+  status?: string;
   message: string;
   issues?: ToolResultIssue[];
 };
@@ -48,6 +49,7 @@ type ParsedToolCallExecutionResult = {
   displayResult: string;
   structuredResult: unknown;
   ok: boolean;
+  status?: string;
   error?: ToolResultError;
 };
 
@@ -1148,7 +1150,11 @@ function formatToolError(error: ParsedToolCallExecutionResult["error"], fallback
     return fallback;
   }
 
-  const lines = [error.message];
+  const lines = [
+    ...(error.status ? [`Status: ${error.status}`] : []),
+    ...(error.type ? [`Type: ${error.type}`] : []),
+    error.message
+  ];
   if (error.issues?.length) {
     lines.push("");
     lines.push(
@@ -1461,8 +1467,9 @@ function parseToolCallExecutionResult(
       toolName,
       parsedArgs,
       displayResult,
-      structuredResult: envelope.error,
+      structuredResult: envelope.result ?? envelope.error,
       ok: false,
+      status: asString(envelope.status),
       error: toToolResultError(envelope.error)
     };
   }
@@ -1472,7 +1479,8 @@ function parseToolCallExecutionResult(
     parsedArgs,
     displayResult,
     structuredResult: envelope.result ?? envelope,
-    ok: true
+    ok: true,
+    status: asString(envelope.status)
   };
 }
 
@@ -1602,6 +1610,7 @@ function toToolResultError(value: unknown): ToolResultError | undefined {
 
   return {
     type: asString(record.type),
+    status: asString(record.status),
     message,
     issues: Array.isArray(record.issues)
       ? record.issues.flatMap((issue) => {

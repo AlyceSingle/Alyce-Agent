@@ -3,6 +3,7 @@ import { throwIfAborted } from "../../core/abort.js";
 import { withFileWriteLock } from "../internal/fileWriteLocks.js";
 import { toWorkspaceRelative } from "../internal/pathSandbox.js";
 import { resolveWritablePathWithExternalApproval } from "../internal/externalDirectoryAccess.js";
+import { requestFilePermission } from "../internal/filePermissions.js";
 import { runPostWriteChecks } from "../internal/postWriteChecks.js";
 import { ensureFreshFileRead, recordWrittenTextFile } from "../internal/readState.js";
 import {
@@ -79,20 +80,17 @@ async function executeFileMultiEditLocked(
     throw new Error("MultiEdit produced no changes");
   }
 
-  const approved = await context.requestApproval({
-    kind: "file-write",
+  await requestFilePermission(context, fullFilePath, {
     toolName: FILE_MULTI_EDIT_TOOL_NAME,
     title: "Edit file multiple times",
-    summary: relativePath,
+    permission: "file.edit",
+    actionLabel: "edit file multiple times",
     details: [
       `Edits: ${input.edits.length}`,
       `Total matches: ${totalMatches}`,
       `Strategies: ${[...new Set(appliedEdits.map((edit) => edit.matchStrategy))].join(", ")}`
     ]
   });
-  if (!approved) {
-    throw new Error("User rejected MultiEdit tool request");
-  }
 
   throwIfAborted(context.abortSignal);
 

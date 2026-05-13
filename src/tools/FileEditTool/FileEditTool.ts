@@ -3,6 +3,7 @@ import { throwIfAborted } from "../../core/abort.js";
 import { withFileWriteLock } from "../internal/fileWriteLocks.js";
 import { toWorkspaceRelative } from "../internal/pathSandbox.js";
 import { resolveWritablePathWithExternalApproval } from "../internal/externalDirectoryAccess.js";
+import { requestFilePermission } from "../internal/filePermissions.js";
 import { runPostWriteChecks } from "../internal/postWriteChecks.js";
 import { ensureFreshFileRead, recordWrittenTextFile } from "../internal/readState.js";
 import {
@@ -65,20 +66,17 @@ async function executeFileEditLocked(
   }
 
   // 编辑落盘前走审批，确保高风险变更可中断。
-  const approved = await context.requestApproval({
-    kind: "file-write",
+  await requestFilePermission(context, fullFilePath, {
     toolName: FILE_EDIT_TOOL_NAME,
     title: "Edit file",
-    summary: relativePath,
+    permission: "file.edit",
+    actionLabel: "edit file",
     details: [
       `Matches: ${match.matchCount}`,
       `Replace all: ${input.replace_all ? "yes" : "no"}`,
       `Match strategy: ${match.strategy}`
     ]
   });
-  if (!approved) {
-    throw new Error("User rejected Edit tool request");
-  }
 
   throwIfAborted(context.abortSignal);
 

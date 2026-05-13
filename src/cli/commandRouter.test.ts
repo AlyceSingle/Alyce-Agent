@@ -32,6 +32,10 @@ function testCommandMetadataCompletionsAreUnique() {
 
 function testParserHandlesRepresentedCommands() {
   assert.deepEqual(parseReplCommand("/help"), { type: "help" });
+  assert.deepEqual(parseReplCommand("/doctor"), { type: "doctor" });
+  assert.deepEqual(parseReplCommand("/plan"), { type: "plan-enter" });
+  assert.deepEqual(parseReplCommand("/plan exit"), { type: "plan-exit" });
+  assert.deepEqual(parseReplCommand("/build"), { type: "plan-exit" });
   assert.deepEqual(parseReplCommand("/settings"), { type: "open-settings", section: "session" });
   assert.deepEqual(parseReplCommand("/setup"), { type: "open-settings", section: "connection" });
   assert.deepEqual(parseReplCommand("/memory clear --all"), {

@@ -14,6 +14,7 @@ import {
   normalizeModelContextWindowOverrides,
   type ModelContextWindowOverrides
 } from "../core/context/modelContextWindows.js";
+import type { PermissionRuleInput } from "../core/permissions/permissionRules.js";
 
 export interface PromptOverrideConfig {
   languagePreference?: string;
@@ -73,6 +74,7 @@ export interface SessionSettings extends PromptOverrideConfig {
   autoCompactMaxFailures: number;
   modelContextWindowOverrides: ModelContextWindowOverrides;
   additionalDirectories: string[];
+  permissionRules: PermissionRuleInput[];
 }
 
 export type ConnectionConfigSource = "default" | "user" | "project" | "env" | "cli";
@@ -163,6 +165,36 @@ const SessionSettingsFileSchema: z.ZodType<SessionSettingsFile> = z
     aiPersonalityPrompt: z.string().optional(),
     appendSystemPrompt: z.string().optional(),
     additionalDirectories: z.array(z.string()).optional(),
+    permissionRules: z
+      .array(
+        z
+          .object({
+            permission: z.union([
+              z.literal("*"),
+              z.literal("shell"),
+              z.literal("powershell"),
+              z.literal("file.read"),
+              z.literal("file.write"),
+              z.literal("file.edit"),
+              z.literal("file.patch"),
+              z.literal("directory.external"),
+              z.literal("web.fetch"),
+              z.literal("web.search"),
+              z.literal("mcp.tool"),
+              z.literal("mcp.resource"),
+              z.literal("skill.load"),
+              z.literal("task.spawn")
+            ]),
+            pattern: z.string().optional(),
+            action: z.union([z.literal("allow"), z.literal("ask"), z.literal("deny")]),
+            scope: z.union([z.literal("session"), z.literal("persistent")]).optional(),
+            expiresAt: z.string().optional(),
+            reason: z.string().optional(),
+            id: z.string().optional()
+          })
+          .strict()
+      )
+      .optional(),
     // Accept and discard the removed key so older settings files keep loading cleanly.
     startupInstructionFiles: z.array(z.string()).optional()
   })
@@ -597,7 +629,8 @@ function normalizeSessionSettings(
     personaPreset: resolvePersonaPreset(normalizeOptionalText(input.personaPreset)),
     aiPersonalityPrompt: normalizeOptionalText(input.aiPersonalityPrompt),
     appendSystemPrompt: normalizeOptionalText(input.appendSystemPrompt),
-    additionalDirectories: normalizeAdditionalDirectories(input.additionalDirectories, workspaceRoot)
+    additionalDirectories: normalizeAdditionalDirectories(input.additionalDirectories, workspaceRoot),
+    permissionRules: normalizePermissionRules(input.permissionRules)
   };
 }
 
@@ -675,6 +708,10 @@ function serializeSessionSettings(
     additionalDirectories:
       "additionalDirectories" in settings
         ? normalizeAdditionalDirectories(settings.additionalDirectories, workspaceRoot)
+        : undefined,
+    permissionRules:
+      "permissionRules" in settings
+        ? normalizePermissionRules(settings.permissionRules)
         : undefined
   };
 
@@ -880,6 +917,22 @@ export function normalizeAdditionalDirectories(
   }
 
   return [...deduped];
+}
+
+function normalizePermissionRules(value: PermissionRuleInput[] | undefined): PermissionRuleInput[] {
+  if (!value || value.length === 0) {
+    return [];
+  }
+
+  return value.map((rule) => ({
+    permission: rule.permission,
+    action: rule.action,
+    ...(rule.pattern?.trim() ? { pattern: rule.pattern.trim() } : {}),
+    ...(rule.scope ? { scope: rule.scope } : {}),
+    ...(rule.expiresAt?.trim() ? { expiresAt: rule.expiresAt.trim() } : {}),
+    ...(rule.reason?.trim() ? { reason: rule.reason.trim() } : {}),
+    ...(rule.id?.trim() ? { id: rule.id.trim() } : {})
+  }));
 }
 
 export function resolveDirectoryInput(directory: string, workspaceRoot: string): string {

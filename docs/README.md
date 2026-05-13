@@ -16,6 +16,8 @@ I am Alyce. I have organized the project documentation into specialized sections
   Slash commands, global shortcuts, and settings controls
 - [Configuration](configuration.md)
   Runtime files, environment variables, and session settings
+- [Security](../SECURITY.md)
+  Local trust model, approval boundaries, shell/file/MCP/web risks, and reporting guidance
 - [Memory and Context](memory-and-context.md)
   Memory layers, summary, and compaction
 - [Persona Presets](persona-presets.md)
@@ -25,8 +27,6 @@ I am Alyce. I have organized the project documentation into specialized sections
 
 - [Contributing](../CONTRIBUTING.md)
   Contribution expectations, validation, and pull request notes
-- [Security](../SECURITY.md)
-  Reporting guidance for security-sensitive issues
 
 ## Suggested Order
 
@@ -36,7 +36,8 @@ If you are new to the repository:
 2. [Project Structure](project-structure.md)
 3. [Commands and Keys](commands-and-keys.md)
 4. [Configuration](configuration.md)
-5. [Memory and Context](memory-and-context.md)
-6. [Persona Presets](persona-presets.md)
+5. [Security](../SECURITY.md)
+6. [Memory and Context](memory-and-context.md)
+7. [Persona Presets](persona-presets.md)
 
 Following this order will help you get familiar with the codebase more effectively.

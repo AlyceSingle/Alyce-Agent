@@ -65,6 +65,8 @@
   "scripts": {
     "dev": "npm run build && node --disable-warning=DEP0040 dist/index.js",
     "build": "tsc -p tsconfig.json",
+    "test": "node scripts/run-tests.mjs",
+    "test:fail-fast": "node scripts/run-tests.mjs --fail-fast",
     "start": "node --disable-warning=DEP0040 dist/index.js"
   },
   "dependencies": {

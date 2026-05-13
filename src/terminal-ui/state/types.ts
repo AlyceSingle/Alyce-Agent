@@ -72,7 +72,8 @@ export type PermissionDecision =
   | "reject-once"
   | "allow-kind-session"
   | "allow-scope-session"
-  | "auto-approve-session";
+  | "auto-approve-session"
+  | "full-approve-session";
 
 export type ActiveDialog =
   | { type: "permission"; layer: "overlay"; request: ToolApprovalRequest }
@@ -97,6 +98,7 @@ export interface TerminalUiState {
   draftInput: string;
   isLoading: boolean;
   statusText: string;
+  planModeEnabled: boolean;
   contextBudget: ContextBudgetSnapshot | null;
   dialogQueue: ActiveDialog[];
   activeOverlays: TerminalUiOverlayId[];
@@ -107,5 +109,6 @@ export interface TerminalUiState {
   unseenDividerMessageId: string | null;
   unseenMessageCount: number;
   sessionApprovalMode: ApprovalMode;
+  sessionFullApprovalEnabled: boolean;
   sessionAllowedKinds: ToolPermissionKind[];
 }

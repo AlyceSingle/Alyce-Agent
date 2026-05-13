@@ -1,8 +1,10 @@
 import type { McpToolRuntime } from "../mcp/types.js";
+import type { PermissionRequest } from "../core/permissions/permissionRules.js";
 
 export type ToolPermissionKind =
   | "agent"
   | "command"
+  | "file-read"
   | "file-write"
   | "web"
   | "external-directory"
@@ -23,6 +25,8 @@ export interface ToolApprovalRequest {
   summary: string;
   details: string[];
   scope?: ToolApprovalScope;
+  permission?: PermissionRequest;
+  forceAsk?: boolean;
 }
 
 export interface AskUserQuestionOption {
@@ -199,6 +203,7 @@ export interface ToolExecutionContext {
   recordToolActivity?: (toolName: string) => void;
   mcpRuntime?: McpToolRuntime;
   toolPolicy?: ToolPermissionPolicy;
+  planMode?: boolean;
   commandTimeoutMs: number;
   turnId: string;
   abortSignal: AbortSignal;

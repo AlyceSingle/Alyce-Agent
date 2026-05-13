@@ -5,6 +5,7 @@ import { z } from "zod";
 import { throwIfAborted } from "../../core/abort.js";
 import { createReadAttachmentMessage } from "../../core/api/generatedMessages.js";
 import { resolveReadablePathWithExternalApproval } from "../internal/externalDirectoryAccess.js";
+import { requestSensitiveFileReadApproval } from "../internal/filePermissions.js";
 import { toWorkspaceRelative } from "../internal/pathSandbox.js";
 import {
   detectTextFileEncoding,
@@ -213,6 +214,10 @@ export async function executeFileRead(
   const requestedOffset = input.offset ?? 1;
   const absolutePath = await resolveReadPath(input.file_path, context);
   assertReadablePathCandidate(absolutePath);
+  await requestSensitiveFileReadApproval(context, absolutePath, {
+    toolName: FILE_READ_TOOL_NAME,
+    actionLabel: "read file or directory"
+  });
   const displayPath = toWorkspaceRelative(context.workspaceRoot, absolutePath);
   const stats = await statReadPath(absolutePath, context.workspaceRoot);
 

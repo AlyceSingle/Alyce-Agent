@@ -13,6 +13,30 @@ export const REPL_COMMAND_DEFINITIONS: ReplCommandDefinition[] = [
     completion: "/help"
   },
   {
+    command: "/doctor",
+    usage: "/doctor",
+    description: "Run local health checks",
+    completion: "/doctor"
+  },
+  {
+    command: "/plan",
+    usage: "/plan",
+    description: "Enter read-only planning mode",
+    completion: "/plan"
+  },
+  {
+    command: "/plan exit",
+    usage: "/plan exit",
+    description: "Exit planning mode after confirmation",
+    completion: "/plan exit"
+  },
+  {
+    command: "/build",
+    usage: "/build",
+    description: "Exit planning mode after confirmation",
+    completion: "/build"
+  },
+  {
     command: "/settings",
     usage: "/settings",
     description: "Open runtime settings",
@@ -134,10 +158,13 @@ export function getReplCommandHelpLines(currentModel: string) {
   });
 }
 
-// REPL 内置命令的标准化结果。
+// Normalized result for built-in REPL commands.
 export type ParsedCommand =
   | { type: "none" }
   | { type: "help" }
+  | { type: "doctor" }
+  | { type: "plan-enter" }
+  | { type: "plan-exit" }
   | { type: "clear" }
   | { type: "rewind" }
   | { type: "exit" }
@@ -154,19 +181,39 @@ export type ParsedCommand =
   | { type: "tasks-cleanup"; apply: boolean }
   | { type: "context-preview"; nextUserInput?: string };
 
-// 统一解析 REPL 命令，避免在主循环堆积条件分支。
+// Parse REPL commands in one place so the main loop stays simple.
 export function parseReplCommand(input: string): ParsedCommand {
   if (input === "/") {
     return {
       type: "command-error",
       input,
-      message: "请输入完整命令。"
+      message: "Please enter a complete command."
     };
   }
 
-  // 精确命令优先，避免与前缀命令冲突。
+  // Exact commands go first to avoid conflicts with prefix commands.
   if (input === "/help") {
     return { type: "help" };
+  }
+
+  if (input === "/doctor") {
+    return { type: "doctor" };
+  }
+
+  if (input === "/plan") {
+    return { type: "plan-enter" };
+  }
+
+  if (input === "/build" || input === "/plan exit") {
+    return { type: "plan-exit" };
+  }
+
+  if (input.startsWith("/plan ")) {
+    return {
+      type: "command-error",
+      input,
+      message: "Unsupported /plan argument. Use /plan to enter Plan Mode, then /plan exit or /build to leave it."
+    };
   }
 
   if (input === "/clear") {
@@ -187,7 +234,7 @@ export function parseReplCommand(input: string): ParsedCommand {
       return {
         type: "command-error",
         input,
-        message: "缺少要恢复的会话 ID 或搜索词。"
+        message: "Missing session ID or search text to resume."
       };
     }
 
@@ -224,7 +271,7 @@ export function parseReplCommand(input: string): ParsedCommand {
     return {
       type: "command-error",
       input,
-      message: "缺少记忆内容。"
+      message: "Missing memory content."
     };
   }
 
@@ -234,18 +281,18 @@ export function parseReplCommand(input: string): ParsedCommand {
       return {
         type: "command-error",
         input,
-        message: "缺少记忆内容。"
+        message: "Missing memory content."
       };
     }
 
-    // /remember --session xxx 只写入会话内存，不落盘。
+    // /remember --session only writes to in-session memory.
     if (raw.startsWith("--session ")) {
       const note = raw.slice(10).trim();
       if (!note) {
         return {
           type: "command-error",
           input,
-          message: "缺少会话记忆内容。"
+          message: "Missing session memory content."
         };
       }
 
@@ -278,7 +325,7 @@ export function parseReplCommand(input: string): ParsedCommand {
     return {
       type: "command-error",
       input,
-      message: "缺少目录路径。"
+      message: "Missing directory path."
     };
   }
 
@@ -288,7 +335,7 @@ export function parseReplCommand(input: string): ParsedCommand {
       return {
         type: "command-error",
         input,
-        message: "缺少目录路径。"
+        message: "Missing directory path."
       };
     }
 
@@ -298,7 +345,7 @@ export function parseReplCommand(input: string): ParsedCommand {
         return {
           type: "command-error",
           input,
-          message: "缺少要持久化的目录路径。"
+          message: "Missing directory path to save."
         };
       }
 
@@ -317,7 +364,7 @@ export function parseReplCommand(input: string): ParsedCommand {
   }
 
   if (input.startsWith("/model ")) {
-    // /model 仅在给出非空模型名时生效。
+    // /model only takes effect when a non-empty model name is provided.
     const model = input.slice(7).trim();
     if (model) {
       return {
@@ -331,7 +378,7 @@ export function parseReplCommand(input: string): ParsedCommand {
     return {
       type: "command-error",
       input,
-      message: "缺少模型名。"
+      message: "Missing model name."
     };
   }
 
@@ -339,7 +386,7 @@ export function parseReplCommand(input: string): ParsedCommand {
     return {
       type: "command-error",
       input,
-      message: "未知命令。输入 /help 查看可用命令。"
+      message: "Unknown command. Enter /help to view available commands."
     };
   }
 
@@ -362,7 +409,7 @@ function parseMemoryCommand(
     return {
       type: "command-error",
       input,
-      message: "不支持的 /memory 子命令。"
+      message: "Unsupported /memory subcommand."
     };
   }
 
@@ -383,7 +430,7 @@ function parseMemoryCommand(
   return {
     type: "command-error",
     input,
-    message: "不支持的 /memory clear 参数。"
+    message: "Unsupported /memory clear argument."
   };
 }
 
@@ -399,7 +446,7 @@ function parseTasksCommand(
     return {
       type: "command-error",
       input,
-      message: "缺少 /tasks 子命令。"
+      message: "Missing /tasks subcommand."
     };
   }
 
@@ -407,7 +454,7 @@ function parseTasksCommand(
     return {
       type: "command-error",
       input,
-      message: "不支持的 /tasks 子命令。"
+      message: "Unsupported /tasks subcommand."
     };
   }
 
@@ -428,6 +475,6 @@ function parseTasksCommand(
   return {
     type: "command-error",
     input,
-    message: "不支持的 /tasks cleanup 参数。"
+    message: "Unsupported /tasks cleanup argument."
   };
 }

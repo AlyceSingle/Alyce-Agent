@@ -32,6 +32,7 @@ function runTests() {
   testPreviewEstimatesDoNotCalibrateUsage();
   testRecordedEstimatesCalibrateUsage();
   testLatestToolOutputsAreProtectedAcrossGeneratedContextMessages();
+  testSnippingNeverReportsNegativeTokenSavings();
   console.log("contextBudget tests passed");
 }
 
@@ -149,6 +150,21 @@ function testLatestToolOutputsAreProtectedAcrossGeneratedContextMessages() {
   assert.equal(result.snippedMessages, 1);
   assert.match(String(messages[1]?.content), /^\[Alyce context snip\]/);
   assert.equal(messages[3]?.content, latestToolOutput);
+}
+
+function testSnippingNeverReportsNegativeTokenSavings() {
+  const messages: OpenAI.Chat.Completions.ChatCompletionMessageParam[] = [
+    {
+      role: "tool",
+      tool_call_id: "call_1",
+      content: createLongText("x", 18_100)
+    }
+  ];
+
+  const result = snipOversizedToolOutputs(messages, 18_000);
+
+  assert.equal(result.changed, true);
+  assert.equal(result.estimatedTokensSaved >= 0, true);
 }
 
 runTests();

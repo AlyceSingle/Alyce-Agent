@@ -3,7 +3,15 @@ import type { ContextBudgetSnapshot } from "../../core/context/contextBudget.js"
 import { Box, Text } from "../runtime/ink.js";
 import { terminalUiTheme } from "../theme/theme.js";
 
-function formatApprovalMode(mode: ApprovalMode, allowedKinds: string[]) {
+function formatApprovalMode(
+  mode: ApprovalMode,
+  allowedKinds: string[],
+  fullApprovalEnabled: boolean
+) {
+  if (fullApprovalEnabled) {
+    return "full";
+  }
+
   if (mode === "auto") {
     return "auto";
   }
@@ -18,6 +26,7 @@ function formatApprovalMode(mode: ApprovalMode, allowedKinds: string[]) {
 export function StatusBar(props: {
   connection: ConnectionConfig;
   sessionApprovalMode: ApprovalMode;
+  sessionFullApprovalEnabled: boolean;
   sessionAllowedKinds: string[];
   requestPatchCount: number;
   todoSummary?: string;
@@ -61,7 +70,11 @@ export function StatusBar(props: {
         {" | "}
         Model {props.connection.model}
         {" | "}
-        Approval {formatApprovalMode(props.sessionApprovalMode, props.sessionAllowedKinds)}
+        Approval {formatApprovalMode(
+          props.sessionApprovalMode,
+          props.sessionAllowedKinds,
+          props.sessionFullApprovalEnabled
+        )}
         {todoSummaryText}
         <Text color={contextColor}>{contextText}</Text>
         <Text color={terminalUiTheme.colors.subtle}>{inlineStatusText}</Text>

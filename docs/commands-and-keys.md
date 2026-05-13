@@ -17,11 +17,22 @@ Type these into the main input. They start with `/` and execute immediately.
 | Command | What it does |
 |---|---|
 | `/help` | Shows all available commands. *Start here if you're lost.* |
+| `/doctor` | Runs local health checks for Node, TTY, workspace files, connection config, approval risk, MCP config, skills, `rg`, `git`, `.alyce` storage, and request patches. |
 | `/settings` | Jumps straight to the settings dialog. |
 | `/setup` | First-run configuration wizard. |
 | `/clear` | Wipes the current conversation and starts fresh. |
 | `/rewind` | Opens the rewind selector so you can restore to an earlier prompt. |
 | `/exit` | Closes Alyce. |
+
+### Plan Mode
+
+| Command | What it does |
+|---|---|
+| `/plan` | Enters Plan Mode. Alyce can inspect, ask questions, and draft a plan, but write tools, mutating shell commands, subagents, mutating MCP tools, and skill loading are blocked. |
+| `/plan exit` | Leaves Plan Mode and restores normal build/edit permissions. |
+| `/build` | Alias for leaving Plan Mode. In the current runtime this does **not** run `npm run build`; it only switches out of Plan Mode. |
+
+Plan Mode still allows read-oriented exploration: `Read`, `Glob`, `Grep`, `LSP`, web fetch/search, MCP status/resource listing/resource reads, `TaskList`, `TaskGet`, and read-only shell or PowerShell inspection commands after approval. If a shell command looks like it might write files, install packages, mutate git state, or run arbitrary code, Alyce blocks it while Plan Mode is active.
 
 ### Memory
 
@@ -61,6 +72,13 @@ Type these into the main input. They start with `/` and execute immediately.
 | `/sessions` | Lists recently saved project sessions. |
 
 *I use `/resume` constantly. It means I can close the terminal at the end of a day and pick up exactly where I left off the next morning.*
+
+### Subagent Storage
+
+| Command | What it does |
+|---|---|
+| `/tasks cleanup` | Scans stale subagent storage artifacts without deleting them. |
+| `/tasks cleanup --apply` | Deletes stale subagent storage artifacts found by the cleanup scan. Review the scan output before using `--apply`. |
 
 ## Global Shortcuts
 

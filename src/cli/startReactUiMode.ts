@@ -18,7 +18,8 @@ export async function startReactUiMode(argv: string[], env: NodeJS.ProcessEnv) {
       connectionState: runtime.getConnectionConfigState(),
       settingsState: runtime.getSettingsState(),
       workspaceRoot: runtime.workspaceRoot,
-      requestPatchCount: runtime.requestPatches.length
+      requestPatchCount: runtime.requestPatches.length,
+      planModeEnabled: runtime.getPlanModeState().enabled
     })
   );
 

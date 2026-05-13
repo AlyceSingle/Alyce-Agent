@@ -38,6 +38,7 @@ function testSessionSettingsDefaultsIncludeScrollPerformanceSettings() {
   assert.equal(state.effective.diagnosticsPendingTimeoutMs, 120_000);
   assert.equal(state.effective.diagnosticsFailureThreshold, 3);
   assert.equal(state.effective.diagnosticsFailureCooldownMs, 300_000);
+  assert.deepEqual(state.effective.permissionRules, []);
 }
 
 function testSessionSettingsClampsScrollSpeed() {
@@ -94,7 +95,16 @@ async function testSessionSettingsSerializationIncludesScrollPerformanceSettings
     maxMessagesWithoutVirtualization: 90,
     diagnosticsPendingTimeoutMs: 50_000,
     diagnosticsFailureThreshold: 4,
-    diagnosticsFailureCooldownMs: 70_000
+    diagnosticsFailureCooldownMs: 70_000,
+    permissionRules: [
+      {
+        permission: "shell",
+        pattern: "npm run build",
+        action: "allow",
+        scope: "persistent",
+        reason: "Known local build command."
+      }
+    ]
   });
   const raw = JSON.parse(await fs.readFile(paths.userSettingsConfigPath, "utf8")) as Record<string, unknown>;
 
@@ -105,6 +115,15 @@ async function testSessionSettingsSerializationIncludesScrollPerformanceSettings
   assert.equal(raw.diagnosticsPendingTimeoutMs, 50_000);
   assert.equal(raw.diagnosticsFailureThreshold, 4);
   assert.equal(raw.diagnosticsFailureCooldownMs, 70_000);
+  assert.deepEqual(raw.permissionRules, [
+    {
+      permission: "shell",
+      pattern: "npm run build",
+      action: "allow",
+      scope: "persistent",
+      reason: "Known local build command."
+    }
+  ]);
 }
 
 void runTests().catch((error) => {

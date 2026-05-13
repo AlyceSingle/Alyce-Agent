@@ -25,6 +25,7 @@ export function createInitialTerminalUiState(options: {
   settingsState: SessionSettingsState;
   workspaceRoot: string;
   requestPatchCount: number;
+  planModeEnabled?: boolean;
 }): TerminalUiState {
   return {
     workspaceRoot: options.workspaceRoot,
@@ -37,6 +38,7 @@ export function createInitialTerminalUiState(options: {
     isLoading: false,
     // 连接是否可用要和运行时校验保持一致，避免把纯空白 API key 误判成已配置。
     statusText: options.connectionState.effective.apiKey.trim().length > 0 ? "Idle" : "Setup required",
+    planModeEnabled: options.planModeEnabled ?? false,
     contextBudget: null,
     dialogQueue: [],
     activeOverlays: [],
@@ -47,6 +49,7 @@ export function createInitialTerminalUiState(options: {
     unseenDividerMessageId: null,
     unseenMessageCount: 0,
     sessionApprovalMode: options.settingsState.effective.approvalMode,
+    sessionFullApprovalEnabled: false,
     sessionAllowedKinds: []
   };
 }
@@ -143,6 +146,20 @@ export function setStatusText(state: TerminalUiState, statusText: string): Termi
   return {
     ...state,
     statusText
+  };
+}
+
+export function setPlanModeEnabled(
+  state: TerminalUiState,
+  planModeEnabled: boolean
+): TerminalUiState {
+  if (state.planModeEnabled === planModeEnabled) {
+    return state;
+  }
+
+  return {
+    ...state,
+    planModeEnabled
   };
 }
 
@@ -366,6 +383,20 @@ export function setSessionApprovalMode(
   return {
     ...state,
     sessionApprovalMode
+  };
+}
+
+export function setSessionFullApprovalEnabled(
+  state: TerminalUiState,
+  sessionFullApprovalEnabled: boolean
+): TerminalUiState {
+  if (state.sessionFullApprovalEnabled === sessionFullApprovalEnabled) {
+    return state;
+  }
+
+  return {
+    ...state,
+    sessionFullApprovalEnabled
   };
 }
 

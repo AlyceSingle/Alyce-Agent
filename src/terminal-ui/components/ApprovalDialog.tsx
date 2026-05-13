@@ -6,11 +6,26 @@ import { terminalUiTheme } from "../theme/theme.js";
 import type { PermissionDecision } from "../state/types.js";
 import { Pane } from "./Pane.js";
 
-const APPROVAL_OPTIONS: Array<{
+type ApprovalOption = {
   id: PermissionDecision;
   label: string;
   description: string;
-}> = [
+};
+
+const SESSION_APPROVAL_OPTIONS: ApprovalOption[] = [
+  {
+    id: "auto-approve-session",
+    label: "Auto approve this session",
+    description: "Disable ordinary approval prompts for this run."
+  },
+  {
+    id: "full-approve-session",
+    label: "Fully approve this session",
+    description: "Skip all approval prompts for this run, including forced prompts."
+  }
+];
+
+const APPROVAL_OPTIONS: ApprovalOption[] = [
   {
     id: "allow-once",
     label: "Allow once",
@@ -24,20 +39,12 @@ const APPROVAL_OPTIONS: Array<{
   {
     id: "allow-kind-session",
     label: "Allow this kind for session",
-    description: "Skip prompts for this permission kind until restart."
+    description: "Skip ordinary prompts for this permission kind until restart."
   },
-  {
-    id: "auto-approve-session",
-    label: "Auto approve this session",
-    description: "Disable further approval prompts for this run."
-  }
+  ...SESSION_APPROVAL_OPTIONS
 ];
 
-const SCOPED_APPROVAL_OPTIONS: Array<{
-  id: PermissionDecision;
-  label: string;
-  description: string;
-}> = [
+const SCOPED_APPROVAL_OPTIONS: ApprovalOption[] = [
   {
     id: "allow-once",
     label: "Allow once",
@@ -51,13 +58,9 @@ const SCOPED_APPROVAL_OPTIONS: Array<{
   {
     id: "allow-scope-session",
     label: "Allow directory for session",
-    description: "Skip prompts for this external directory until restart."
+    description: "Skip ordinary prompts for this external directory until restart."
   },
-  {
-    id: "auto-approve-session",
-    label: "Auto approve this session",
-    description: "Disable further approval prompts for this run."
-  }
+  ...SESSION_APPROVAL_OPTIONS
 ];
 
 export function ApprovalDialog(props: {
@@ -71,7 +74,7 @@ export function ApprovalDialog(props: {
 
   useEffect(() => {
     setSelectedIndex(0);
-  }, [props.request?.summary, props.request?.title]);
+  }, [props.request]);
 
   useInput((input, key) => {
     if (!props.request) {
@@ -89,7 +92,10 @@ export function ApprovalDialog(props: {
     }
 
     if (key.return) {
-      props.onDecision(approvalOptions[selectedIndex]!.id);
+      const selectedOption = approvalOptions[selectedIndex] ?? approvalOptions[0];
+      if (selectedOption) {
+        props.onDecision(selectedOption.id);
+      }
       return;
     }
 
@@ -98,8 +104,9 @@ export function ApprovalDialog(props: {
       return;
     }
 
-    if (input === "1" || input === "2" || input === "3" || input === "4") {
-      const option = approvalOptions[Number(input) - 1];
+    const optionIndex = /^\d+$/.test(input) ? Number.parseInt(input, 10) - 1 : -1;
+    if (optionIndex >= 0) {
+      const option = approvalOptions[optionIndex];
       if (option) {
         props.onDecision(option.id);
       }
@@ -115,7 +122,7 @@ export function ApprovalDialog(props: {
       title={`Permission Request · ${props.request.toolName}`}
       subtitle={props.request.title}
       accentColor={terminalUiTheme.colors.warning}
-      footer="↑/↓ choose | Enter confirm | Esc reject"
+      footer={`↑/↓ choose | 1-${approvalOptions.length} shortcut | Enter confirm | Esc reject`}
     >
       <Text color={terminalUiTheme.colors.muted} wrap="truncate-end">
         {props.request.summary}

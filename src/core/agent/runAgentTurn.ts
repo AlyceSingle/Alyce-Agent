@@ -131,9 +131,23 @@ export async function runAgentTurn(
       await options.onMessagesAppended?.(committedMessages);
 
       if (options.refreshTools && shouldRefreshToolsAfterToolCalls(executedToolCalls.toolNames)) {
-        activeTools = await options.refreshTools({
-          abortSignal: options.abortSignal
-        });
+        try {
+          activeTools = await options.refreshTools({
+            abortSignal: options.abortSignal
+          });
+        } catch (error) {
+          if (isTurnInterruptedError(error, options.abortSignal)) {
+            throw toTurnInterruptedError(error, options.abortSignal);
+          }
+
+          const refreshFailureMessage = buildToolSchemaRefreshFailureMessage(error);
+          const warningMessage: MessageParam = {
+            role: "system",
+            content: refreshFailureMessage
+          };
+          messages.push(warningMessage);
+          await options.onMessagesAppended?.([warningMessage]);
+        }
       }
     }
   } finally {
@@ -351,6 +365,15 @@ async function executeSingleToolCall(
 
 function shouldRefreshToolsAfterToolCalls(toolNames: string[]) {
   return toolNames.some((toolName) => TOOL_SCHEMA_REFRESH_TOOL_NAMES.has(toolName));
+}
+
+function buildToolSchemaRefreshFailureMessage(error: unknown) {
+  const message = error instanceof Error ? error.message : String(error);
+  return [
+    "Tool schema refresh failed after an MCP status/resource tool call.",
+    "Continue with the previously available tool list unless the user asks to retry MCP initialization.",
+    `Failure: ${message}`
+  ].join("\n");
 }
 
 function buildAssistantHistoryMessage(

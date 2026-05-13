@@ -38,10 +38,16 @@ async function runTests() {
   await testRoutesMcpToolCalls();
   await testInvalidMcpJsonDoesNotRequestApproval();
   await testNonObjectMcpArgumentsDoNotExecute();
+  await testRejectedMcpResourceListUsesRejectedStatus();
   await testMcpToolRecordsActivityAfterExecution();
   await testRejectedMcpToolDoesNotRecordActivity();
+  await testTimedOutMcpToolDoesNotRecordActivity();
   await testInvalidArgumentsDoNotRecordToolActivity();
   await testReadOnlyExecutionDoesNotRecordToolActivity();
+  await testPlanModeBlocksWriteTools();
+  await testPlanModeBlocksArbitraryMcpTools();
+  await testPlanModeBlocksMutatingShellBeforeApproval();
+  await testPlanModeForcesApprovalForReadOnlyShell();
   console.log("executeToolCall tests passed");
 }
 
@@ -344,6 +350,27 @@ async function testNonObjectMcpArgumentsDoNotExecute() {
   assert.equal(parsed.error.type, "invalid_tool_arguments");
 }
 
+async function testRejectedMcpResourceListUsesRejectedStatus() {
+  const result = await executeToolCall(
+    "ListMcpResources",
+    JSON.stringify({}),
+    createTestContext({
+      requestApproval: async () => false,
+      mcpRuntime: createMcpRuntime({})
+    })
+  );
+
+  const parsed = JSON.parse(result.displayResult) as {
+    ok: boolean;
+    status: string;
+    error: { type: string; status: string; message: string };
+  };
+  assert.equal(parsed.ok, false);
+  assert.equal(parsed.status, "rejected");
+  assert.equal(parsed.error.type, "permission_rejected");
+  assert.match(parsed.error.message, /User rejected the MCP resources list request/);
+}
+
 async function testMcpToolRecordsActivityAfterExecution() {
   const recorded: string[] = [];
   const result = await executeToolCall(
@@ -361,8 +388,13 @@ async function testMcpToolRecordsActivityAfterExecution() {
     })
   );
 
-  const parsed = JSON.parse(result.displayResult) as { ok: boolean };
+  const parsed = JSON.parse(result.displayResult) as {
+    ok: boolean;
+    status: string;
+    error: { type: string; status: string; message: string };
+  };
   assert.equal(parsed.ok, true);
+  assert.equal(parsed.status, "success");
   assert.deepEqual(recorded, ["mcp__demo__mutate"]);
 }
 
@@ -383,8 +415,44 @@ async function testRejectedMcpToolDoesNotRecordActivity() {
     })
   );
 
-  const parsed = JSON.parse(result.displayResult) as { ok: boolean };
-  assert.equal(parsed.ok, true);
+  const parsed = JSON.parse(result.displayResult) as {
+    ok: boolean;
+    status: string;
+    error: { type: string; status: string; message: string };
+  };
+  assert.equal(parsed.ok, false);
+  assert.equal(parsed.status, "rejected");
+  assert.equal(parsed.error.type, "permission_rejected");
+  assert.equal(parsed.error.status, "rejected");
+  assert.deepEqual(recorded, []);
+}
+
+async function testTimedOutMcpToolDoesNotRecordActivity() {
+  const recorded: string[] = [];
+  const result = await executeToolCall(
+    "mcp__demo__mutate",
+    JSON.stringify({ text: "hello" }),
+    createTestContext({
+      recordToolActivity: (toolName) => {
+        recorded.push(toolName);
+      },
+      mcpRuntime: createMcpRuntime({
+        executeToolCall: async () => {
+          throw new Error("MCP tool 'demo.mutate' timed out after 10 ms.");
+        }
+      })
+    })
+  );
+
+  const parsed = JSON.parse(result.displayResult) as {
+    ok: boolean;
+    status: string;
+    error: { type: string; status: string; message: string };
+  };
+  assert.equal(parsed.ok, false);
+  assert.equal(parsed.status, "timeout");
+  assert.equal(parsed.error.type, "mcp_tool_timeout");
+  assert.equal(parsed.error.status, "timeout");
   assert.deepEqual(recorded, []);
 }
 
@@ -404,6 +472,101 @@ async function testReadOnlyExecutionDoesNotRecordToolActivity() {
   const parsed = JSON.parse(result.displayResult) as { ok: boolean };
   assert.equal(parsed.ok, true);
   assert.deepEqual(recorded, []);
+}
+
+async function testPlanModeBlocksWriteTools() {
+  const result = await executeToolCall(
+    "Write",
+    JSON.stringify({ file_path: "example.txt", content: "mutate" }),
+    createTestContext({
+      planMode: true
+    })
+  );
+
+  const parsed = JSON.parse(result.displayResult) as {
+    ok: boolean;
+    status: string;
+    error: { type: string; status: string; message: string };
+  };
+  assert.equal(parsed.ok, false);
+  assert.equal(parsed.status, "denied");
+  assert.equal(parsed.error.type, "plan_mode_violation");
+  assert.equal(parsed.error.status, "denied");
+  assert.match(parsed.error.message, /Write is blocked in Plan Mode/);
+}
+
+async function testPlanModeBlocksArbitraryMcpTools() {
+  const result = await executeToolCall(
+    "mcp__demo__mutate",
+    JSON.stringify({ text: "hello" }),
+    createTestContext({
+      planMode: true,
+      mcpRuntime: createMcpRuntime({})
+    })
+  );
+
+  const parsed = JSON.parse(result.displayResult) as {
+    ok: boolean;
+    status: string;
+    error: { type: string; status: string; message: string };
+  };
+  assert.equal(parsed.ok, false);
+  assert.equal(parsed.status, "denied");
+  assert.equal(parsed.error.type, "plan_mode_violation");
+  assert.equal(parsed.error.status, "denied");
+  assert.match(parsed.error.message, /mcp__demo__mutate is blocked in Plan Mode/);
+}
+
+async function testPlanModeBlocksMutatingShellBeforeApproval() {
+  let approvalCount = 0;
+  const result = await executeToolCall(
+    "PowerShell",
+    JSON.stringify({ command: "Remove-Item test.txt", timeout_ms: 1000 }),
+    createTestContext({
+      planMode: true,
+      requestApproval: async () => {
+        approvalCount += 1;
+        return true;
+      }
+    })
+  );
+
+  const parsed = JSON.parse(result.displayResult) as {
+    ok: boolean;
+    status: string;
+    error: { type: string; status: string; message: string };
+  };
+  assert.equal(parsed.ok, false);
+  assert.equal(parsed.status, "denied");
+  assert.equal(parsed.error.type, "plan_mode_violation");
+  assert.match(parsed.error.message, /blocked by Plan Mode/);
+  assert.equal(approvalCount, 0);
+}
+
+async function testPlanModeForcesApprovalForReadOnlyShell() {
+  let approvalCount = 0;
+  const result = await executeToolCall(
+    "PowerShell",
+    JSON.stringify({ command: "Get-ChildItem", timeout_ms: 1000 }),
+    createTestContext({
+      planMode: true,
+      requestApproval: async () => {
+        approvalCount += 1;
+        return false;
+      }
+    })
+  );
+
+  const parsed = JSON.parse(result.displayResult) as {
+    ok: boolean;
+    status: string;
+    error: { type: string; status: string; message: string };
+  };
+  assert.equal(parsed.ok, false);
+  assert.equal(parsed.status, "rejected");
+  assert.equal(parsed.error.type, "permission_rejected");
+  assert.match(parsed.error.message, /User rejected PowerShell tool request/);
+  assert.equal(approvalCount, 1);
 }
 
 function createMcpRuntime(patch: Partial<ToolExecutionContext["mcpRuntime"]>) {

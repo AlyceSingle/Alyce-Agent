@@ -16,6 +16,8 @@
   Slash 命令、全局快捷键、设置界面操作
 - [配置说明](configuration.md)
   运行时配置文件、环境变量、会话设置
+- [安全说明](security.md)
+  本地信任模型、审批边界、Shell/文件/MCP/Web 风险和安全报告建议
 - [记忆与上下文](memory-and-context.md)
   记忆分层、摘要与压缩
 - [角色预设](persona-presets.md)
@@ -25,8 +27,6 @@
 
 - [贡献指南](contributing.md)
   贡献流程、验证要求、Pull Request 说明
-- [安全说明](security.md)
-  安全问题的报告方式与处理建议
 
 ## 建议阅读顺序
 
@@ -36,7 +36,8 @@
 2. [项目结构](project-structure.md)
 3. [命令与按键](commands-and-keys.md)
 4. [配置说明](configuration.md)
-5. [记忆与上下文](memory-and-context.md)
-6. [角色预设](persona-presets.md)
+5. [安全说明](security.md)
+6. [记忆与上下文](memory-and-context.md)
+7. [角色预设](persona-presets.md)
 
 这样读下来，会比较不容易迷路。希望这些文档能对您有所帮助。

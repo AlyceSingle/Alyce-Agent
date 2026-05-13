@@ -5,7 +5,7 @@ import type { MemoryEntry, MemorySource } from "./types.js";
 
 const MEMORY_LINE_PATTERN = /^- \[(?<createdAt>[^\]]+)\] \((?<source>user|assistant|system)\) (?<content>.+)$/;
 
-// 持久记忆采用 markdown 文件存储，便于人工审查和版本管理。
+// Persistent memory uses markdown so it stays easy to review and version.
 export class PersistentMemoryStore {
   private entries: MemoryEntry[] = [];
   private initialized = false;
@@ -134,7 +134,7 @@ function serializeMemoryFile(entries: MemoryEntry[]) {
   const header = [
     "# Persistent Memory",
     "",
-    "- 由 /remember 写入，格式：- [ISO时间] (来源) 内容",
+    "- Written by /remember. Format: - [ISO time] (source) content",
     ""
   ].join("\n");
 

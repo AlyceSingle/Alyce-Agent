@@ -3,9 +3,10 @@ import { promises as fs } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { executeFileApplyPatch } from "./FileApplyPatchTool.js";
-import type { FileReadState, ToolExecutionContext } from "../types.js";
+import type { FileReadState, ToolApprovalRequest, ToolExecutionContext } from "../types.js";
 
 type TestContext = ToolExecutionContext & {
+  approvalRequests: ToolApprovalRequest[];
   markRead: (relativePath: string) => Promise<void>;
   setRecordFileRead: (recordFileRead: ToolExecutionContext["recordFileRead"]) => void;
 };
@@ -16,6 +17,7 @@ async function createTestContext(options: {
   const workspaceRoot = await fs.mkdtemp(path.join(tmpdir(), "alyce-apply-patch-test-"));
   const abortController = new AbortController();
   const readStates = new Map<string, FileReadState>();
+  const approvalRequests: ToolApprovalRequest[] = [];
   let activeRecordFileRead: ToolExecutionContext["recordFileRead"] = options.recordFileRead ??
     ((absolutePath, state) => {
       readStates.set(pathKey(absolutePath), state);
@@ -24,7 +26,10 @@ async function createTestContext(options: {
   const context: TestContext & { cleanup: () => Promise<void> } = {
     workspaceRoot,
     allowedRoots: [workspaceRoot],
-    requestApproval: async () => true,
+    requestApproval: async (request) => {
+      approvalRequests.push(request);
+      return true;
+    },
     askUserQuestions: async () => ({ answers: {} }),
     getTodos: () => [],
     setTodos: () => undefined,
@@ -34,6 +39,7 @@ async function createTestContext(options: {
     captureFileBeforeWrite: async () => undefined,
     recordFileRead: (absolutePath, state) => activeRecordFileRead(absolutePath, state),
     getFileReadState: (absolutePath) => readStates.get(pathKey(absolutePath)),
+    approvalRequests,
     setRecordFileRead: (recordFileRead) => {
       activeRecordFileRead = recordFileRead;
     },
@@ -70,6 +76,7 @@ async function runTests() {
   await testUpdateRollbackOnPostWriteFailure();
   await testRenameOnlyMoveWithMatchingTarget();
   await testMoveOverwriteCountsTargetReplacement();
+  await testPatchApprovalCarriesFilePatchPermission();
   console.log("FileApplyPatchTool tests passed");
 }
 
@@ -195,6 +202,29 @@ async function testMoveOverwriteCountsTargetReplacement() {
     assert.equal(result.files[0].additions, 1);
     assert.equal(result.files[0].deletions, 2);
     assert.equal(await fs.readFile(path.join(context.workspaceRoot, "target.txt"), "utf8"), "source\n");
+  } finally {
+    await context.cleanup();
+  }
+}
+
+async function testPatchApprovalCarriesFilePatchPermission() {
+  const context = await createTestContext();
+  try {
+    await executeFileApplyPatch({
+      patchText: [
+        "*** Begin Patch",
+        "*** Add File: .env",
+        "+OPENAI_API_KEY=test",
+        "*** End Patch"
+      ].join("\n")
+    }, context);
+
+    assert.equal(context.approvalRequests.length, 1);
+    assert.deepEqual(context.approvalRequests[0]?.permission, {
+      permission: "file.patch",
+      pattern: "sensitive:.env"
+    });
+    assert.equal(context.approvalRequests[0]?.forceAsk, true);
   } finally {
     await context.cleanup();
   }

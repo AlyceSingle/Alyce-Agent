@@ -15,7 +15,7 @@ export const terminalUiTheme = {
     assistant: "#fab283",
     tool: "#56b6c2",
     thinking: "#808080",
-    system: "#7fb4ff",
+    system: "#c9b6ff",
     selection: "#203247",
     selectionMuted: "#5d6e84",
     inputCursor: "#f8fafc",

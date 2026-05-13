@@ -2,9 +2,23 @@ import { randomUUID } from "node:crypto";
 import { promises as fs } from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import process from "node:process";
 import { runAgentTurn } from "../../agent.js";
 import { createBackgroundDiagnosticsMessage } from "../../core/api/generatedMessages.js";
 import { isTurnInterruptedError, throwIfAborted } from "../../core/abort.js";
+import { formatDoctorReport, runDoctorDiagnostics } from "../../core/doctor/doctor.js";
+import { createPlanModeOverlayRules } from "../../core/planMode/planMode.js";
+import {
+  createDefaultPermissionRuleSet,
+  createPermissionRuleSet,
+  evaluatePermission,
+  getPermissionCategoriesForLegacyKind,
+  getPermissionCategoriesForToolKind,
+  normalizePermissionPattern,
+  type PermissionCategory,
+  type PermissionEvaluation,
+  type PermissionRuleInput
+} from "../../core/permissions/permissionRules.js";
 import { parseReplCommand } from "../../cli/commandRouter.js";
 import { getLspDiagnosticRegistry } from "../../services/lsp/LspDiagnosticRegistry.js";
 import {
@@ -47,8 +61,10 @@ import {
   setContextBudget,
   setDraftInput,
   setLoading,
+  setPlanModeEnabled,
   setSessionAllowedKinds,
   setSessionApprovalMode,
+  setSessionFullApprovalEnabled,
   setSessionSettingsState,
   setStatusText,
   setTodos,
@@ -222,7 +238,9 @@ export function createSessionController(
   let pendingApprovalResolver: ((decision: PermissionDecision) => void) | null = null;
   let pendingQuestionResolver: ((response: AskUserQuestionResponse | null) => void) | null = null;
   let sessionApprovalMode = runtime.getSettings().approvalMode;
+  let sessionFullApprovalEnabled = false;
   const sessionAllowedKinds = new Set<ToolPermissionKind>();
+  let sessionPermissionRules: PermissionRuleInput[] = [];
   let activeTurn: TurnCheckpoint | null = null;
   let rewindPoints: RewindPoint[] = [];
   let sessionHistoryPaging: SessionHistoryPagingState | null = null;
@@ -387,10 +405,100 @@ export function createSessionController(
   const syncApprovalState = () => {
     store.updateState((state) =>
       setSessionAllowedKinds(
-        setSessionApprovalMode(state, sessionApprovalMode),
+        setSessionFullApprovalEnabled(
+          setSessionApprovalMode(state, sessionApprovalMode),
+          sessionFullApprovalEnabled
+        ),
         [...sessionAllowedKinds]
       )
     );
+  };
+
+  const buildSessionPermissionRules = (): PermissionRuleInput[] => {
+    const rules: PermissionRuleInput[] = [...sessionPermissionRules];
+
+    for (const kind of sessionAllowedKinds) {
+      for (const permission of getPermissionCategoriesForLegacyKind(kind)) {
+        rules.push({
+          permission,
+          pattern: "*",
+          action: "allow",
+          scope: "session",
+          reason: `User allowed ${kind} requests for this session.`
+        });
+      }
+    }
+
+    if (sessionFullApprovalEnabled) {
+      rules.push({
+        permission: "*",
+        pattern: "*",
+        action: "allow",
+        scope: "session",
+        reason: "User fully approved all permission prompts for this session."
+      });
+    } else if (sessionApprovalMode === "auto") {
+      rules.push({
+        permission: "*",
+        pattern: "*",
+        action: "allow",
+        scope: "session",
+        reason: "User enabled auto approval for this session."
+      });
+    }
+
+    return rules;
+  };
+
+  const buildPermissionRuleSets = () => {
+    const settingsState = runtime.getSettingsState();
+    return [
+      createDefaultPermissionRuleSet(),
+      createPermissionRuleSet("project-settings", settingsState.project.permissionRules),
+      createPermissionRuleSet("user-settings", settingsState.user.permissionRules),
+      createPermissionRuleSet("session-approval", buildSessionPermissionRules()),
+      createPermissionRuleSet(
+        "plan-mode-overlay",
+        createPlanModeOverlayRules(runtime.getPlanModeState().enabled)
+      )
+    ];
+  };
+
+  const getPermissionCategoryForRequest = (
+    request: ToolApprovalRequest
+  ): PermissionCategory | null => {
+    if (request.permission) {
+      return request.permission.permission;
+    }
+
+    return getPermissionCategoriesForToolKind(request.kind, request.toolName)[0] ?? null;
+  };
+
+  const getPermissionPatternForRequest = (request: ToolApprovalRequest): string => {
+    if (request.permission?.pattern) {
+      return normalizePermissionPattern(request.permission.pattern);
+    }
+
+    if (request.scope?.type === "external-directory") {
+      return normalizePermissionPattern(request.scope.directory);
+    }
+
+    return normalizePermissionPattern(request.summary || request.toolName);
+  };
+
+  const evaluateApprovalRequest = (
+    request: ToolApprovalRequest
+  ): PermissionEvaluation | null => {
+    const permission = getPermissionCategoryForRequest(request);
+    if (!permission) {
+      return null;
+    }
+
+    return evaluatePermission({
+      permission,
+      pattern: getPermissionPatternForRequest(request),
+      rulesets: buildPermissionRuleSets()
+    });
   };
 
   const setDialogClosed = () => {
@@ -616,15 +724,28 @@ export function createSessionController(
   ) => {
     throwIfAborted(options.signal);
 
-    if (sessionApprovalMode === "auto") {
-      return true;
-    }
-
     if (request.scope?.type === "external-directory" && isDirectoryAlreadyAllowed(request.scope.directory)) {
       return true;
     }
 
-    if (!request.scope && sessionAllowedKinds.has(request.kind)) {
+    const permissionEvaluation = evaluateApprovalRequest(request);
+    if (permissionEvaluation?.action === "deny") {
+      appendUiMessage(
+        createSystemMessage(
+          [
+            "Denied permission request by rule.",
+            `${request.title}: ${request.summary}`,
+            `Permission: ${permissionEvaluation.permission}`,
+            `Pattern: ${permissionEvaluation.pattern}`,
+            `Reason: ${permissionEvaluation.reason}`
+          ].join("\n"),
+          "Permissions"
+        )
+      );
+      return false;
+    }
+
+    if (shouldSkipApprovalDialog(permissionEvaluation, request, sessionFullApprovalEnabled)) {
       return true;
     }
 
@@ -661,6 +782,10 @@ export function createSessionController(
           } else if (decision === "auto-approve-session") {
             approved = true;
             sessionApprovalMode = "auto";
+          } else if (decision === "full-approve-session") {
+            approved = true;
+            sessionApprovalMode = "auto";
+            sessionFullApprovalEnabled = true;
           }
         } catch (error) {
           approved = false;
@@ -723,6 +848,17 @@ export function createSessionController(
       return;
     }
 
+    sessionPermissionRules = [
+      ...sessionPermissionRules,
+      {
+        permission: "directory.external",
+        pattern: normalizePermissionPattern(absolutePath),
+        action: "allow",
+        scope: "session",
+        reason: "User allowed this external directory for the session."
+      }
+    ];
+
     await runtime.setSessionAdditionalDirectories(
       dedupeDirectories([...runtime.getSessionAdditionalDirectories(), absolutePath])
     );
@@ -746,6 +882,10 @@ export function createSessionController(
 
     if (decision === "auto-approve-session") {
       return "auto approve session";
+    }
+
+    if (decision === "full-approve-session") {
+      return "full approve session";
     }
 
     return decision;
@@ -804,7 +944,9 @@ export function createSessionController(
     const resumed = await runtime.resumeSessionHistory(sessionId);
     activeTurn = null;
     sessionAllowedKinds.clear();
+    sessionPermissionRules = [];
     sessionApprovalMode = runtime.getSettings().approvalMode;
+    sessionFullApprovalEnabled = false;
 
     const allRestoredMessages = filterUiMessages(resumed.uiMessages as TerminalUiMessage[]);
     const historyPagingEnabled = runtime.getSettings().historyPagingEnabled;
@@ -845,15 +987,18 @@ export function createSessionController(
     store.updateState((state) =>
       setStatusText(
         setSessionAllowedKinds(
-          setSessionApprovalMode(
-            setDraftInput(
-              setContextBudget(
-                setTodos(replaceMessages(closeDialog(state), [...restoredMessages, systemMessage]), []),
-                null
+          setSessionFullApprovalEnabled(
+            setSessionApprovalMode(
+              setDraftInput(
+                setContextBudget(
+                  setTodos(replaceMessages(closeDialog(state), [...restoredMessages, systemMessage]), []),
+                  null
+                ),
+                ""
               ),
-              ""
+              sessionApprovalMode
             ),
-            sessionApprovalMode
+            sessionFullApprovalEnabled
           ),
           []
         ),
@@ -1039,6 +1184,75 @@ export function createSessionController(
 
     if (parsedCommand.type === "help") {
       appendUiMessage(createSystemMessage(getHelpText(runtime.getCurrentModel()), "Help"));
+      return true;
+    }
+
+    if (parsedCommand.type === "doctor") {
+      store.updateState((state) => setStatusText(state, "Running doctor..."));
+      const report = await runDoctorDiagnostics({
+        workspaceRoot: runtime.workspaceRoot,
+        paths: runtime.config.paths,
+        connectionState: runtime.getConnectionConfigState(),
+        settingsState: runtime.getSettingsState(),
+        settings: runtime.getSettings(),
+        currentModel: runtime.getCurrentModel(),
+        hasConnectionConfig: runtime.hasConnectionConfig(),
+        allowedRoots: runtime.getAllowedRoots(),
+        requestPatchCount: runtime.requestPatches.length
+      }, {
+        env: process.env,
+        stdinIsTTY: process.stdin.isTTY === true,
+        stdoutIsTTY: process.stdout.isTTY === true
+      });
+      appendUiMessage(createSystemMessage(formatDoctorReport(report), "Doctor"));
+      store.updateState((state) => setStatusText(state, "Idle"));
+      return true;
+    }
+
+    if (parsedCommand.type === "plan-enter") {
+      const wasEnabled = runtime.getPlanModeState().enabled;
+      const state = await runtime.setPlanModeEnabled(true);
+      appendUiMessage(
+        createSystemMessage(
+          wasEnabled
+            ? "Plan Mode is already active. Write tools remain blocked."
+            : [
+                "Plan Mode enabled.",
+                "Write tools, mutating shell commands, subagents, mutating MCP tools, and skill loading are blocked.",
+                "Use /build or /plan exit when you are ready to leave Plan Mode."
+              ].join("\n"),
+          "Plan Mode"
+        )
+      );
+      store.updateState((uiState) =>
+        setPlanModeEnabled(
+          setStatusText(uiState, state.enabled ? "Plan Mode" : "Idle"),
+          state.enabled
+        )
+      );
+      return true;
+    }
+
+    if (parsedCommand.type === "plan-exit") {
+      const wasEnabled = runtime.getPlanModeState().enabled;
+      const state = await runtime.setPlanModeEnabled(false);
+      appendUiMessage(
+        createSystemMessage(
+          wasEnabled
+            ? [
+                "Plan Mode disabled.",
+                "Build permissions are restored. Review the latest plan before making changes."
+              ].join("\n")
+            : "Plan Mode is not active. Build permissions are already available.",
+          "Plan Mode"
+        )
+      );
+      store.updateState((uiState) =>
+        setPlanModeEnabled(
+          setStatusText(uiState, state.enabled ? "Plan Mode" : "Idle"),
+          state.enabled
+        )
+      );
       return true;
     }
 
@@ -1245,6 +1459,9 @@ export function createSessionController(
     initialize: () => {
       syncDiagnosticsRegistrySettings();
       subscribeDiagnosticsFollowUps();
+      store.updateState((state) =>
+        setPlanModeEnabled(state, runtime.getPlanModeState().enabled)
+      );
       appendUiMessage(createSystemMessage("Alyce terminal UI started.", "Startup"));
       appendUiMessage(
         createSystemMessage(
@@ -1698,17 +1915,22 @@ export function createSessionController(
       }
 
       sessionApprovalMode = runtime.getSettings().approvalMode;
+      sessionFullApprovalEnabled = false;
       sessionAllowedKinds.clear();
+      sessionPermissionRules = [];
 
       store.updateState((state) =>
         setStatusText(
           setSessionAllowedKinds(
-            setSessionApprovalMode(
-              setSessionSettingsState(
-                setConnectionConfigState(closeDialog(state), runtime.getConnectionConfigState()),
-                runtime.getSettingsState()
+            setSessionFullApprovalEnabled(
+              setSessionApprovalMode(
+                setSessionSettingsState(
+                  setConnectionConfigState(closeDialog(state), runtime.getConnectionConfigState()),
+                  runtime.getSettingsState()
+                ),
+                sessionApprovalMode
               ),
-              sessionApprovalMode
+              sessionFullApprovalEnabled
             ),
             []
           ),
@@ -1838,6 +2060,22 @@ function extractThinkingDelta(previous: string, next: string): string {
   return next;
 }
 
+function shouldSkipApprovalDialog(
+  permissionEvaluation: Pick<PermissionEvaluation, "action"> | null | undefined,
+  request: Pick<ToolApprovalRequest, "forceAsk">,
+  sessionFullApprovalEnabled: boolean
+): boolean {
+  if (permissionEvaluation?.action === "deny") {
+    return false;
+  }
+
+  if (sessionFullApprovalEnabled) {
+    return true;
+  }
+
+  return permissionEvaluation?.action === "allow" && !request.forceAsk;
+}
+
 async function waitForUiPaint(): Promise<void> {
   await new Promise<void>((resolve) => {
     setImmediate(resolve);
@@ -1847,6 +2085,7 @@ async function waitForUiPaint(): Promise<void> {
 export const __SESSION_CONTROLLER_TESTING__ = {
   mergeThinkingContent,
   extractThinkingDelta,
+  shouldSkipApprovalDialog,
   waitForUiPaint
 } as const;
 

@@ -4,8 +4,14 @@ import { PromptSectionResolver } from "./sectionResolver.js";
 import type { PromptRuntimeContext } from "./types.js";
 
 function runTests() {
-  void testToolListUpdatesAcrossBuilds().then(() => {
+  void Promise.all([
+    testToolListUpdatesAcrossBuilds(),
+    testDefaultSystemPromptUsesEnglishAuthoredText()
+  ]).then(() => {
     console.log("promptBuilder tests passed");
+  }).catch((error) => {
+    console.error(error);
+    process.exitCode = 1;
   });
 }
 
@@ -24,6 +30,16 @@ function createRuntimeContext(availableTools: string[]): PromptRuntimeContext {
       persistentNotes: []
     }
   };
+}
+
+async function testDefaultSystemPromptUsesEnglishAuthoredText() {
+  const prompt = await buildDefaultSystemPrompt(
+    createRuntimeContext(["Read", "Grep", "PowerShell"]),
+    {},
+    new PromptSectionResolver()
+  );
+
+  assert.doesNotMatch(prompt, /[\u3400-\u9fff]/);
 }
 
 async function testToolListUpdatesAcrossBuilds() {
