@@ -1,3 +1,8 @@
+import {
+  JS_PACKAGE_MANAGER_BUILD_TEST_PATTERN,
+  JS_PACKAGE_MANAGER_INSTALL_PATTERN
+} from "./jsPackageManagers.js";
+
 export type CommandDialect = "shell" | "powershell";
 
 export type CommandRiskCategory =
@@ -103,6 +108,15 @@ const BASH_RULES: CommandRule[] = [
     category: "file-mutation",
     level: "high",
     forceAsk: true,
+    reason: "find -exec/-ok can run another command for every matched file.",
+    pattern: /\bfind\b[\s\S]*\s-(?:exec|ok)(?:dir)?\b/i,
+    possibleWrites: ["paths touched by the command launched from find"],
+    ruleRecommendation: "Use an exact command rule only after checking the search root and executed command."
+  },
+  {
+    category: "file-mutation",
+    level: "high",
+    forceAsk: true,
     reason: "Recursive chmod/chown can change permissions or ownership across many files.",
     pattern: /\b(chmod|chown)\s+[\s\S]*(?:-R|--recursive)\b/i,
     possibleWrites: ["permissions or ownership under named paths"],
@@ -131,7 +145,7 @@ const BASH_RULES: CommandRule[] = [
     level: "high",
     forceAsk: true,
     reason: "Package installation can run lifecycle scripts from dependencies.",
-    pattern: /\b(npm|pnpm|yarn|bun)\s+(install|add|update|upgrade|ci|dlx|exec|create)\b/i,
+    pattern: JS_PACKAGE_MANAGER_INSTALL_PATTERN,
     possibleWrites: ["node_modules", "lockfiles", "package manifests", "package manager cache"],
     ruleRecommendation: "Prefer exact project install commands; avoid broad package-manager allow rules."
   },
@@ -172,7 +186,10 @@ const BASH_RULES: CommandRule[] = [
     category: "build-test",
     level: "medium",
     reason: "Build or test commands can write caches, coverage, or build output.",
-    pattern: /\b(npm|pnpm|yarn|bun)\s+(run\s+)?(build|test|lint|typecheck)\b|\b(npm|pnpm|yarn|bun)\s+test\b|\b(pytest|vitest|jest|tsc|cargo\s+(test|build)|go\s+(test|build)|make\s+(test|build))\b/i,
+    pattern: new RegExp(
+      String.raw`${JS_PACKAGE_MANAGER_BUILD_TEST_PATTERN.source}|\b(?:pytest|vitest|jest|tsc|cargo\s+(?:test|build)|go\s+(?:test|build)|make\s+(?:test|build))\b`,
+      "i"
+    ),
     possibleWrites: ["build output", "test snapshots", "coverage", "tool caches"],
     ruleRecommendation: "Exact build/test commands are reasonable to save for trusted projects."
   }
@@ -252,7 +269,7 @@ const POWERSHELL_RULES: CommandRule[] = [
     level: "high",
     forceAsk: true,
     reason: "Package installation can run lifecycle scripts from dependencies.",
-    pattern: /\b(npm|pnpm|yarn|bun)\s+(install|add|update|upgrade|ci|dlx|exec|create)\b/i,
+    pattern: JS_PACKAGE_MANAGER_INSTALL_PATTERN,
     possibleWrites: ["node_modules", "lockfiles", "package manifests", "package manager cache"],
     ruleRecommendation: "Prefer exact project install commands; avoid broad package-manager allow rules."
   },
@@ -284,7 +301,10 @@ const POWERSHELL_RULES: CommandRule[] = [
     category: "build-test",
     level: "medium",
     reason: "Build or test commands can write caches, coverage, or build output.",
-    pattern: /\b(npm|pnpm|yarn|bun)\s+(run\s+)?(build|test|lint|typecheck)\b|\b(npm|pnpm|yarn|bun)\s+test\b|\b(pytest|vitest|jest|tsc|cargo\s+(test|build)|go\s+(test|build))\b/i,
+    pattern: new RegExp(
+      String.raw`${JS_PACKAGE_MANAGER_BUILD_TEST_PATTERN.source}|\b(?:pytest|vitest|jest|tsc|cargo\s+(?:test|build)|go\s+(?:test|build))\b`,
+      "i"
+    ),
     possibleWrites: ["build output", "test snapshots", "coverage", "tool caches"],
     ruleRecommendation: "Exact build/test commands are reasonable to save for trusted projects."
   }

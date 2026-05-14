@@ -1,7 +1,10 @@
 import assert from "node:assert/strict";
+import { promises as fs } from "node:fs";
+import os from "node:os";
+import path from "node:path";
 import { executeToolCall } from "./executeToolCall.js";
 import { getToolPolicyViolation, isToolSchemaAllowedByPolicy } from "./toolPolicy.js";
-import type { ToolExecutionContext } from "./types.js";
+import type { ToolApprovalRequest, ToolExecutionContext } from "./types.js";
 
 function createTestContext(
   patch: Partial<ToolExecutionContext> = {}
@@ -29,7 +32,10 @@ async function runTests() {
   await testReadOnlyPolicyAllowsReadOnlyPipelines();
   await testReadOnlyPolicyBlocksWriteShell();
   await testReadOnlyPolicyBlocksWriteLikeReadCommands();
+  await testReadOnlyPolicyBlocksWindowsPackageManagerCmdTest();
   await testReadOnlyPolicyBlocksCommandChaining();
+  await testAnyShellPolicyBlocksWindowsPackageManagerCmdWhenWriteDisabled();
+  await testAnyShellPolicyBlocksWindowsPackageManagerCmdInstallWhenNetworkDisabled();
   await testAnyShellPolicyBlocksNetworkCommandWhenNetworkDisabled();
   await testAnyShellPolicyBlocksCommonNetworkCommands();
   await testPolicyBlocksSubagentOrchestrationTools();
@@ -48,6 +54,11 @@ async function runTests() {
   await testPlanModeBlocksArbitraryMcpTools();
   await testPlanModeBlocksMutatingShellBeforeApproval();
   await testPlanModeForcesApprovalForReadOnlyShell();
+  await testBashCwdOutsideWorkspaceRequestsExternalDirectoryApproval();
+  await testBashCwdOutsideWorkspaceStopsWhenExternalDirectoryRejected();
+  await testPowerShellCwdOutsideWorkspaceRequestsExternalDirectoryApproval();
+  await testBashTimeoutReturnsStructuredTimeout();
+  await testPowerShellTimeoutReturnsStructuredTimeout();
   console.log("executeToolCall tests passed");
 }
 
@@ -105,6 +116,7 @@ async function testReadOnlyPolicyBlocksWriteLikeReadCommands() {
     "sed -i s/a/b/g file.txt",
     "sed -i.bak s/a/b/g file.txt",
     "find . -delete",
+    "find . -type f -exec rm {} +",
     "git diff --output=patch.txt"
   ]) {
     const violation = getToolPolicyViolation(
@@ -119,6 +131,20 @@ async function testReadOnlyPolicyBlocksWriteLikeReadCommands() {
 
     assert.match(violation ?? "", /read-only shell policy|file writes are disabled/);
   }
+}
+
+async function testReadOnlyPolicyBlocksWindowsPackageManagerCmdTest() {
+  const violation = getToolPolicyViolation(
+    "Bash",
+    { command: "npm.cmd test", timeout_ms: 1000 },
+    {
+      allowWrite: false,
+      allowNetwork: false,
+      shell: "read-only"
+    }
+  );
+
+  assert.match(violation ?? "", /read-only shell policy/);
 }
 
 async function testReadOnlyPolicyBlocksCommandChaining() {
@@ -140,6 +166,41 @@ async function testReadOnlyPolicyBlocksCommandChaining() {
 
     assert.match(violation ?? "", /read-only shell policy/);
   }
+}
+
+async function testAnyShellPolicyBlocksWindowsPackageManagerCmdWhenWriteDisabled() {
+  for (const command of [
+    "npm.cmd run build",
+    "pnpm.cmd test",
+    "yarn.cmd run typecheck",
+    "corepack pnpm test"
+  ]) {
+    const violation = getToolPolicyViolation(
+      "PowerShell",
+      { command, timeout_ms: 1000 },
+      {
+        allowWrite: false,
+        allowNetwork: true,
+        shell: "any"
+      }
+    );
+
+    assert.match(violation ?? "", /file writes are disabled/);
+  }
+}
+
+async function testAnyShellPolicyBlocksWindowsPackageManagerCmdInstallWhenNetworkDisabled() {
+  const violation = getToolPolicyViolation(
+    "PowerShell",
+    { command: "corepack pnpm install", timeout_ms: 1000 },
+    {
+      allowWrite: true,
+      allowNetwork: false,
+      shell: "any"
+    }
+  );
+
+  assert.match(violation ?? "", /network access is disabled/);
 }
 
 async function testAnyShellPolicyBlocksNetworkCommandWhenNetworkDisabled() {
@@ -518,29 +579,35 @@ async function testPlanModeBlocksArbitraryMcpTools() {
 }
 
 async function testPlanModeBlocksMutatingShellBeforeApproval() {
-  let approvalCount = 0;
-  const result = await executeToolCall(
-    "PowerShell",
-    JSON.stringify({ command: "Remove-Item test.txt", timeout_ms: 1000 }),
-    createTestContext({
-      planMode: true,
-      requestApproval: async () => {
-        approvalCount += 1;
-        return true;
-      }
-    })
-  );
+  await withExternalTempDirectory(async (externalDirectory) => {
+    let approvalCount = 0;
+    const result = await executeToolCall(
+      "PowerShell",
+      JSON.stringify({
+        command: "Remove-Item test.txt",
+        cwd: externalDirectory,
+        timeout_ms: 1000
+      }),
+      createTestContext({
+        planMode: true,
+        requestApproval: async () => {
+          approvalCount += 1;
+          return true;
+        }
+      })
+    );
 
-  const parsed = JSON.parse(result.displayResult) as {
-    ok: boolean;
-    status: string;
-    error: { type: string; status: string; message: string };
-  };
-  assert.equal(parsed.ok, false);
-  assert.equal(parsed.status, "denied");
-  assert.equal(parsed.error.type, "plan_mode_violation");
-  assert.match(parsed.error.message, /blocked by Plan Mode/);
-  assert.equal(approvalCount, 0);
+    const parsed = JSON.parse(result.displayResult) as {
+      ok: boolean;
+      status: string;
+      error: { type: string; status: string; message: string };
+    };
+    assert.equal(parsed.ok, false);
+    assert.equal(parsed.status, "denied");
+    assert.equal(parsed.error.type, "plan_mode_violation");
+    assert.match(parsed.error.message, /blocked by Plan Mode/);
+    assert.equal(approvalCount, 0);
+  });
 }
 
 async function testPlanModeForcesApprovalForReadOnlyShell() {
@@ -567,6 +634,153 @@ async function testPlanModeForcesApprovalForReadOnlyShell() {
   assert.equal(parsed.error.type, "permission_rejected");
   assert.match(parsed.error.message, /User rejected PowerShell tool request/);
   assert.equal(approvalCount, 1);
+}
+
+async function testBashCwdOutsideWorkspaceRequestsExternalDirectoryApproval() {
+  await withExternalTempDirectory(async (externalDirectory) => {
+    const approvals: ToolApprovalRequest[] = [];
+    const result = await executeToolCall(
+      "Bash",
+      JSON.stringify({
+        command: process.platform === "win32" ? "(Get-Location).Path" : "pwd",
+        cwd: externalDirectory,
+        timeout_ms: 5_000
+      }),
+      createTestContext({
+        requestApproval: async (request) => {
+          approvals.push(request);
+          return true;
+        }
+      })
+    );
+
+    const parsed = JSON.parse(result.displayResult) as {
+      ok: boolean;
+      result: { cwd: string; stdout: string };
+    };
+    assert.equal(parsed.ok, true);
+    assert.equal(path.resolve(parsed.result.cwd), path.resolve(externalDirectory));
+    assert.equal(path.resolve(parsed.result.stdout.trim()), path.resolve(externalDirectory));
+    assert.deepEqual(approvals.map((request) => request.kind), ["external-directory", "command"]);
+    assert.equal(approvals[0]?.scope?.type, "external-directory");
+    assert.equal(path.resolve(approvals[0]?.scope?.directory ?? ""), path.resolve(externalDirectory));
+  });
+}
+
+async function testBashCwdOutsideWorkspaceStopsWhenExternalDirectoryRejected() {
+  await withExternalTempDirectory(async (externalDirectory) => {
+    const approvals: ToolApprovalRequest[] = [];
+    const result = await executeToolCall(
+      "Bash",
+      JSON.stringify({
+        command: process.platform === "win32" ? "(Get-Location).Path" : "pwd",
+        cwd: externalDirectory,
+        timeout_ms: 5_000
+      }),
+      createTestContext({
+        requestApproval: async (request) => {
+          approvals.push(request);
+          return request.kind !== "external-directory";
+        }
+      })
+    );
+
+    const parsed = JSON.parse(result.displayResult) as {
+      ok: boolean;
+      status: string;
+      error: { type: string; message: string };
+    };
+    assert.equal(parsed.ok, false);
+    assert.equal(parsed.status, "rejected");
+    assert.equal(parsed.error.type, "permission_rejected");
+    assert.match(parsed.error.message, /User rejected external directory access/);
+    assert.deepEqual(approvals.map((request) => request.kind), ["external-directory"]);
+  });
+}
+
+async function testPowerShellCwdOutsideWorkspaceRequestsExternalDirectoryApproval() {
+  if (process.platform !== "win32") {
+    return;
+  }
+
+  await withExternalTempDirectory(async (externalDirectory) => {
+    const approvals: ToolApprovalRequest[] = [];
+    const result = await executeToolCall(
+      "PowerShell",
+      JSON.stringify({
+        command: "(Get-Location).Path",
+        cwd: externalDirectory,
+        timeout_ms: 5_000
+      }),
+      createTestContext({
+        requestApproval: async (request) => {
+          approvals.push(request);
+          return true;
+        }
+      })
+    );
+
+    const parsed = JSON.parse(result.displayResult) as {
+      ok: boolean;
+      result: { cwd: string; stdout: string };
+    };
+    assert.equal(parsed.ok, true);
+    assert.equal(path.resolve(parsed.result.cwd), path.resolve(externalDirectory));
+    assert.equal(path.resolve(parsed.result.stdout.trim()), path.resolve(externalDirectory));
+    assert.deepEqual(approvals.map((request) => request.kind), ["external-directory", "command"]);
+  });
+}
+
+async function testPowerShellTimeoutReturnsStructuredTimeout() {
+  if (process.platform !== "win32") {
+    return;
+  }
+
+  const result = await executeToolCall(
+    "PowerShell",
+    JSON.stringify({ command: "Start-Sleep -Seconds 5", timeout_ms: 50 }),
+    createTestContext()
+  );
+
+  const parsed = JSON.parse(result.displayResult) as {
+    ok: boolean;
+    status: string;
+    result: { timedOut: boolean };
+    error: { type: string; status: string };
+  };
+  assert.equal(parsed.ok, false);
+  assert.equal(parsed.status, "timeout");
+  assert.equal(parsed.error.type, "tool_timeout");
+  assert.equal(parsed.result.timedOut, true);
+}
+
+async function testBashTimeoutReturnsStructuredTimeout() {
+  const command = process.platform === "win32" ? "Start-Sleep -Seconds 5" : "sleep 5";
+  const result = await executeToolCall(
+    "Bash",
+    JSON.stringify({ command, timeout_ms: 50 }),
+    createTestContext()
+  );
+
+  const parsed = JSON.parse(result.displayResult) as {
+    ok: boolean;
+    status: string;
+    result: { timedOut: boolean };
+    error: { type: string; status: string };
+  };
+  assert.equal(parsed.ok, false);
+  assert.equal(parsed.status, "timeout");
+  assert.equal(parsed.error.type, "tool_timeout");
+  assert.equal(parsed.result.timedOut, true);
+}
+
+async function withExternalTempDirectory(callback: (directory: string) => Promise<void>) {
+  const externalDirectory = await fs.mkdtemp(path.join(os.tmpdir(), "alyce-external-cwd-"));
+  try {
+    await callback(externalDirectory);
+  } finally {
+    await fs.rm(externalDirectory, { recursive: true, force: true });
+  }
 }
 
 function createMcpRuntime(patch: Partial<ToolExecutionContext["mcpRuntime"]>) {

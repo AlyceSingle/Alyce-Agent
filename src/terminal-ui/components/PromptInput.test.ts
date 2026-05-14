@@ -2,13 +2,15 @@ import assert from "node:assert/strict";
 import {
   getSlashCommandSuggestions,
   isSlashCommandInput,
-  shouldCompleteSlashCommandInput
+  shouldCompleteSlashCommandInput,
+  shouldToggleModeFromPromptKey
 } from "./PromptInput.js";
 
 function runTests() {
   testSlashInputDetection();
   testSlashSuggestionsFilterByPrefix();
   testSlashCompletionRules();
+  testModeToggleKeyRules();
   console.log("PromptInput tests passed");
 }
 
@@ -37,6 +39,21 @@ function testSlashCompletionRules() {
   const help = getSlashCommandSuggestions("/help")[0];
   assert.equal(help?.completion, "/help");
   assert.equal(help ? shouldCompleteSlashCommandInput("/help", help) : true, false);
+}
+
+function testModeToggleKeyRules() {
+  const tabKey = {
+    tab: true,
+    shift: false,
+    meta: false,
+    ctrl: false
+  };
+  assert.equal(shouldToggleModeFromPromptKey("", false, tabKey), true);
+  assert.equal(shouldToggleModeFromPromptKey("inspect this", false, tabKey), true);
+  assert.equal(shouldToggleModeFromPromptKey("/", false, tabKey), false);
+  assert.equal(shouldToggleModeFromPromptKey("/help", false, tabKey), false);
+  assert.equal(shouldToggleModeFromPromptKey("", true, tabKey), false);
+  assert.equal(shouldToggleModeFromPromptKey("", false, { ...tabKey, shift: true }), false);
 }
 
 runTests();

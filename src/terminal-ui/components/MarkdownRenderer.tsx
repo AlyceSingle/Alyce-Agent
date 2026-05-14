@@ -85,8 +85,8 @@ const MAX_MARKDOWN_PARSE_NESTING_DEPTH = 32;
 const MAX_MARKDOWN_STREAM_BLOCKS = 512;
 const markdownPlanCache = new Map<string, MarkdownRenderPlan>();
 const CJK_SCRIPT_PATTERN = /[\p{Script=Han}\p{Script=Hiragana}\p{Script=Katakana}\p{Script=Hangul}]/u;
-const CJK_STRONG_EDGE_PUNCTUATION_PATTERN =
-  /[\u2018\u2019\u201C\u201D\u3008\u3009\u300A\u300B\u300C\u300D\u300E\u300F\u3010\u3011\u3014\u3015\uFF08\uFF09]/u;
+const CJK_EDGE_PUNCTUATION_PATTERN =
+  /[\u2018\u2019\u201C\u201D\u3001-\u303F\uFF01-\uFF0F\uFF1A-\uFF20\uFF3B-\uFF40\uFF5B-\uFF65]/u;
 const markdownMathExtension: TokenizerAndRendererExtension = {
   name: "math",
   level: "inline",
@@ -142,10 +142,44 @@ const markdownCjkStrongExtension: TokenizerAndRendererExtension = {
     };
   }
 };
+const markdownCjkEmphasisExtension: TokenizerAndRendererExtension = {
+  name: "cjk-emphasis",
+  level: "inline",
+  start(src: string): number | undefined {
+    const index = src.indexOf("*");
+    return index >= 0 ? index : undefined;
+  },
+  tokenizer(src: string) {
+    if (!src.startsWith("*") || src.startsWith("**")) {
+      return undefined;
+    }
+
+    const closeIndex = src.indexOf("*", 1);
+    if (closeIndex < 0) {
+      return undefined;
+    }
+
+    const content = src.slice(1, closeIndex);
+    if (
+      content.length === 0 ||
+      src[closeIndex + 1] === "*" ||
+      !shouldForceCjkEmphasisFallback(content)
+    ) {
+      return undefined;
+    }
+
+    return {
+      type: "em",
+      raw: src.slice(0, closeIndex + 1),
+      text: content,
+      tokens: this.lexer.inlineTokens(content)
+    };
+  }
+};
 const markdownLexer = new Marked({
   gfm: true,
   breaks: true,
-  extensions: [markdownMathExtension, markdownCjkStrongExtension]
+  extensions: [markdownMathExtension, markdownCjkStrongExtension, markdownCjkEmphasisExtension]
 });
 
 export function buildMarkdownRenderPlan(
@@ -1667,6 +1701,14 @@ function normalizeInlineMarkdownText(value: string): string {
 }
 
 function shouldForceCjkStrongFallback(content: string): boolean {
+  return shouldForceCjkDelimitedFallback(content);
+}
+
+function shouldForceCjkEmphasisFallback(content: string): boolean {
+  return shouldForceCjkDelimitedFallback(content);
+}
+
+function shouldForceCjkDelimitedFallback(content: string): boolean {
   if (content.trim() !== content || !CJK_SCRIPT_PATTERN.test(content)) {
     return false;
   }
@@ -1679,8 +1721,8 @@ function shouldForceCjkStrongFallback(content: string): boolean {
   const first = characters[0] ?? "";
   const last = characters[characters.length - 1] ?? "";
   return (
-    CJK_STRONG_EDGE_PUNCTUATION_PATTERN.test(first) ||
-    CJK_STRONG_EDGE_PUNCTUATION_PATTERN.test(last)
+    CJK_EDGE_PUNCTUATION_PATTERN.test(first) ||
+    CJK_EDGE_PUNCTUATION_PATTERN.test(last)
   );
 }
 

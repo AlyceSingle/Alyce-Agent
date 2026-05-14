@@ -1,4 +1,3 @@
-import { spawn } from "node:child_process";
 import { existsSync, promises as fs } from "node:fs";
 import path from "node:path";
 import { throwIfAborted } from "../../core/abort.js";
@@ -12,6 +11,7 @@ import {
   isTypeScriptDiagnosticSupported,
   type TypeScriptDiagnosticIssue
 } from "./typeScriptDiagnostics.js";
+import { runNativeCommandWithTimeout } from "./nativeCommandRunner.js";
 
 const FORMATTER_TIMEOUT_MS = 30_000;
 const MAX_PROCESS_OUTPUT_CHARS = 4_000;
@@ -493,101 +493,27 @@ async function resolvePathFormatter(
   return command ? { name, command, args, cwd } : null;
 }
 
-function runCommand(formatter: FormatterCommand, abortSignal?: AbortSignal): Promise<CommandResult> {
-  return new Promise((resolve) => {
-    const startedAt = Date.now();
-    let stdout = "";
-    let stderr = "";
-    let settled = false;
-    let timedOut = false;
-    let timeout: NodeJS.Timeout | undefined;
-    let forceSettleTimeout: NodeJS.Timeout | undefined;
-
-    const child = spawn(formatter.command, formatter.args, {
-      cwd: formatter.cwd,
-      env: formatter.env ?? process.env,
-      shell: process.platform === "win32" && /\.(cmd|bat)$/i.test(formatter.command),
-      windowsHide: true
-    });
-
-    const settle = (result: Omit<CommandResult, "durationMs">) => {
-      if (settled) {
-        return;
-      }
-
-      settled = true;
-      if (timeout) {
-        clearTimeout(timeout);
-      }
-      if (forceSettleTimeout) {
-        clearTimeout(forceSettleTimeout);
-      }
-      abortSignal?.removeEventListener("abort", abort);
-      resolve({
-        ...result,
-        stdout: truncateProcessOutput(stdout),
-        stderr: truncateProcessOutput(stderr),
-        durationMs: Date.now() - startedAt
-      });
-    };
-
-    const abort = () => {
-      child.kill();
-      settle({
-        exitCode: null,
-        signal: "SIGTERM",
-        timedOut,
-        stdout,
-        stderr
-      });
-    };
-
-    timeout = setTimeout(() => {
-      timedOut = true;
-      child.kill();
-      forceSettleTimeout = setTimeout(() => {
-        settle({
-          exitCode: null,
-          signal: "SIGTERM",
-          timedOut,
-          stdout,
-          stderr
-        });
-      }, 1_000);
-    }, FORMATTER_TIMEOUT_MS);
-
-    if (abortSignal?.aborted) {
-      abort();
-      return;
-    }
-
-    abortSignal?.addEventListener("abort", abort, { once: true });
-    child.stdout?.on("data", (chunk: Buffer | string) => {
-      stdout = appendProcessOutput(stdout, String(chunk));
-    });
-    child.stderr?.on("data", (chunk: Buffer | string) => {
-      stderr = appendProcessOutput(stderr, String(chunk));
-    });
-    child.on("error", (error) => {
-      stderr = appendProcessOutput(stderr, formatError(error));
-      settle({
-        exitCode: null,
-        signal: null,
-        timedOut,
-        stdout,
-        stderr
-      });
-    });
-    child.on("close", (exitCode, signal) => {
-      settle({
-        exitCode,
-        signal,
-        timedOut,
-        stdout,
-        stderr
-      });
-    });
+async function runCommand(formatter: FormatterCommand, abortSignal?: AbortSignal): Promise<CommandResult> {
+  const result = await runNativeCommandWithTimeout([formatter.command, ...formatter.args], {
+    cwd: formatter.cwd,
+    env: formatter.env ?? process.env,
+    timeoutMs: FORMATTER_TIMEOUT_MS,
+    abortSignal,
+    maxOutputBytes: MAX_PROCESS_OUTPUT_CHARS + 1
   });
+  const stderr =
+    result.error && result.error !== "timeout" && result.error !== "aborted"
+      ? appendProcessOutput(result.stderr, result.error)
+      : result.stderr;
+
+  return {
+    exitCode: result.exitCode,
+    signal: result.signal,
+    timedOut: result.timedOut,
+    stdout: truncateProcessOutput(result.stdout),
+    stderr: truncateProcessOutput(stderr),
+    durationMs: result.durationMs
+  };
 }
 
 function resolveProjectRoot(

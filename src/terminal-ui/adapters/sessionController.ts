@@ -211,6 +211,7 @@ export interface SessionController {
   initialize: () => void;
   submit: (input: string) => Promise<void>;
   setDraftInput: (value: string) => void;
+  togglePlanMode: () => Promise<void>;
   loadOlderSessionMessages: (visibleMessageId: string | null) => void;
   interrupt: () => void;
   openRewindSelector: () => void;
@@ -1153,6 +1154,29 @@ export function createSessionController(
     ];
   };
 
+  const setPlanModeFromUi = async (enabled: boolean) => {
+    const wasEnabled = runtime.getPlanModeState().enabled;
+    const state = await runtime.setPlanModeEnabled(enabled);
+    appendUiMessage(
+      createSystemMessage(
+        enabled
+          ? wasEnabled
+            ? "Plan Mode is already active. Write tools remain blocked."
+              : "Model changed to Plan mode"
+          : wasEnabled
+              ? "Model changed to Build mode"
+            : "Plan Mode is not active. Build permissions are already available.",
+        "Plan Mode"
+      )
+    );
+    store.updateState((uiState) =>
+      setPlanModeEnabled(
+        setStatusText(uiState, state.enabled ? "Plan Mode" : "Idle"),
+        state.enabled
+      )
+    );
+  };
+
   const isDirectoryAlreadyAllowed = (directory: string) => {
     const targetKey = normalizePathForComparison(directory);
     return runtime
@@ -1210,49 +1234,12 @@ export function createSessionController(
     }
 
     if (parsedCommand.type === "plan-enter") {
-      const wasEnabled = runtime.getPlanModeState().enabled;
-      const state = await runtime.setPlanModeEnabled(true);
-      appendUiMessage(
-        createSystemMessage(
-          wasEnabled
-            ? "Plan Mode is already active. Write tools remain blocked."
-            : [
-                "Plan Mode enabled.",
-                "Write tools, mutating shell commands, subagents, mutating MCP tools, and skill loading are blocked.",
-                "Use /build or /plan exit when you are ready to leave Plan Mode."
-              ].join("\n"),
-          "Plan Mode"
-        )
-      );
-      store.updateState((uiState) =>
-        setPlanModeEnabled(
-          setStatusText(uiState, state.enabled ? "Plan Mode" : "Idle"),
-          state.enabled
-        )
-      );
+      await setPlanModeFromUi(true);
       return true;
     }
 
     if (parsedCommand.type === "plan-exit") {
-      const wasEnabled = runtime.getPlanModeState().enabled;
-      const state = await runtime.setPlanModeEnabled(false);
-      appendUiMessage(
-        createSystemMessage(
-          wasEnabled
-            ? [
-                "Plan Mode disabled.",
-                "Build permissions are restored. Review the latest plan before making changes."
-              ].join("\n")
-            : "Plan Mode is not active. Build permissions are already available.",
-          "Plan Mode"
-        )
-      );
-      store.updateState((uiState) =>
-        setPlanModeEnabled(
-          setStatusText(uiState, state.enabled ? "Plan Mode" : "Idle"),
-          state.enabled
-        )
-      );
+      await setPlanModeFromUi(false);
       return true;
     }
 
@@ -1867,6 +1854,14 @@ export function createSessionController(
     },
     setDraftInput: (value) => {
       setDraftInputValue(value);
+    },
+    togglePlanMode: async () => {
+      if (activeTurn || store.getState().isLoading) {
+        appendUiMessage(createSystemMessage("Finish or interrupt the current turn before switching modes.", "Plan Mode"));
+        return;
+      }
+
+      await setPlanModeFromUi(!runtime.getPlanModeState().enabled);
     },
     loadOlderSessionMessages: (visibleMessageId) => {
       loadOlderSessionMessages(visibleMessageId);

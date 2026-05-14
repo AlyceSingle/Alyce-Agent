@@ -1,7 +1,7 @@
-import { spawn } from "node:child_process";
 import { promises as fs } from "node:fs";
 import path from "node:path";
 import { TurnInterruptedError, getAbortReason } from "../../core/abort.js";
+import { runNativeCommandWithTimeout } from "./nativeCommandRunner.js";
 import { resolveAllowedPath, toWorkspaceRelative } from "./pathSandbox.js";
 
 export interface RipgrepExecutionResult {
@@ -19,99 +19,37 @@ export async function runRipgrep(
   timeoutMs: number,
   abortSignal?: AbortSignal
 ): Promise<RipgrepExecutionResult> {
-  return new Promise((resolve, reject) => {
-    const startedAt = Date.now();
-    const child = spawn("rg", args, {
-      cwd,
-      env: process.env,
-      windowsHide: true
-    });
+  const result = await runNativeCommandWithTimeout(["rg", ...args], {
+    cwd,
+    env: process.env,
+    timeoutMs,
+    abortSignal,
+    maxOutputBytes: Number.MAX_SAFE_INTEGER
+  });
 
-    let stdout = "";
-    let stderr = "";
-    let timedOut = false;
-    let settled = false;
-    let timer: NodeJS.Timeout | null = null;
+  if (result.error === "aborted") {
+    throw new TurnInterruptedError(
+      getAbortReason(abortSignal) ?? "aborted",
+      "ripgrep interrupted by user"
+    );
+  }
 
-    const cleanup = () => {
-      if (timer) {
-        clearTimeout(timer);
-      }
-      abortSignal?.removeEventListener("abort", handleAbort);
-    };
-
-    const finishResolve = (value: Omit<RipgrepExecutionResult, "durationMs">) => {
-      if (settled) {
-        return;
-      }
-
-      settled = true;
-      cleanup();
-      resolve({
-        ...value,
-        durationMs: Date.now() - startedAt
-      });
-    };
-
-    const finishReject = (error: Error) => {
-      if (settled) {
-        return;
-      }
-
-      settled = true;
-      cleanup();
-      reject(error);
-    };
-
-    const handleAbort = () => {
-      child.kill();
-      finishReject(
-        new TurnInterruptedError(
-          getAbortReason(abortSignal) ?? "aborted",
-          "ripgrep interrupted by user"
-        )
-      );
-    };
-
-    if (abortSignal?.aborted) {
-      handleAbort();
-      return;
+  if (result.error && !result.timedOut) {
+    if (/ENOENT/i.test(result.error)) {
+      throw new Error("ripgrep executable 'rg' was not found in PATH");
     }
 
-    abortSignal?.addEventListener("abort", handleAbort, { once: true });
+    throw new Error(result.error);
+  }
 
-    timer = setTimeout(() => {
-      timedOut = true;
-      child.kill();
-    }, timeoutMs);
-
-    child.stdout.on("data", (chunk: Buffer | string) => {
-      stdout += chunk.toString();
-    });
-
-    child.stderr.on("data", (chunk: Buffer | string) => {
-      stderr += chunk.toString();
-    });
-
-    child.on("error", (error) => {
-      if ((error as NodeJS.ErrnoException).code === "ENOENT") {
-        finishReject(new Error("ripgrep executable 'rg' was not found in PATH"));
-        return;
-      }
-
-      finishReject(error);
-    });
-
-    child.on("close", (exitCode, signal) => {
-      finishResolve({
-        exitCode,
-        signal,
-        timedOut,
-        stdout,
-        stderr
-      });
-    });
-  });
+  return {
+    exitCode: result.exitCode,
+    signal: typeof result.signal === "string" ? result.signal : null,
+    timedOut: result.timedOut,
+    stdout: result.stdout,
+    stderr: result.stderr,
+    durationMs: result.durationMs
+  };
 }
 
 export function splitRipgrepLines(stdout: string): string[] {

@@ -9,13 +9,18 @@ function runTests() {
   testBashRecursiveDeleteForcesAsk();
   testBashCurlPipeShellIsDenied();
   testBashInterpreterInlineForcesExactRule();
+  testBashFindExecForcesAsk();
   testBashPackageInstallWarnsAboutScripts();
+  testBashWindowsPackageManagerCmdInstallWarnsAboutScripts();
+  testBashWindowsPackageManagerCmdBuildIsBuildTest();
   testBashGitResetIsDestructive();
   testPowerShellReadOnlyCommand();
   testPowerShellRemoveItemForcesAsk();
   testPowerShellSetContentIsMutation();
   testPowerShellDownloadPipeIexIsDenied();
   testPowerShellNestedCommandForcesExactRule();
+  testPowerShellWindowsPackageManagerCmdInstallWarnsAboutScripts();
+  testPowerShellWindowsPackageManagerCmdBuildIsBuildTest();
   testSafetyDetailsMentionForceAsk();
   console.log("commandSafety tests passed");
 }
@@ -57,6 +62,15 @@ function testBashInterpreterInlineForcesExactRule() {
   assert.equal(analysis.permissionPattern, "python -c \"open('x', 'w').write('y')\"");
 }
 
+function testBashFindExecForcesAsk() {
+  const analysis = analyzeCommandSafety("shell", "find . -type f -exec rm {} +");
+
+  assert.equal(analysis.category, "file-mutation");
+  assert.equal(analysis.level, "high");
+  assert.equal(analysis.forceAsk, true);
+  assert.ok(analysis.reasons.join(" ").includes("find -exec"));
+}
+
 function testBashPackageInstallWarnsAboutScripts() {
   const analysis = analyzeCommandSafety("shell", "npm install");
 
@@ -64,6 +78,28 @@ function testBashPackageInstallWarnsAboutScripts() {
   assert.equal(analysis.level, "high");
   assert.ok(analysis.reasons.join(" ").includes("lifecycle scripts"));
   assert.ok(analysis.possibleWrites.includes("node_modules"));
+}
+
+function testBashWindowsPackageManagerCmdInstallWarnsAboutScripts() {
+  const analysis = analyzeCommandSafety("shell", "pnpm.cmd install");
+
+  assert.equal(analysis.category, "package-install");
+  assert.equal(analysis.level, "high");
+  assert.equal(analysis.forceAsk, true);
+  assert.equal(analysis.permissionPattern, "pnpm.cmd install");
+  assert.ok(analysis.possibleWrites.includes("node_modules"));
+
+  const corepackAnalysis = analyzeCommandSafety("shell", "corepack pnpm install");
+  assert.equal(corepackAnalysis.category, "package-install");
+  assert.equal(corepackAnalysis.level, "high");
+}
+
+function testBashWindowsPackageManagerCmdBuildIsBuildTest() {
+  const analysis = analyzeCommandSafety("shell", "npm.cmd run build");
+
+  assert.equal(analysis.category, "build-test");
+  assert.equal(analysis.level, "medium");
+  assert.equal(analysis.permissionPattern, "npm.cmd run build");
 }
 
 function testBashGitResetIsDestructive() {
@@ -112,6 +148,27 @@ function testPowerShellNestedCommandForcesExactRule() {
   assert.equal(analysis.category, "arbitrary-interpreter");
   assert.equal(analysis.forceAsk, true);
   assert.ok(analysis.ruleRecommendation.includes("exact command"));
+}
+
+function testPowerShellWindowsPackageManagerCmdInstallWarnsAboutScripts() {
+  const analysis = analyzeCommandSafety("powershell", "yarn.cmd add react");
+
+  assert.equal(analysis.category, "package-install");
+  assert.equal(analysis.level, "high");
+  assert.equal(analysis.forceAsk, true);
+  assert.equal(analysis.permissionPattern, "yarn.cmd add react");
+}
+
+function testPowerShellWindowsPackageManagerCmdBuildIsBuildTest() {
+  const analysis = analyzeCommandSafety("powershell", "corepack.cmd run typecheck");
+
+  assert.equal(analysis.category, "build-test");
+  assert.equal(analysis.level, "medium");
+  assert.equal(analysis.permissionPattern, "corepack.cmd run typecheck");
+
+  const corepackAnalysis = analyzeCommandSafety("powershell", "corepack.cmd yarn test");
+  assert.equal(corepackAnalysis.category, "build-test");
+  assert.equal(corepackAnalysis.level, "medium");
 }
 
 function testSafetyDetailsMentionForceAsk() {

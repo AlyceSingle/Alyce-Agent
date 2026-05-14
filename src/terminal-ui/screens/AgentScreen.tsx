@@ -223,6 +223,13 @@ export function AgentScreen(props: { controller: SessionController }) {
     store.updateState((state) => setTranscriptSticky(state, sticky));
   }, [store]);
 
+  const refreshPromptLayout = useCallback(() => {
+    invalidateInkPrevFrame(stdout as NodeJS.WriteStream);
+    queueMicrotask(() => {
+      transcriptRef.current?.refreshViewport();
+    });
+  }, [stdout]);
+
   const handleTranscriptNearTop = useCallback((visibleMessageId: string | null) => {
     props.controller.loadOlderSessionMessages(visibleMessageId);
   }, [props.controller]);
@@ -515,8 +522,10 @@ export function AgentScreen(props: { controller: SessionController }) {
           disabled={isLoading || hasDialog}
           disabledReason={promptDisabledReason}
           sublineText={`${connection.model} | ${workspaceRoot} | ${currentModeLabel}`}
+          onLayoutHeightChange={refreshPromptLayout}
           onChange={(value) => props.controller.setDraftInput(value)}
           onCtrlCCaptureChange={setCtrlCCapture}
+          onModeToggle={() => props.controller.togglePlanMode()}
           onSubmit={async (value) => {
             await props.controller.submit(value);
           }}

@@ -1,3 +1,7 @@
+import {
+  JS_PACKAGE_MANAGER_BUILD_TEST_PATTERN,
+  JS_PACKAGE_MANAGER_INSTALL_PATTERN
+} from "./internal/jsPackageManagers.js";
 import type { JsonRecord, ToolPermissionPolicy } from "./types.js";
 
 const WRITE_TOOL_NAMES = new Set(["Edit", "MultiEdit", "Write", "apply_patch", "TodoWrite"]);
@@ -10,7 +14,6 @@ const MAIN_SESSION_ONLY_TOOL_NAMES = new Set([
   "ListMcpResources",
   "ReadMcpResource"
 ]);
-
 const READ_ONLY_COMMAND_STARTS = [
   "cat",
   "cd",
@@ -56,9 +59,11 @@ const WRITE_COMMAND_PATTERNS = [
   /\b(del|erase|rd|rmdir|ren|rename|copy|xcopy|robocopy|ni|ri|mi)\b/i,
   /\b(rm|mv|cp|mkdir|touch|chmod|chown|dd|tee)\b/i,
   /\b(git\s+(add|apply|checkout|clean|commit|merge|mv|pull|rebase|reset|restore|rm|switch))\b/i,
-  /\b(npm|pnpm|yarn|bun)\s+(install|add|update|upgrade|dlx|exec|create)\b/i,
+  JS_PACKAGE_MANAGER_INSTALL_PATTERN,
+  JS_PACKAGE_MANAGER_BUILD_TEST_PATTERN,
   /\b(pip|pip3)\s+install\b/i,
   /\bfind\b.*\s-delete\b/i,
+  /\bfind\b.*\s-(?:exec|ok)(?:dir)?\b/i,
   /\bsed\b.*\s-i(?:\S*)?(?:\s|$)/i,
   /(?:^|\s)--output(?:=|\s+)/i,
   /(^|[^>])>(?!\s*&\d)/,
@@ -71,7 +76,7 @@ const NETWORK_COMMAND_PATTERNS = [
   /\b(ssh|scp|sftp|rsync|nc|ncat|netcat|telnet)\b/i,
   /\b(gh|hub)\s+/i,
   /\b(git\s+(clone|fetch|ls-remote|pull|push|submodule\s+update))\b/i,
-  /\b(npm|pnpm|yarn|bun)\s+(install|add|update|upgrade|dlx|exec|create)\b/i,
+  JS_PACKAGE_MANAGER_INSTALL_PATTERN,
   /\b(pip|pip3)\s+install\b/i
 ];
 

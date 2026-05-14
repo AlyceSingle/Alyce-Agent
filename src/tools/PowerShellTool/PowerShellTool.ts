@@ -1,7 +1,8 @@
 import { spawn } from "node:child_process";
 import { z } from "zod";
 import { TurnInterruptedError, getAbortReason, throwIfAborted } from "../../core/abort.js";
-import { resolvePathFromInput, toWorkspaceRelative } from "../internal/pathSandbox.js";
+import { resolveCommandWorkingDirectory } from "../internal/commandWorkingDirectory.js";
+import { toWorkspaceRelative } from "../internal/pathSandbox.js";
 import {
   decodeCapturedOutput,
   sanitizePowerShellErrorOutput,
@@ -12,8 +13,14 @@ import {
   analyzeCommandSafety,
   formatCommandSafetyDetails
 } from "../internal/commandSafety.js";
+import {
+  WINDOWS_NATIVE_PACKAGE_MANAGER_FAST_PATH_NOTICE,
+  resolveSimplePackageManagerFastPath,
+  runSimplePackageManagerFastPath
+} from "../internal/packageManagerFastPath.js";
 import { shouldSpawnDetachedProcessGroup, terminateProcessTree } from "../internal/processTree.js";
 import { truncate } from "../internal/values.js";
+import { getWindowsPackageManagerShimNotice } from "../internal/windowsPackageManagerShim.js";
 import type { ToolExecutionContext } from "../types.js";
 import {
   DEFAULT_POWERSHELL_TIMEOUT_MS,
@@ -57,6 +64,8 @@ export interface PowerShellResult {
   durationMs: number;
 }
 
+const FORCE_SETTLE_AFTER_KILL_MS = 1_000;
+
 export async function executePowerShellTool(
   input: z.infer<typeof PowerShellInputSchema>,
   context: ToolExecutionContext
@@ -67,11 +76,6 @@ export async function executePowerShellTool(
 
   throwIfAborted(context.abortSignal);
 
-  const workingDirectory = resolveWorkingDirectory(
-    context.workspaceRoot,
-    context.allowedRoots,
-    input.cwd
-  );
   const timeoutMs = normalizeTimeout(input.timeout_ms, context.commandTimeoutMs);
   const safety = analyzeCommandSafety("powershell", input.command);
 
@@ -93,6 +97,14 @@ export async function executePowerShellTool(
     ].join("\n"));
   }
 
+  const workingDirectory = await resolveCommandWorkingDirectory(context, input.cwd, {
+    toolName: POWERSHELL_TOOL_NAME,
+    title: "Run command in external directory"
+  });
+  const fastPathArgv = resolveSimplePackageManagerFastPath(input.command);
+  const windowsCompatibilityNotice = fastPathArgv
+    ? null
+    : getWindowsPackageManagerShimNotice(input.command);
   const approved = await context.requestApproval({
     kind: "command",
     toolName: POWERSHELL_TOOL_NAME,
@@ -101,6 +113,8 @@ export async function executePowerShellTool(
     details: [
       `Working directory: ${toWorkspaceRelative(context.workspaceRoot, workingDirectory)}`,
       `Timeout: ${timeoutMs} ms`,
+      ...(windowsCompatibilityNotice ? [windowsCompatibilityNotice] : []),
+      ...(fastPathArgv ? [WINDOWS_NATIVE_PACKAGE_MANAGER_FAST_PATH_NOTICE] : []),
       ...formatCommandSafetyDetails(safety)
     ],
     permission: {
@@ -137,18 +151,6 @@ export async function executePowerShellTool(
   };
 }
 
-function resolveWorkingDirectory(
-  workspaceRoot: string,
-  allowedRoots: readonly string[],
-  cwd: string | undefined
-): string {
-  if (!cwd || cwd.trim().length === 0) {
-    return workspaceRoot;
-  }
-
-  return resolvePathFromInput(workspaceRoot, allowedRoots, cwd.trim());
-}
-
 function normalizeTimeout(requestedTimeout: number | undefined, fallback: number): number {
   const base = requestedTimeout ?? fallback ?? DEFAULT_POWERSHELL_TIMEOUT_MS;
   return Math.min(Math.max(1, Math.trunc(base)), MAX_POWERSHELL_TIMEOUT_MS);
@@ -176,6 +178,34 @@ function runPowerShellCommand(
   stdout: string;
   stderr: string;
 }> {
+  const fastPath = runSimplePackageManagerFastPath({
+    command,
+    cwd,
+    timeoutMs,
+    abortSignal,
+    interruptedMessage: "PowerShell command interrupted by user"
+  });
+  return fastPath.then((result) => {
+    if (result) {
+      return result;
+    }
+
+    return runPowerShellCommandViaPowerShell(command, cwd, timeoutMs, abortSignal);
+  });
+}
+
+function runPowerShellCommandViaPowerShell(
+  command: string,
+  cwd: string,
+  timeoutMs: number,
+  abortSignal?: AbortSignal
+): Promise<{
+  exitCode: number | null;
+  signal: string | null;
+  timedOut: boolean;
+  stdout: string;
+  stderr: string;
+}> {
   return new Promise((resolve, reject) => {
     const executable = resolvePowerShellExecutable();
     const wrappedCommand = wrapPowerShellCommand(command);
@@ -192,10 +222,14 @@ function runPowerShellCommand(
     let timedOut = false;
     let settled = false;
     let timer: NodeJS.Timeout | null = null;
+    let forceSettleTimer: NodeJS.Timeout | null = null;
 
     const cleanup = () => {
       if (timer) {
         clearTimeout(timer);
+      }
+      if (forceSettleTimer) {
+        clearTimeout(forceSettleTimer);
       }
       abortSignal?.removeEventListener("abort", handleAbort);
     };
@@ -245,7 +279,17 @@ function runPowerShellCommand(
 
     timer = setTimeout(() => {
       timedOut = true;
-      terminateProcessTree(child);
+      terminateProcessTree(child, "SIGTERM");
+      forceSettleTimer = setTimeout(() => {
+        terminateProcessTree(child, "SIGKILL");
+        finishResolve({
+          exitCode: null,
+          signal: "SIGTERM",
+          timedOut,
+          stdout: decodeCapturedOutput(stdoutChunks),
+          stderr: sanitizePowerShellErrorOutput(decodeCapturedOutput(stderrChunks))
+        });
+      }, FORCE_SETTLE_AFTER_KILL_MS);
     }, timeoutMs);
 
     child.stdout.on("data", (chunk: Buffer | string) => {

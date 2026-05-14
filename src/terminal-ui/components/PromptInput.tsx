@@ -3,9 +3,8 @@ import {
   REPL_COMMAND_DEFINITIONS,
   type ReplCommandDefinition
 } from "../../cli/commandRouter.js";
-import { Box, Text, useStdout, useTerminalSize } from "../runtime/ink.js";
+import { Box, Text, useTerminalSize } from "../runtime/ink.js";
 import type { TerminalKey } from "../runtime/input.js";
-import { forceInkRedraw, invalidateInkPrevFrame } from "../runtime/instances.js";
 import { logLayoutTrace } from "../runtime/utils/layoutTrace.js";
 import { terminalUiTheme } from "../theme/theme.js";
 import TextInput from "./TextInput.js";
@@ -32,29 +31,39 @@ export function shouldCompleteSlashCommandInput(value: string, command: ReplComm
   return value !== command.completion;
 }
 
+export function shouldToggleModeFromPromptKey(
+  value: string,
+  disabled: boolean,
+  key: Pick<TerminalKey, "tab" | "shift" | "meta" | "ctrl">
+) {
+  return key.tab && !key.shift && !key.meta && !key.ctrl && !disabled && !isSlashCommandInput(value);
+}
+
 export function PromptInput(props: {
   value: string;
   viewportWidth: number;
   disabled: boolean;
   disabledReason?: string;
   sublineText?: string;
+  onLayoutHeightChange?: () => void;
   onChange: (value: string) => void;
   onCtrlCCaptureChange: (capture: boolean) => void;
+  onModeToggle?: () => Promise<void> | void;
   onSubmit: (value: string) => Promise<void> | void;
 }) {
   const terminalSize = useTerminalSize();
-  const { stdout } = useStdout();
   const [cursorOffset, setCursorOffset] = useState(props.value.length);
   const [escClearPending, setEscClearPending] = useState(false);
   const previousValueRef = useRef(props.value);
   const pendingLocalValueChangeRef = useRef(false);
   const pendingLocalCursorOffsetRef = useRef<number | null>(null);
-  const slashMenuFrameRef = useRef({ visible: false, count: 0 });
+  const layoutRowCountRef = useRef(0);
   const [selectedSlashIndex, setSelectedSlashIndex] = useState(0);
   const viewportWidth = terminalSize.columns > 0 ? terminalSize.columns : props.viewportWidth;
   const inputColumns = Math.max(20, viewportWidth - PROMPT_INPUT_VIEWPORT_OFFSET);
   const slashSuggestions = useMemo(() => getSlashCommandSuggestions(props.value), [props.value]);
   const slashMenuVisible = !props.disabled && isSlashCommandInput(props.value) && slashSuggestions.length > 0;
+  const layoutRowCount = slashMenuVisible ? slashSuggestions.length + 1 : 0;
   const selectedSlashSuggestion = slashSuggestions[Math.min(selectedSlashIndex, slashSuggestions.length - 1)];
 
   useEffect(() => {
@@ -102,30 +111,14 @@ export function PromptInput(props: {
   }, [props.disabled]);
 
   useLayoutEffect(() => {
-    const previous = slashMenuFrameRef.current;
-    const next = {
-      visible: slashMenuVisible,
-      count: slashMenuVisible ? slashSuggestions.length : 0
-    };
-
-    if (previous.visible === next.visible && previous.count === next.count) {
+    const previousRowCount = layoutRowCountRef.current;
+    if (previousRowCount === layoutRowCount) {
       return;
     }
 
-    slashMenuFrameRef.current = next;
-    const shrank = previous.visible && next.visible && next.count < previous.count;
-    const closed = previous.visible && !next.visible;
-    if (shrank || closed) {
-      queueMicrotask(() => {
-        forceInkRedraw(stdout as NodeJS.WriteStream);
-      });
-      return;
-    }
-
-    if (!previous.visible && next.visible) {
-      invalidateInkPrevFrame(stdout as NodeJS.WriteStream);
-    }
-  }, [slashMenuVisible, slashSuggestions.length, stdout]);
+    layoutRowCountRef.current = layoutRowCount;
+    props.onLayoutHeightChange?.();
+  }, [layoutRowCount, props.onLayoutHeightChange]);
 
   useEffect(() => {
     if (props.value.length === 0) {
@@ -177,6 +170,11 @@ export function PromptInput(props: {
   }, [handleChange, handleCursorOffsetChange]);
 
   const handleInputKey = useCallback((_input: string, key: TerminalKey) => {
+    if (shouldToggleModeFromPromptKey(props.value, props.disabled, key) && props.onModeToggle) {
+      void props.onModeToggle();
+      return true;
+    }
+
     const slashInputActive = !props.disabled && isSlashCommandInput(props.value);
     if (!slashInputActive) {
       return false;
@@ -216,6 +214,7 @@ export function PromptInput(props: {
   }, [
     applySlashCompletion,
     props.disabled,
+    props.onModeToggle,
     props.value,
     selectedSlashSuggestion,
     slashSuggestions.length
@@ -228,7 +227,7 @@ export function PromptInput(props: {
       : props.sublineText;
 
   return (
-    <Box flexDirection="column" width="100%">
+    <Box flexDirection="column" flexShrink={0} width="100%">
       {slashMenuVisible ? (
         <SlashCommandSuggestions
           suggestions={slashSuggestions}
@@ -237,6 +236,7 @@ export function PromptInput(props: {
       ) : null}
       <Box
         flexDirection="column"
+        flexShrink={0}
         width="100%"
         borderStyle="round"
         borderColor={terminalUiTheme.colors.inputBorder}
@@ -291,7 +291,7 @@ function SlashCommandSuggestions(props: {
   );
 
   return (
-    <Box marginBottom={1} flexDirection="column" width="100%">
+    <Box marginBottom={1} flexDirection="column" flexShrink={0} width="100%">
       {props.suggestions.map((suggestion, index) => {
         const selected = index === props.selectedIndex;
         const marker = selected ? "› " : "  ";

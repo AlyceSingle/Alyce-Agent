@@ -347,6 +347,8 @@ Alyce first checks these overrides, then explicit suffixes in the model name suc
 ### Markdown Limitations in TTY
 
 - Alyce uses terminal-native markdown rendering, not browser DOM rendering.
+- Emphasis, links, tables, quotes, and math use terminal-native styles/spans; fenced code blocks remain plain code blocks without language syntax highlighting.
+- Inline `$...$` and display `$$...$$` math are rendered as readable Unicode/plain text, not KaTeX HTML.
 - DOM-level HTML behaviors (sanitizers, layout engines, CSS, script execution) are intentionally unsupported.
 - Table, quote, and link semantics are approximated for terminal readability.
 - Copy behavior follows rendered terminal text; for labeled links, Alyce appends `<URL>` so copied text preserves the target.

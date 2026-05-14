@@ -1,4 +1,3 @@
-import { spawn } from "node:child_process";
 import { constants as fsConstants, promises as fs } from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -10,6 +9,7 @@ import type {
   SessionSettings,
   SessionSettingsState
 } from "../../config/runtime.js";
+import { runNativeCommandWithTimeout } from "../../tools/internal/nativeCommandRunner.js";
 
 export type DoctorCheckStatus = "ok" | "warn" | "fail" | "skipped";
 
@@ -612,57 +612,18 @@ async function runCommandWithTimeout(
   command: string,
   args: string[]
 ): Promise<DoctorCommandResult> {
-  return new Promise((resolve) => {
-    const child = spawn(command, args, {
-      windowsHide: true
-    });
-    let stdout = "";
-    let stderr = "";
-    let settled = false;
-    let timedOut = false;
-    const timer = setTimeout(() => {
-      timedOut = true;
-      child.kill();
-    }, COMMAND_CHECK_TIMEOUT_MS);
-
-    const finish = (result: DoctorCommandResult) => {
-      if (settled) {
-        return;
-      }
-      settled = true;
-      clearTimeout(timer);
-      resolve(result);
-    };
-
-    child.stdout.on("data", (chunk: Buffer | string) => {
-      stdout += chunk.toString();
-    });
-
-    child.stderr.on("data", (chunk: Buffer | string) => {
-      stderr += chunk.toString();
-    });
-
-    child.on("error", (error) => {
-      finish({
-        ok: false,
-        stdout,
-        stderr,
-        exitCode: null,
-        timedOut,
-        error: formatError(error)
-      });
-    });
-
-    child.on("close", (exitCode) => {
-      finish({
-        ok: exitCode === 0,
-        stdout,
-        stderr,
-        exitCode,
-        timedOut
-      });
-    });
+  const result = await runNativeCommandWithTimeout([command, ...args], {
+    timeoutMs: COMMAND_CHECK_TIMEOUT_MS
   });
+
+  return {
+    ok: result.exitCode === 0,
+    stdout: result.stdout,
+    stderr: result.stderr,
+    exitCode: result.exitCode,
+    timedOut: result.timedOut,
+    error: result.error
+  };
 }
 
 function summarizeChecks(checks: DoctorCheck[]): Record<DoctorCheckStatus, number> {

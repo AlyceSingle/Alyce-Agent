@@ -1,3 +1,6 @@
+import { appendPowerShellExecutionPolicyDiagnostic } from "./powershellDiagnostics.js";
+import { getWindowsPackageManagerShimPreamble } from "./windowsPackageManagerShim.js";
+
 const WINDOWS_POWERSHELL_UTF8_PREAMBLE_LINES = [
   "[Console]::InputEncoding = [System.Text.UTF8Encoding]::new($false)",
   "[Console]::OutputEncoding = [System.Text.UTF8Encoding]::new($false)",
@@ -10,7 +13,7 @@ export function wrapPowerShellCommand(command: string): string {
     return command;
   }
 
-  return [...WINDOWS_POWERSHELL_UTF8_PREAMBLE_LINES, command].join("\n");
+  return [...getWindowsPowerShellPreambleLines(), command].join("\n");
 }
 
 export function toOutputBuffer(chunk: Buffer | string): Buffer {
@@ -35,14 +38,33 @@ export function sanitizePowerShellErrorOutput(output: string): string {
     return output;
   }
 
+  return appendPowerShellExecutionPolicyDiagnostic(stripWindowsPowerShellPreamble(output));
+}
+
+function stripWindowsPowerShellPreamble(output: string): string {
   const normalizedOutput = output.replace(/\r\n/g, "\n");
-  const normalizedPrefix = `${WINDOWS_POWERSHELL_UTF8_PREAMBLE_LINES.join("\n")}\n`;
-  if (!normalizedOutput.startsWith(normalizedPrefix)) {
-    return output;
+  const normalizedPrefixes = [
+    `${getWindowsPowerShellPreambleLines().join("\n")}\n`,
+    `${WINDOWS_POWERSHELL_UTF8_PREAMBLE_LINES.join("\n")}\n`
+  ];
+
+  for (const normalizedPrefix of normalizedPrefixes) {
+    if (!normalizedOutput.startsWith(normalizedPrefix)) {
+      continue;
+    }
+
+    const stripped = normalizedOutput.slice(normalizedPrefix.length);
+    return output.includes("\r\n") ? stripped.replace(/\n/g, "\r\n") : stripped;
   }
 
-  const stripped = normalizedOutput.slice(normalizedPrefix.length);
-  return output.includes("\r\n") ? stripped.replace(/\n/g, "\r\n") : stripped;
+  return output;
+}
+
+function getWindowsPowerShellPreambleLines(): string[] {
+  return [
+    ...WINDOWS_POWERSHELL_UTF8_PREAMBLE_LINES,
+    ...getWindowsPackageManagerShimPreamble()
+  ];
 }
 
 function decodeWindowsOutputBuffer(buffer: Buffer): string {

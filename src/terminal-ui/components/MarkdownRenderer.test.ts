@@ -16,7 +16,10 @@ function runTests() {
   testLinkSpanPreservesHrefAndUnderlineStyle();
   testLinkRenderingAppendsHrefForCopyWhenLabelDiffers();
   testLinkRenderingDoesNotDuplicateHrefWhenLabelIsUrl();
+  testCjkStrongAndEmphasisKeepInheritedColors();
   testLiveCjkStrongWithEdgePunctuationRendersInsideSentence();
+  testEnhancedMathSymbolsRenderAsUnicodeText();
+  testDisplayMathRendersStructuredEnvironments();
   testMarkdownCacheKeyIncludesPolicyVersion();
   testBudgetGuardIgnoresFencedCodeNestingMarkers();
   testBudgetGuardRejectsOverNestedMarkdown();
@@ -33,7 +36,7 @@ function testInlineMathWithAsteriskDoesNotBreakMarkdown() {
   );
   const renderedText = flattenPlanText(plan);
 
-  assert.match(renderedText, /A\^-1 = 1\/\|A\| A\^\*/);
+  assert.match(renderedText, /A⁻¹ = 1\/\|A\| A\^\*/);
   assert.match(renderedText, /其中 \|A\| 是矩阵的行列式，A\^\* 是伴随矩阵\)\*/);
   assert.match(renderedText, /口诀是 “主对角线换位置，副对角线变符号”，然后再除以行列式 \|A\|。/);
   assert.equal(findSpan(plan, "主对角线")?.bold, true);
@@ -52,7 +55,7 @@ function testDisplayMathGetsOwnBlock() {
   const plan = buildMarkdownRenderPlan("before\n\n$$A^{-1} = \\frac{1}{|A|} A^*$$\n\nafter", 120);
   const renderedText = flattenPlanText(plan);
 
-  assert.match(renderedText, /before\nA\^-1 = 1\/\|A\| A\^\*\nafter/);
+  assert.match(renderedText, /before\nA⁻¹ = 1\/\|A\| A\^\*\nafter/);
 }
 
 function testDoubleEscapedHtmlEntityInMarkdownGetsDecoded() {
@@ -154,6 +157,23 @@ function testLinkRenderingDoesNotDuplicateHrefWhenLabelIsUrl() {
   assert.doesNotMatch(renderedText, /<https:\/\/example\.com>/);
 }
 
+function testCjkStrongAndEmphasisKeepInheritedColors() {
+  const strongPlan = buildMarkdownRenderPlan("**中文（测试）。**", 120, { live: true });
+  const emphasisPlan = buildMarkdownRenderPlan("*（中文）。*", 120, { live: true });
+  const outsidePlan = buildMarkdownRenderPlan("**重点**。", 120, { live: true });
+
+  const strongSpan = findSpan(strongPlan, "中文（测试）。");
+  const emphasisSpan = findSpan(emphasisPlan, "（中文）。");
+  const outsideSpans = flattenPlanSpans(outsidePlan);
+
+  assert.equal(strongSpan?.bold, true);
+  assert.equal(strongSpan?.color, undefined);
+  assert.equal(emphasisSpan?.italic, true);
+  assert.equal(emphasisSpan?.color, undefined);
+  assert.equal(outsideSpans.find((span) => span.text === "重点")?.bold, true);
+  assert.equal(outsideSpans.find((span) => span.text === "。")?.bold, undefined);
+}
+
 function testLiveCjkStrongWithEdgePunctuationRendersInsideSentence() {
   const cases: Array<{ source: string; highlighted: string }> = [
     {
@@ -173,6 +193,36 @@ function testLiveCjkStrongWithEdgePunctuationRendersInsideSentence() {
     assert.equal(findSpan(plan, testCase.highlighted)?.bold, true);
     assert.doesNotMatch(renderedText, /\*\*/);
   }
+}
+
+function testEnhancedMathSymbolsRenderAsUnicodeText() {
+  const plan = buildMarkdownRenderPlan(
+    "Inline $\\sum_{i=1}^{n} i = \\frac{n(n+1)}{2}$ and $\\alpha \\leq \\beta \\to \\infty$.",
+    120
+  );
+  const renderedText = flattenPlanText(plan);
+
+  assert.match(renderedText, /∑ᵢ₌₁ⁿ i = \(n\(n\+1\)\)\/2/);
+  assert.match(renderedText, /α ≤ β → ∞/);
+}
+
+function testDisplayMathRendersStructuredEnvironments() {
+  const plan = buildMarkdownRenderPlan(
+    [
+      "matrix:",
+      "",
+      "$$\\begin{pmatrix} a & b \\\\ c & d \\end{pmatrix}$$",
+      "",
+      "cases:",
+      "",
+      "$$\\begin{cases} x^2 & \\text{if } x \\geq 0 \\\\ -x & otherwise \\end{cases}$$"
+    ].join("\n"),
+    120
+  );
+  const renderedText = flattenPlanText(plan);
+
+  assert.match(renderedText, /\( a  b \)\n\( c  d \)/);
+  assert.match(renderedText, /\{ x², if x ≥ 0\n\{ -x, otherwise/);
 }
 
 function testMarkdownCacheKeyIncludesPolicyVersion() {
@@ -237,6 +287,10 @@ function flattenPlanText(plan: ReturnType<typeof buildMarkdownRenderPlan>): stri
 function flattenPlanLines(plan: ReturnType<typeof buildMarkdownRenderPlan>): string[] {
   return plan.blocks
     .flatMap((block) => block.lines.map((line) => line.spans.map((span) => span.text).join("")));
+}
+
+function flattenPlanSpans(plan: ReturnType<typeof buildMarkdownRenderPlan>) {
+  return plan.blocks.flatMap((block) => block.lines.flatMap((line) => line.spans));
 }
 
 function findSpan(plan: ReturnType<typeof buildMarkdownRenderPlan>, text: string) {
