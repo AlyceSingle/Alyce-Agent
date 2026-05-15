@@ -110,6 +110,7 @@ export function AgentScreen(props: { controller: SessionController }) {
   const draftInput = useTerminalUiSelector((value) => value.draftInput);
   const todos = useTerminalUiSelector((value) => value.todos);
   const backgroundTasks = useTerminalUiSelector((value) => value.backgroundTasks);
+  const backgroundProcessCount = useTerminalUiSelector((value) => value.backgroundProcessCount);
   const transcriptSticky = useTerminalUiSelector((value) => value.transcriptSticky);
   const unseenDividerMessageId = useTerminalUiSelector((value) => value.unseenDividerMessageId);
   const unseenMessageCount = useTerminalUiSelector((value) => value.unseenMessageCount);
@@ -514,6 +515,7 @@ export function AgentScreen(props: { controller: SessionController }) {
           planModeEnabled={planModeEnabled}
           todoSummary={todoSummary}
           taskSummary={taskSummary}
+          backgroundProcessCount={backgroundProcessCount}
           statusText={displayedStatusText}
           contextBudget={contextBudget}
         />

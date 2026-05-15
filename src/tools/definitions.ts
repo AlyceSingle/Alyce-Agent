@@ -20,6 +20,66 @@ import {
   executeBashTool
 } from "./BashTool/BashTool.js";
 import {
+  executeProcessListTool,
+  PROCESS_LIST_TOOL_DESCRIPTION,
+  PROCESS_LIST_TOOL_NAME,
+  ProcessListInputSchema
+} from "./BackgroundProcessTool/ProcessListTool.js";
+import {
+  executeProcessReadTool,
+  PROCESS_READ_TOOL_DESCRIPTION,
+  PROCESS_READ_TOOL_NAME,
+  ProcessReadInputSchema
+} from "./BackgroundProcessTool/ProcessReadTool.js";
+import {
+  executeProcessStartTool,
+  PROCESS_START_TOOL_DESCRIPTION,
+  PROCESS_START_TOOL_NAME,
+  ProcessStartInputSchema
+} from "./BackgroundProcessTool/ProcessStartTool.js";
+import {
+  executeProcessStopTool,
+  PROCESS_STOP_TOOL_DESCRIPTION,
+  PROCESS_STOP_TOOL_NAME,
+  ProcessStopInputSchema
+} from "./BackgroundProcessTool/ProcessStopTool.js";
+import {
+  executePtyCloseTool,
+  PTY_CLOSE_TOOL_DESCRIPTION,
+  PTY_CLOSE_TOOL_NAME,
+  PtyCloseInputSchema
+} from "./PtyTool/PtyCloseTool.js";
+import {
+  executePtyCreateTool,
+  PTY_CREATE_TOOL_DESCRIPTION,
+  PTY_CREATE_TOOL_NAME,
+  PtyCreateInputSchema
+} from "./PtyTool/PtyCreateTool.js";
+import {
+  executePtyListTool,
+  PTY_LIST_TOOL_DESCRIPTION,
+  PTY_LIST_TOOL_NAME,
+  PtyListInputSchema
+} from "./PtyTool/PtyListTool.js";
+import {
+  executePtyReadTool,
+  PTY_READ_TOOL_DESCRIPTION,
+  PTY_READ_TOOL_NAME,
+  PtyReadInputSchema
+} from "./PtyTool/PtyReadTool.js";
+import {
+  executePtyResizeTool,
+  PTY_RESIZE_TOOL_DESCRIPTION,
+  PTY_RESIZE_TOOL_NAME,
+  PtyResizeInputSchema
+} from "./PtyTool/PtyResizeTool.js";
+import {
+  executePtyWriteTool,
+  PTY_WRITE_TOOL_DESCRIPTION,
+  PTY_WRITE_TOOL_NAME,
+  PtyWriteInputSchema
+} from "./PtyTool/PtyWriteTool.js";
+import {
   executeFileApplyPatch,
   FILE_APPLY_PATCH_TOOL_DESCRIPTION,
   FileApplyPatchInputSchema
@@ -259,6 +319,66 @@ export const REGISTERED_TOOLS: AgentTool[] = [
     description: POWERSHELL_TOOL_DESCRIPTION,
     inputSchema: PowerShellInputSchema,
     execute: (input, context) => executePowerShellTool(input, context)
+  },
+  {
+    name: PROCESS_START_TOOL_NAME,
+    description: PROCESS_START_TOOL_DESCRIPTION,
+    inputSchema: ProcessStartInputSchema,
+    execute: (input, context) => executeProcessStartTool(input, context)
+  },
+  {
+    name: PROCESS_LIST_TOOL_NAME,
+    description: PROCESS_LIST_TOOL_DESCRIPTION,
+    inputSchema: ProcessListInputSchema,
+    execute: (input, context) => executeProcessListTool(input, context)
+  },
+  {
+    name: PROCESS_READ_TOOL_NAME,
+    description: PROCESS_READ_TOOL_DESCRIPTION,
+    inputSchema: ProcessReadInputSchema,
+    execute: (input, context) => executeProcessReadTool(input, context)
+  },
+  {
+    name: PROCESS_STOP_TOOL_NAME,
+    description: PROCESS_STOP_TOOL_DESCRIPTION,
+    inputSchema: ProcessStopInputSchema,
+    execute: (input, context) => executeProcessStopTool(input, context)
+  },
+  {
+    name: PTY_CREATE_TOOL_NAME,
+    description: PTY_CREATE_TOOL_DESCRIPTION,
+    inputSchema: PtyCreateInputSchema,
+    execute: (input, context) => executePtyCreateTool(input, context)
+  },
+  {
+    name: PTY_LIST_TOOL_NAME,
+    description: PTY_LIST_TOOL_DESCRIPTION,
+    inputSchema: PtyListInputSchema,
+    execute: (input, context) => executePtyListTool(input, context)
+  },
+  {
+    name: PTY_READ_TOOL_NAME,
+    description: PTY_READ_TOOL_DESCRIPTION,
+    inputSchema: PtyReadInputSchema,
+    execute: (input, context) => executePtyReadTool(input, context)
+  },
+  {
+    name: PTY_WRITE_TOOL_NAME,
+    description: PTY_WRITE_TOOL_DESCRIPTION,
+    inputSchema: PtyWriteInputSchema,
+    execute: (input, context) => executePtyWriteTool(input, context)
+  },
+  {
+    name: PTY_RESIZE_TOOL_NAME,
+    description: PTY_RESIZE_TOOL_DESCRIPTION,
+    inputSchema: PtyResizeInputSchema,
+    execute: (input, context) => executePtyResizeTool(input, context)
+  },
+  {
+    name: PTY_CLOSE_TOOL_NAME,
+    description: PTY_CLOSE_TOOL_DESCRIPTION,
+    inputSchema: PtyCloseInputSchema,
+    execute: (input, context) => executePtyCloseTool(input, context)
   },
   {
     name: WEB_FETCH_TOOL_NAME,

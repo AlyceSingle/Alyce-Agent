@@ -42,7 +42,7 @@ async function testDiffAndRestoreAddedModifiedDeletedFiles() {
       ]
     );
 
-    const result = await store.restoreFiles(before, diff);
+    const result = await store.restoreFiles(diff);
     assert.deepEqual(result.restored.sort(), [deletedPath, modifiedPath].sort());
     assert.deepEqual(result.removed, [addedPath]);
     assert.equal(await fs.readFile(modifiedPath, "utf8"), "before\n");
@@ -71,7 +71,7 @@ async function testRestoreFilesSkipsConflicts() {
     await fs.writeFile(addedPath, "user change\n");
     await fs.writeFile(deletedPath, "user recreated\n");
 
-    const result = await store.restoreFiles(before, diff);
+    const result = await store.restoreFiles(diff);
     assert.deepEqual(result.restored, []);
     assert.deepEqual(result.removed, []);
     assert.deepEqual(

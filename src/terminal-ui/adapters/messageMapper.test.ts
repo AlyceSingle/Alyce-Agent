@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import type { LspDiagnosticCompletedEvent } from "../../services/lsp/LspDiagnosticRegistry.js";
 import type { TerminalUiMessage } from "../state/types.js";
 import {
+  createToolResultMessage,
   createDiagnosticsFollowUpMessage,
   formatDiagnosticsFollowUpForModel,
   isEphemeralProgressMessage
@@ -26,6 +27,9 @@ function runTests() {
   testDetectsProgressMetadataToken();
   testDetectsProgressMetadataPrefix();
   testIgnoresNonProgressMetadataText();
+  testProcessStartRunningResultUsesReadableBlocks();
+  testPtyReadResultUsesReadableBlocks();
+  testPtyListResultUsesReadableBlocks();
   testDiagnosticsFollowUpIncludesPhase5Metadata();
   console.log("messageMapper tests passed");
 }
@@ -48,6 +52,123 @@ function testDetectsProgressMetadataPrefix() {
 function testIgnoresNonProgressMetadataText() {
   const message = createMessage({ metadata: ["tool result", "in progress"] });
   assert.equal(isEphemeralProgressMessage(message), false);
+}
+
+function testProcessStartRunningResultUsesReadableBlocks() {
+  const message = createToolResultMessage(
+    "ProcessStart",
+    JSON.stringify({
+      ok: true,
+      status: "success",
+      tool: "ProcessStart",
+      result: {
+        status: "running",
+        process_id: "bg_test",
+        pid: 12345,
+        command: "npm run dev",
+        cwd: "C:\\workspace",
+        started_at: "2026-05-10T00:00:00.000Z",
+        updated_at: "2026-05-10T00:00:01.000Z",
+        stdout_log_path: "C:\\workspace\\.alyce\\background-processes\\bg_test\\stdout.log",
+        stderr_log_path: "C:\\workspace\\.alyce\\background-processes\\bg_test\\stderr.log",
+        combined_log_path: "C:\\workspace\\.alyce\\background-processes\\bg_test\\output.log",
+        record_path: "C:\\workspace\\.alyce\\background-processes\\bg_test\\process.json",
+        stdout_preview: "Local: http://localhost:5173/",
+        stderr_preview: "",
+        detected_urls: ["http://localhost:5173/"],
+        detected_ports: [5173],
+        startup_matched: "Local:"
+      }
+    }),
+    JSON.stringify({ command: "npm run dev" })
+  );
+
+  assert.equal(message.kind, "tool");
+  assert.equal(message.blocks[0]?.label, "Process");
+  assert.equal(message.blocks[0]?.tone, "success");
+  assert.match(message.blocks[0]?.content ?? "", /Status: running/);
+  assert.match(message.blocks[0]?.content ?? "", /Process: bg_test/);
+  assert.match(message.blocks[0]?.content ?? "", /URL: http:\/\/localhost:5173\//);
+  assert.match(message.blocks[0]?.content ?? "", /Log: .*output\.log/);
+  assert.equal(message.blocks[1]?.label, "Command");
+  assert.equal(message.blocks[1]?.content, "$ npm run dev");
+}
+
+function testPtyReadResultUsesReadableBlocks() {
+  const message = createToolResultMessage(
+    "PtyRead",
+    JSON.stringify({
+      ok: true,
+      status: "success",
+      tool: "PtyRead",
+      result: {
+        pty_id: "pty_test",
+        content: "ready\r\nprompt> ",
+        cursor: 0,
+        next_cursor: 15,
+        buffer_cursor: 0,
+        bytes: 15,
+        eof: true,
+        session: {
+          pty_id: "pty_test",
+          title: "node repl",
+          command: "node",
+          args: [],
+          cwd: "C:\\workspace",
+          status: "running",
+          pid: 12345,
+          cols: 80,
+          rows: 24,
+          created_at: "2026-05-10T00:00:00.000Z",
+          updated_at: "2026-05-10T00:00:01.000Z"
+        }
+      }
+    }),
+    JSON.stringify({ pty_id: "pty_test" })
+  );
+
+  assert.equal(message.kind, "tool");
+  assert.equal(message.title, "PtyRead pty_test");
+  assert.equal(message.blocks[0]?.label, "PTY Output");
+  assert.equal(message.blocks[0]?.tone, "success");
+  assert.match(message.blocks[0]?.content ?? "", /ready/);
+  assert.equal(message.blocks[1]?.label, "Details");
+  assert.match(message.blocks[1]?.content ?? "", /Next cursor: 15/);
+  assert.match(message.blocks[1]?.content ?? "", /Status: running/);
+}
+
+function testPtyListResultUsesReadableBlocks() {
+  const message = createToolResultMessage(
+    "PtyList",
+    JSON.stringify({
+      ok: true,
+      status: "success",
+      tool: "PtyList",
+      result: {
+        sessions: [
+          {
+            pty_id: "pty_test",
+            title: "shell",
+            command: "pwsh.exe",
+            args: [],
+            cwd: "C:\\workspace",
+            status: "running",
+            pid: 12345,
+            cols: 100,
+            rows: 30,
+            created_at: "2026-05-10T00:00:00.000Z",
+            updated_at: "2026-05-10T00:00:01.000Z"
+          }
+        ]
+      }
+    }),
+    JSON.stringify({})
+  );
+
+  assert.equal(message.blocks[0]?.label, "PTY Sessions");
+  assert.equal(message.blocks[0]?.tone, "success");
+  assert.match(message.blocks[0]?.content ?? "", /pty_test/);
+  assert.match(message.blocks[0]?.content ?? "", /pwsh\.exe/);
 }
 
 function testDiagnosticsFollowUpIncludesPhase5Metadata() {

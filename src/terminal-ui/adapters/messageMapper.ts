@@ -17,7 +17,7 @@ import type { LspDiagnosticCompletedEvent } from "../../services/lsp/LspDiagnost
 const DEFAULT_PREVIEW_MAX_CHARS = 320;
 const TOOL_PREVIEW_MAX_CHARS = 520;
 const TOOL_TITLE_MAX_CHARS = 96;
-const TOOL_TARGET_KEYS = ["file_path", "filePath", "path", "url", "query", "pattern", "command", "cwd"];
+const TOOL_TARGET_KEYS = ["file_path", "filePath", "path", "url", "query", "pattern", "command", "cwd", "pty_id"];
 const MARKDOWN_FRIENDLY_TOOL_NAME_TOKENS = [
   "list",
   "glob",
@@ -26,6 +26,20 @@ const MARKDOWN_FRIENDLY_TOOL_NAME_TOKENS = [
   "websearch",
   "codesearch"
 ];
+const BACKGROUND_PROCESS_TOOL_NAMES = new Set([
+  "ProcessStart",
+  "ProcessList",
+  "ProcessRead",
+  "ProcessStop"
+]);
+const PTY_TOOL_NAMES = new Set([
+  "PtyCreate",
+  "PtyList",
+  "PtyRead",
+  "PtyWrite",
+  "PtyResize",
+  "PtyClose"
+]);
 const ASSISTANT_TOOL_CALL_PLACEHOLDER = "(assistant requested a tool call)";
 
 type ToolResultIssue = {
@@ -401,6 +415,22 @@ function buildToolResultBlocks(
     case "generic":
     default:
       break;
+  }
+
+  const backgroundProcessBlocks = buildBackgroundProcessToolBlocks(
+    result.toolName,
+    result.structuredResult
+  );
+  if (backgroundProcessBlocks) {
+    return backgroundProcessBlocks;
+  }
+
+  const ptyBlocks = buildPtyToolBlocks(
+    result.toolName,
+    result.structuredResult
+  );
+  if (ptyBlocks) {
+    return ptyBlocks;
   }
 
   const markdownFriendlyBlocks = buildMarkdownFriendlyGenericBlocks(
@@ -1164,6 +1194,484 @@ function formatToolError(error: ParsedToolCallExecutionResult["error"], fallback
   return lines.join("\n");
 }
 
+function buildBackgroundProcessToolBlocks(
+  toolName: string,
+  structuredResult: unknown
+): TerminalUiMessageBlock[] | null {
+  if (!BACKGROUND_PROCESS_TOOL_NAMES.has(toolName)) {
+    return null;
+  }
+
+  const record = asRecord(structuredResult);
+  if (!record) {
+    return null;
+  }
+
+  if (toolName === "ProcessStart") {
+    return buildProcessStartBlocks(record);
+  }
+
+  if (toolName === "ProcessList") {
+    return buildProcessListBlocks(record);
+  }
+
+  if (toolName === "ProcessRead") {
+    return buildProcessReadBlocks(record);
+  }
+
+  if (toolName === "ProcessStop") {
+    return buildProcessStopBlocks(record);
+  }
+
+  return null;
+}
+
+function buildProcessStartBlocks(record: Record<string, unknown>): TerminalUiMessageBlock[] {
+  const status = asString(record.status);
+  const details = formatProcessDetails(record, {
+    includeLogs: true,
+    includeTiming: true
+  });
+  const blocks: TerminalUiMessageBlock[] = [
+    createBlock(details, {
+      label: "Process",
+      tone: processStatusTone(status),
+      style: "code"
+    })
+  ];
+  const command = asString(record.command);
+  if (command) {
+    blocks.push(createBlock(`$ ${command}`, { label: "Command", style: "code" }));
+  }
+  const stdoutPreview = asString(record.stdout_preview)?.trim();
+  const stderrPreview = asString(record.stderr_preview)?.trim();
+  if (stdoutPreview) {
+    blocks.push(createBlock(stdoutPreview, { label: "Stdout Preview", tone: "success", style: "code" }));
+  }
+  if (stderrPreview) {
+    blocks.push(createBlock(stderrPreview, { label: "Stderr Preview", tone: "warning", style: "code" }));
+  }
+
+  return blocks;
+}
+
+function buildProcessListBlocks(record: Record<string, unknown>): TerminalUiMessageBlock[] {
+  const processes = asRecordArray(record.processes);
+  if (processes.length === 0) {
+    return [createBlock("No managed background processes are running.", { label: "Processes", tone: "muted" })];
+  }
+
+  return [
+    createBlock(processes.map(formatProcessSummaryLine).join("\n"), {
+      label: "Processes",
+      tone: "success",
+      style: "code"
+    })
+  ];
+}
+
+function buildProcessReadBlocks(record: Record<string, unknown>): TerminalUiMessageBlock[] {
+  const details = [
+    `Process: ${asString(record.process_id) ?? "(unknown)"}`,
+    `Stream: ${asString(record.stream) ?? "combined"}`,
+    ...(asString(record.log_path) ? [`Log: ${asString(record.log_path)}`] : []),
+    ...(asNumber(record.offset) !== undefined ? [`Offset: ${asNumber(record.offset)}`] : []),
+    ...(asNumber(record.bytes) !== undefined ? [`Bytes: ${asNumber(record.bytes)}`] : []),
+    ...(asBoolean(record.eof) !== undefined ? [`EOF: ${asBoolean(record.eof) ? "yes" : "no"}`] : [])
+  ];
+
+  return [
+    createBlock(asString(record.content) ?? "", {
+      label: "Log",
+      tone: "success",
+      style: "code"
+    }),
+    createBlock(details.join("\n"), {
+      label: "Details",
+      style: "code"
+    })
+  ];
+}
+
+function buildProcessStopBlocks(record: Record<string, unknown>): TerminalUiMessageBlock[] {
+  const status = asString(record.status);
+  const lines = [
+    `Process: ${asString(record.process_id) ?? "(unknown)"}`,
+    `Status: ${status ?? "unknown"}`,
+    ...(asString(record.message) ? [`Message: ${asString(record.message)}`] : []),
+    ...formatNullableExitLines(record)
+  ];
+  const blocks: TerminalUiMessageBlock[] = [
+    createBlock(lines.join("\n"), {
+      label: "Stop",
+      tone: processStatusTone(status),
+      style: "code"
+    })
+  ];
+  const processRecord = asRecord(record.process);
+  if (processRecord) {
+    blocks.push(createBlock(formatProcessSummaryLine(processRecord), {
+      label: "Process",
+      style: "code"
+    }));
+  }
+
+  return blocks;
+}
+
+function formatProcessDetails(
+  record: Record<string, unknown>,
+  options: { includeLogs?: boolean; includeTiming?: boolean } = {}
+): string {
+  const lines = [
+    `Status: ${asString(record.status) ?? "unknown"}`,
+    `Process: ${asString(record.process_id) ?? "(unknown)"}`,
+    ...formatNullablePidLine(record),
+    ...(asString(record.cwd) ? [`CWD: ${asString(record.cwd)}`] : []),
+    ...formatProcessEndpointLines(record),
+    ...formatNullableExitLines(record),
+    ...formatProcessWarningLines(record),
+    ...(asString(record.last_error) ? [`Error: ${asString(record.last_error)}`] : [])
+  ];
+
+  if (options.includeLogs) {
+    lines.push(...formatProcessLogLines(record));
+  }
+
+  if (options.includeTiming) {
+    lines.push(
+      ...(asString(record.started_at) ? [`Started: ${asString(record.started_at)}`] : []),
+      ...(asString(record.updated_at) ? [`Updated: ${asString(record.updated_at)}`] : []),
+      ...(asString(record.exited_at) ? [`Exited: ${asString(record.exited_at)}`] : [])
+    );
+  }
+
+  return lines.join("\n");
+}
+
+function formatProcessSummaryLine(record: Record<string, unknown>): string {
+  const parts = [
+    asString(record.process_id) ?? "(unknown)",
+    asString(record.status) ?? "unknown",
+    ...formatNullablePidLine(record),
+    asString(record.command) ? truncateInline(asString(record.command)!, 96) : "(no command)"
+  ];
+  const urls = asStringArray(record.detected_urls);
+  if (urls.length > 0) {
+    parts.push(urls[0]!);
+  }
+  const error = asString(record.last_error);
+  if (error) {
+    parts.push(`error: ${truncateInline(error, 80)}`);
+  }
+  const warnings = asStringArray(record.warnings);
+  if (warnings.length > 0) {
+    parts.push(`warning: ${truncateInline(warnings[0]!, 80)}`);
+  }
+
+  return `- ${parts.join(" | ")}`;
+}
+
+function formatProcessEndpointLines(record: Record<string, unknown>): string[] {
+  const urls = asStringArray(record.detected_urls);
+  const ports = asNumberArray(record.detected_ports);
+  return [
+    ...(urls.length > 0 ? [`URL: ${urls.join(", ")}`] : []),
+    ...(ports.length > 0 ? [`Port: ${ports.join(", ")}`] : []),
+    ...(asString(record.startup_matched) ? [`Startup matched: ${asString(record.startup_matched)}`] : []),
+    ...(asBoolean(record.startup_timed_out) === true ? ["Startup observation timed out"] : [])
+  ];
+}
+
+function formatProcessLogLines(record: Record<string, unknown>): string[] {
+  return [
+    ...(asString(record.combined_log_path) ? [`Log: ${asString(record.combined_log_path)}`] : []),
+    ...(asString(record.stdout_log_path) ? [`Stdout log: ${asString(record.stdout_log_path)}`] : []),
+    ...(asString(record.stderr_log_path) ? [`Stderr log: ${asString(record.stderr_log_path)}`] : [])
+  ];
+}
+
+function formatProcessWarningLines(record: Record<string, unknown>): string[] {
+  const warnings = asStringArray(record.warnings);
+  return warnings.map((warning) => `Warning: ${warning}`);
+}
+
+function formatNullablePidLine(record: Record<string, unknown>): string[] {
+  if (record.pid === null) {
+    return ["PID: (unknown)"];
+  }
+
+  const pid = asNumber(record.pid);
+  return pid === undefined ? [] : [`PID: ${pid}`];
+}
+
+function formatNullableExitLines(record: Record<string, unknown>): string[] {
+  const lines: string[] = [];
+  if ("exit_code" in record) {
+    lines.push(`Exit: ${record.exit_code === null ? "null" : asNumber(record.exit_code) ?? "unknown"}`);
+  }
+  if ("signal" in record) {
+    lines.push(`Signal: ${record.signal === null ? "null" : asString(record.signal) ?? "unknown"}`);
+  }
+  return lines;
+}
+
+function processStatusTone(status: string | undefined): TerminalUiMessageBlockTone {
+  if (status === "running") {
+    return "success";
+  }
+
+  if (status === "failed") {
+    return "danger";
+  }
+
+  if (status === "starting") {
+    return "info";
+  }
+
+  if (status === "exited" || status === "stopped" || status === "not_found") {
+    return "warning";
+  }
+
+  return "default";
+}
+
+function buildPtyToolBlocks(
+  toolName: string,
+  structuredResult: unknown
+): TerminalUiMessageBlock[] | null {
+  if (!PTY_TOOL_NAMES.has(toolName)) {
+    return null;
+  }
+
+  const record = asRecord(structuredResult);
+  if (!record) {
+    return null;
+  }
+
+  if (toolName === "PtyCreate") {
+    return buildPtyCreateBlocks(record);
+  }
+
+  if (toolName === "PtyList") {
+    return buildPtyListBlocks(record);
+  }
+
+  if (toolName === "PtyRead") {
+    return buildPtyReadBlocks(record);
+  }
+
+  if (toolName === "PtyWrite") {
+    return buildPtyWriteBlocks(record);
+  }
+
+  if (toolName === "PtyResize") {
+    return buildPtyResizeBlocks(record);
+  }
+
+  if (toolName === "PtyClose") {
+    return buildPtyCloseBlocks(record);
+  }
+
+  return null;
+}
+
+function buildPtyCreateBlocks(record: Record<string, unknown>): TerminalUiMessageBlock[] {
+  const status = asString(record.status);
+  const blocks: TerminalUiMessageBlock[] = [
+    createBlock(formatPtyDetails(record, { includeTiming: true }), {
+      label: "PTY",
+      tone: ptyStatusTone(status),
+      style: "code"
+    })
+  ];
+  const command = formatPtyCommand(record);
+  if (command) {
+    blocks.push(createBlock(`$ ${command}`, { label: "Command", style: "code" }));
+  }
+  const note = asString(record.note);
+  if (note) {
+    blocks.push(createBlock(note, { label: "Note", tone: status === "failed" ? "warning" : "info" }));
+  }
+
+  return blocks;
+}
+
+function buildPtyListBlocks(record: Record<string, unknown>): TerminalUiMessageBlock[] {
+  const sessions = asRecordArray(record.sessions);
+  if (sessions.length === 0) {
+    return [createBlock("No interactive PTY sessions are active.", { label: "PTY Sessions", tone: "muted" })];
+  }
+
+  return [
+    createBlock(sessions.map(formatPtySummaryLine).join("\n"), {
+      label: "PTY Sessions",
+      tone: "success",
+      style: "code"
+    })
+  ];
+}
+
+function buildPtyReadBlocks(record: Record<string, unknown>): TerminalUiMessageBlock[] {
+  const details = [
+    `PTY: ${asString(record.pty_id) ?? "(unknown)"}`,
+    ...(asNumber(record.cursor) !== undefined ? [`Cursor: ${asNumber(record.cursor)}`] : []),
+    ...(asNumber(record.next_cursor) !== undefined ? [`Next cursor: ${asNumber(record.next_cursor)}`] : []),
+    ...(asNumber(record.buffer_cursor) !== undefined ? [`Buffer cursor: ${asNumber(record.buffer_cursor)}`] : []),
+    ...(asNumber(record.bytes) !== undefined ? [`Bytes: ${asNumber(record.bytes)}`] : []),
+    ...(asBoolean(record.eof) !== undefined ? [`EOF: ${asBoolean(record.eof) ? "yes" : "no"}`] : [])
+  ];
+  const session = asRecord(record.session);
+  if (session) {
+    details.push(
+      `Status: ${asString(session.status) ?? "unknown"}`,
+      ...(asString(session.title) ? [`Title: ${asString(session.title)}`] : []),
+      ...(asString(session.cwd) ? [`CWD: ${asString(session.cwd)}`] : [])
+    );
+  }
+
+  return [
+    createBlock(asString(record.content) ?? "", {
+      label: "PTY Output",
+      tone: "success",
+      style: "code"
+    }),
+    createBlock(details.join("\n"), {
+      label: "Details",
+      style: "code"
+    })
+  ];
+}
+
+function buildPtyWriteBlocks(record: Record<string, unknown>): TerminalUiMessageBlock[] {
+  const session = asRecord(record.session);
+  const lines = [
+    `PTY: ${asString(record.pty_id) ?? "(unknown)"}`,
+    ...(asNumber(record.bytes) !== undefined ? [`Bytes written: ${asNumber(record.bytes)}`] : []),
+    ...(asNumber(record.cursor) !== undefined ? [`Cursor: ${asNumber(record.cursor)}`] : []),
+    ...(session ? [`Status: ${asString(session.status) ?? "unknown"}`] : [])
+  ];
+
+  return [
+    createBlock(lines.join("\n"), {
+      label: "Write",
+      tone: ptyStatusTone(asString(session?.status)),
+      style: "code"
+    })
+  ];
+}
+
+function buildPtyResizeBlocks(record: Record<string, unknown>): TerminalUiMessageBlock[] {
+  const session = asRecord(record.session);
+  const lines = [
+    `PTY: ${asString(record.pty_id) ?? "(unknown)"}`,
+    `Size: ${asNumber(record.cols) ?? "?"}x${asNumber(record.rows) ?? "?"}`,
+    ...(session ? [`Status: ${asString(session.status) ?? "unknown"}`] : [])
+  ];
+
+  return [
+    createBlock(lines.join("\n"), {
+      label: "Resize",
+      tone: ptyStatusTone(asString(session?.status)),
+      style: "code"
+    })
+  ];
+}
+
+function buildPtyCloseBlocks(record: Record<string, unknown>): TerminalUiMessageBlock[] {
+  const status = asString(record.status);
+  const lines = [
+    `PTY: ${asString(record.pty_id) ?? "(unknown)"}`,
+    `Status: ${status ?? "unknown"}`,
+    ...(asString(record.message) ? [`Message: ${asString(record.message)}`] : [])
+  ];
+  const blocks: TerminalUiMessageBlock[] = [
+    createBlock(lines.join("\n"), {
+      label: "Close",
+      tone: ptyStatusTone(status),
+      style: "code"
+    })
+  ];
+  const session = asRecord(record.session);
+  if (session) {
+    blocks.push(createBlock(formatPtySummaryLine(session), {
+      label: "PTY",
+      style: "code"
+    }));
+  }
+
+  return blocks;
+}
+
+function formatPtyDetails(
+  record: Record<string, unknown>,
+  options: { includeTiming?: boolean } = {}
+): string {
+  const lines = [
+    `Status: ${asString(record.status) ?? "unknown"}`,
+    `PTY: ${asString(record.pty_id) ?? "(unknown)"}`,
+    ...formatNullablePidLine(record),
+    ...(asString(record.title) ? [`Title: ${asString(record.title)}`] : []),
+    ...(asString(record.cwd) ? [`CWD: ${asString(record.cwd)}`] : []),
+    `Size: ${asNumber(record.cols) ?? "?"}x${asNumber(record.rows) ?? "?"}`,
+    ...formatNullableExitLines(record),
+    ...(asString(record.last_error) ? [`Error: ${asString(record.last_error)}`] : [])
+  ];
+
+  if (options.includeTiming) {
+    lines.push(
+      ...(asString(record.created_at) ? [`Created: ${asString(record.created_at)}`] : []),
+      ...(asString(record.updated_at) ? [`Updated: ${asString(record.updated_at)}`] : []),
+      ...(asString(record.exited_at) ? [`Exited: ${asString(record.exited_at)}`] : [])
+    );
+  }
+
+  return lines.join("\n");
+}
+
+function formatPtySummaryLine(record: Record<string, unknown>): string {
+  const command = formatPtyCommand(record);
+  const parts = [
+    asString(record.pty_id) ?? "(unknown)",
+    asString(record.status) ?? "unknown",
+    ...formatNullablePidLine(record),
+    asString(record.title) ?? "(untitled)",
+    command ? truncateInline(command, 96) : "(no command)"
+  ];
+  const error = asString(record.last_error);
+  if (error) {
+    parts.push(`error: ${truncateInline(error, 80)}`);
+  }
+
+  return `- ${parts.join(" | ")}`;
+}
+
+function formatPtyCommand(record: Record<string, unknown>): string | undefined {
+  const command = asString(record.command);
+  if (!command) {
+    return undefined;
+  }
+
+  const args = asStringArray(record.args);
+  return [command, ...args].join(" ");
+}
+
+function ptyStatusTone(status: string | undefined): TerminalUiMessageBlockTone {
+  if (status === "running") {
+    return "success";
+  }
+
+  if (status === "failed") {
+    return "danger";
+  }
+
+  if (status === "exited" || status === "closed" || status === "not_found") {
+    return "warning";
+  }
+
+  return "default";
+}
+
 function buildMarkdownFriendlyGenericBlocks(
   toolName: string,
   structuredResult: unknown
@@ -1583,6 +2091,14 @@ function asRecordArray(value: unknown): Array<Record<string, unknown>> {
     const record = asRecord(item);
     return record ? [record] : [];
   });
+}
+
+function asNumberArray(value: unknown): number[] {
+  if (!Array.isArray(value)) {
+    return [];
+  }
+
+  return value.filter((item): item is number => typeof item === "number" && Number.isFinite(item));
 }
 
 function asNumber(value: unknown): number | undefined {

@@ -49,6 +49,7 @@ export function createInitialTerminalUiState(options: {
     messages: [],
     todos: [],
     backgroundTasks: [],
+    backgroundProcessCount: 0,
     selectedMessageId: null,
     transcriptSticky: true,
     unseenDividerMessageId: null,
@@ -222,6 +223,20 @@ export function setBackgroundTasks(
   return {
     ...state,
     backgroundTasks
+  };
+}
+
+export function setBackgroundProcessCount(
+  state: TerminalUiState,
+  backgroundProcessCount: number
+): TerminalUiState {
+  if (state.backgroundProcessCount === backgroundProcessCount) {
+    return state;
+  }
+
+  return {
+    ...state,
+    backgroundProcessCount
   };
 }
 

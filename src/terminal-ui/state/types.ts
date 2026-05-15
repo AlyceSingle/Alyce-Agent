@@ -118,6 +118,7 @@ export interface TerminalUiState {
   messages: TerminalUiMessage[];
   todos: TodoItem[];
   backgroundTasks: TerminalUiTaskSummary[];
+  backgroundProcessCount: number;
   selectedMessageId: string | null;
   transcriptSticky: boolean;
   unseenDividerMessageId: string | null;

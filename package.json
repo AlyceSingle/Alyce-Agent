@@ -72,6 +72,7 @@
     "start": "node --disable-warning=DEP0040 dist/index.js"
   },
   "dependencies": {
+    "@lydell/node-pty": "^1.2.0-beta.12",
     "@modelcontextprotocol/sdk": "^1.29.0",
     "auto-bind": "^5.0.1",
     "bidi-js": "^1.0.3",

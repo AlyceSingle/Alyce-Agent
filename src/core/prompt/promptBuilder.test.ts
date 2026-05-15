@@ -6,6 +6,8 @@ import type { PromptRuntimeContext } from "./types.js";
 function runTests() {
   void Promise.all([
     testToolListUpdatesAcrossBuilds(),
+    testDefaultSystemPromptGuidesLongRunningServers(),
+    testDefaultSystemPromptGuidesInteractivePtyUse(),
     testDefaultSystemPromptUsesEnglishAuthoredText()
   ]).then(() => {
     console.log("promptBuilder tests passed");
@@ -40,6 +42,31 @@ async function testDefaultSystemPromptUsesEnglishAuthoredText() {
   );
 
   assert.doesNotMatch(prompt, /[\u3400-\u9fff]/);
+}
+
+async function testDefaultSystemPromptGuidesLongRunningServers() {
+  const prompt = await buildDefaultSystemPrompt(
+    createRuntimeContext(["Bash", "PowerShell"]),
+    {},
+    new PromptSectionResolver()
+  );
+
+  assert.match(prompt, /local development server/);
+  assert.match(prompt, /background process tool/);
+  assert.match(prompt, /npm run dev/);
+  assert.match(prompt, /foreground Bash or PowerShell/);
+}
+
+async function testDefaultSystemPromptGuidesInteractivePtyUse() {
+  const prompt = await buildDefaultSystemPrompt(
+    createRuntimeContext(["Bash", "PowerShell", "PtyCreate", "PtyRead", "PtyWrite"]),
+    {},
+    new PromptSectionResolver()
+  );
+
+  assert.match(prompt, /Use PtyCreate/);
+  assert.match(prompt, /interactive terminal programs/);
+  assert.match(prompt, /ordinary one-shot commands/);
 }
 
 async function testToolListUpdatesAcrossBuilds() {

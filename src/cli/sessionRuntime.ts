@@ -32,6 +32,14 @@ import {
   ContextBudgetService,
   type ContextBudgetSnapshot
 } from "../core/context/contextBudget.js";
+import { BackgroundProcessManager } from "../core/background-process/backgroundProcessManager.js";
+import type {
+  BackgroundProcessRecord,
+  BackgroundProcessStopOptions,
+  BackgroundProcessStopResult
+} from "../core/background-process/backgroundProcessTypes.js";
+import { PtyManager } from "../core/pty/ptyManager.js";
+import type { PtyCloseResult, PtySessionInfo } from "../core/pty/ptyTypes.js";
 import { normalizeModelContextWindowOverrides } from "../core/context/modelContextWindows.js";
 import {
   isToolAllowedInPlanMode,
@@ -273,6 +281,16 @@ export interface SessionRuntime {
   getSubagentTask: (taskId: string) => Promise<SubagentTaskInfo | undefined>;
   stopSubagentTask: (taskId: string) => Promise<SubagentTaskStopResult>;
   runSubagentStorageCleanup: (options?: { apply?: boolean }) => Promise<SubagentStorageCleanupReport>;
+  listBackgroundProcesses: (options?: { includeExited?: boolean }) => BackgroundProcessRecord[];
+  stopBackgroundProcess: (
+    processId: string,
+    options?: BackgroundProcessStopOptions
+  ) => Promise<BackgroundProcessStopResult>;
+  stopAllBackgroundProcesses: (
+    options?: BackgroundProcessStopOptions
+  ) => Promise<BackgroundProcessStopResult[]>;
+  listPtySessions: () => PtySessionInfo[];
+  closeAllPtySessions: () => PtyCloseResult[];
   buildContextPreview: (nextUserInput?: string, options?: { abortSignal?: AbortSignal }) => Promise<string>;
   getContextBudgetService: () => ContextBudgetService;
   estimateContextBudget: (options?: {
@@ -423,6 +441,13 @@ export async function createSessionRuntime(
   const contextBudgetService = createContextBudgetService(settings);
   const usageLedger = new UsageLedger({
     jsonlPath: path.join(config.paths.alyceDirectory, "usage.jsonl")
+  });
+  const backgroundProcessManager = new BackgroundProcessManager({
+    workspaceRoot: config.paths.workspaceRoot,
+    storageRoot: path.join(config.paths.alyceDirectory, "background-processes")
+  });
+  const ptyManager = new PtyManager({
+    workspaceRoot: config.paths.workspaceRoot
   });
   const sessionMemoryTrigger = new SessionMemoryTrigger(
     createSessionMemoryTriggerConfig(config, settings)
@@ -895,6 +920,7 @@ export async function createSessionRuntime(
     },
     flushSessionHistory: async () => {
       clearInterval(subagentMemoryGcTimer);
+      ptyManager.closeAll();
       await sessionHistory.flush();
       await mcpRuntime.close();
     },
@@ -939,6 +965,14 @@ export async function createSessionRuntime(
       evictExpiredSubagentSessionsFromMemory(true);
       return report;
     },
+    listBackgroundProcesses: (options = {}) =>
+      backgroundProcessManager.listProcesses({ includeExited: options.includeExited }),
+    stopBackgroundProcess: (processId, options = {}) =>
+      backgroundProcessManager.stopProcess(processId, options),
+    stopAllBackgroundProcesses: (options = {}) =>
+      backgroundProcessManager.stopAll(options),
+    listPtySessions: () => ptyManager.listSessions(),
+    closeAllPtySessions: () => ptyManager.closeAll(),
     buildContextPreview: async (nextUserInput, options = {}) => {
       const previewTimestamp = formatSystemDateTime(new Date());
       const trimmedInput = nextUserInput?.trim();
@@ -1160,6 +1194,8 @@ export async function createSessionRuntime(
       getTodos,
       setTodos,
       recordToolActivity,
+      backgroundProcessManager,
+      ptyManager,
       mcpRuntime,
       captureFileBeforeWrite: (absolutePath) => captureFileBeforeWrite(turnId, absolutePath),
       recordFileRead: (absolutePath, state) => {
@@ -1822,6 +1858,8 @@ export async function createSessionRuntime(
       getTodos: parentContextOptions.getTodos,
       setTodos: parentContextOptions.setTodos,
       recordToolActivity: parentContextOptions.recordToolActivity,
+      backgroundProcessManager,
+      ptyManager,
       toolPolicy: agent.policy,
       captureFileBeforeWrite: (absolutePath) =>
         session.activeWorktreePath && isPathInsideDirectory(session.activeWorktreePath, absolutePath)

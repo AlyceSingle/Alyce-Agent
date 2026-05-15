@@ -109,7 +109,6 @@ export class GitTreeSnapshotStore {
   }
 
   async restoreFiles(
-    beforeRef: GitTreeSnapshotRef,
     files: readonly TurnSnapshotFileSnapshot[]
   ): Promise<{ restored: string[]; removed: string[]; conflicts: RestoreConflict[] }> {
     const restored: string[] = [];

@@ -1,5 +1,7 @@
 import type { McpToolRuntime } from "../mcp/types.js";
 import type { PermissionRequest } from "../core/permissions/permissionRules.js";
+import type { BackgroundProcessManager } from "../core/background-process/backgroundProcessManager.js";
+import type { PtyManager } from "../core/pty/ptyManager.js";
 
 export type ToolPermissionKind =
   | "agent"
@@ -204,6 +206,8 @@ export interface ToolExecutionContext {
   getTodos: () => TodoItem[];
   setTodos: (todos: TodoItem[]) => void;
   recordToolActivity?: (toolName: string) => void;
+  backgroundProcessManager?: BackgroundProcessManager;
+  ptyManager?: PtyManager;
   mcpRuntime?: McpToolRuntime;
   toolPolicy?: ToolPermissionPolicy;
   planMode?: boolean;

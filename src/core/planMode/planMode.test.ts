@@ -17,6 +17,10 @@ function testPlanModeToolAllowlist() {
   assert.equal(isToolAllowedInPlanMode("Read"), true);
   assert.equal(isToolAllowedInPlanMode("Grep"), true);
   assert.equal(isToolAllowedInPlanMode("TodoWrite"), true);
+  assert.equal(isToolAllowedInPlanMode("PtyList"), true);
+  assert.equal(isToolAllowedInPlanMode("PtyRead"), true);
+  assert.equal(isToolAllowedInPlanMode("PtyCreate"), false);
+  assert.equal(isToolAllowedInPlanMode("PtyWrite"), false);
   assert.equal(isToolAllowedInPlanMode("Write"), false);
   assert.equal(isToolAllowedInPlanMode("Edit"), false);
   assert.equal(isToolAllowedInPlanMode("apply_patch"), false);
@@ -54,6 +58,7 @@ function testPlanModeOverlayRules() {
 
 function testPlanModeInstructionsDescribeVerification() {
   assert.match(PLAN_MODE_SYSTEM_INSTRUCTIONS, /Do not modify files/);
+  assert.match(PLAN_MODE_SYSTEM_INSTRUCTIONS, /PtyList and PtyRead/);
   assert.match(PLAN_MODE_SYSTEM_INSTRUCTIONS, /verification steps/);
 }
 

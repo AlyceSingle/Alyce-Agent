@@ -224,7 +224,7 @@ export class TurnSnapshotService {
       return createMissingSnapshotResult();
     }
 
-    const result = await this.store.restoreFiles(record.beforeRef, files);
+    const result = await this.store.restoreFiles(files);
     await cleanupCreatedDirectories(createdDirectories);
     if (result.conflicts.length === 0) {
       record.restoredAt = new Date().toISOString();

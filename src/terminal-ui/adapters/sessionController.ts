@@ -34,6 +34,10 @@ import {
   resolveModelSwitch
 } from "../../cli/modelCommand.js";
 import {
+  formatBackgroundProcessList,
+  formatBackgroundProcessStopResult
+} from "../../cli/processCommand.js";
+import {
   formatTaskCompletionNotification,
   formatTaskDetails,
   formatTaskList,
@@ -81,6 +85,7 @@ import {
   setConnectionConfigState,
   setContextBudget,
   setDraftInput,
+  setBackgroundProcessCount,
   setBackgroundTasks,
   setLoading,
   setPlanModeEnabled,
@@ -125,6 +130,12 @@ const RESTORABLE_TOOL_NAMES = new Set([
   "apply_patch",
   "Bash",
   "PowerShell"
+]);
+const BACKGROUND_PROCESS_TOOL_NAMES = new Set([
+  "ProcessStart",
+  "ProcessList",
+  "ProcessRead",
+  "ProcessStop"
 ]);
 const MAX_REWIND_POINTS = 100;
 const PAGED_HISTORY_INITIAL_WINDOW = 240;
@@ -304,6 +315,8 @@ export function createSessionController(
   let taskSyncTimer: NodeJS.Timeout | null = null;
   let taskSyncInitialized = false;
   let lastTaskSnapshotJson = "";
+  let lastBackgroundProcessCount = -1;
+  let exitFinalizing = false;
   const knownTaskStatuses = new Map<string, SubagentTaskInfo["status"]>();
   const unreadTaskIds = new Set<string>();
   const notifiedTerminalTaskIds = new Set<string>();
@@ -447,14 +460,32 @@ export function createSessionController(
     taskSyncInitialized = true;
   };
 
+  const syncBackgroundProcesses = () => {
+    let processCount: number;
+    try {
+      processCount = runtime.listBackgroundProcesses().length;
+    } catch {
+      return;
+    }
+
+    if (processCount === lastBackgroundProcessCount) {
+      return;
+    }
+
+    lastBackgroundProcessCount = processCount;
+    store.updateState((state) => setBackgroundProcessCount(state, processCount));
+  };
+
   const startTaskSync = () => {
     if (taskSyncTimer) {
       return;
     }
 
     syncBackgroundTasks({ notify: false });
+    syncBackgroundProcesses();
     taskSyncTimer = setInterval(() => {
       syncBackgroundTasks();
+      syncBackgroundProcesses();
     }, TASK_SYNC_INTERVAL_MS);
     taskSyncTimer.unref?.();
   };
@@ -469,12 +500,45 @@ export function createSessionController(
   };
 
   const finishExit = () => {
+    if (exitFinalizing) {
+      return;
+    }
+
+    exitFinalizing = true;
     if (disposeDiagnosticsSubscription) {
       disposeDiagnosticsSubscription();
       disposeDiagnosticsSubscription = null;
     }
     stopTaskSync();
-    void runtime.flushSessionHistory().finally(() => exitHandler?.());
+    let runningProcessCount = 0;
+    let runningPtyCount = 0;
+    try {
+      runningProcessCount = runtime.listBackgroundProcesses().length;
+    } catch {
+      runningProcessCount = 0;
+    }
+    try {
+      runningPtyCount = runtime.listPtySessions().length;
+    } catch {
+      runningPtyCount = 0;
+    }
+    if (runningProcessCount > 0 || runningPtyCount > 0) {
+      store.updateState((state) => setStatusText(state, "Stopping background terminal sessions..."));
+    }
+
+    void (async () => {
+      try {
+        if (runningProcessCount > 0) {
+          await runtime.stopAllBackgroundProcesses({ gracefulTimeoutMs: 3_000 });
+        }
+        if (runningPtyCount > 0) {
+          runtime.closeAllPtySessions();
+        }
+      } catch {
+        // Exit cleanup is best-effort; history still needs to flush.
+      }
+      await runtime.flushSessionHistory();
+    })().finally(() => exitHandler?.());
   };
 
   const syncDiagnosticsRegistrySettings = () => {
@@ -1248,6 +1312,7 @@ export function createSessionController(
     );
     resetTaskTracking();
     syncBackgroundTasks({ notify: false });
+    syncBackgroundProcesses();
   };
 
   const resumeSessionByQuery = async (query: string) => {
@@ -1875,6 +1940,25 @@ export function createSessionController(
       return true;
     }
 
+    if (parsedCommand.type === "processes-list") {
+      const processes = runtime.listBackgroundProcesses();
+      appendUiMessage(
+        createSystemMessage(
+          formatBackgroundProcessList(processes),
+          "Processes"
+        )
+      );
+      syncBackgroundProcesses();
+      return true;
+    }
+
+    if (parsedCommand.type === "process-stop") {
+      const result = await runtime.stopBackgroundProcess(parsedCommand.processId);
+      appendUiMessage(createSystemMessage(formatBackgroundProcessStopResult(result), "Processes"));
+      syncBackgroundProcesses();
+      return true;
+    }
+
     if (parsedCommand.type === "usage-view") {
       appendUiMessage(createSystemMessage(runtime.formatUsageReport(), "Usage"));
       return true;
@@ -2267,6 +2351,9 @@ export function createSessionController(
           },
           onToolCallResult: (toolName, result, rawArguments) => {
             appendUiMessage(createToolResultMessage(toolName, result, rawArguments));
+            if (isBackgroundProcessToolName(toolName)) {
+              syncBackgroundProcesses();
+            }
           }
         });
 
@@ -2759,6 +2846,10 @@ function shouldSkipApprovalDialog(
   return permissionEvaluation?.action === "allow" && !request.forceAsk;
 }
 
+function isBackgroundProcessToolName(toolName: string): boolean {
+  return BACKGROUND_PROCESS_TOOL_NAMES.has(toolName);
+}
+
 async function waitForUiPaint(): Promise<void> {
   await new Promise<void>((resolve) => {
     setImmediate(resolve);
@@ -2769,6 +2860,7 @@ export const __SESSION_CONTROLLER_TESTING__ = {
   mergeThinkingContent,
   extractThinkingDelta,
   shouldSkipApprovalDialog,
+  isBackgroundProcessToolName,
   waitForUiPaint
 } as const;
 

@@ -6,7 +6,9 @@ import type { JsonRecord, ToolPermissionPolicy } from "./types.js";
 
 const WRITE_TOOL_NAMES = new Set(["Edit", "MultiEdit", "Write", "apply_patch", "TodoWrite"]);
 const NETWORK_TOOL_NAMES = new Set(["WebFetch", "WebSearch"]);
-const SHELL_TOOL_NAMES = new Set(["Bash", "PowerShell"]);
+const SHELL_TOOL_NAMES = new Set(["Bash", "PowerShell", "ProcessStart"]);
+const PROCESS_CONTROL_TOOL_NAMES = new Set(["ProcessStop"]);
+const PTY_MUTATING_TOOL_NAMES = new Set(["PtyCreate", "PtyWrite", "PtyResize", "PtyClose"]);
 const ORCHESTRATION_TOOL_NAMES = new Set(["AgentTool", "TaskList", "TaskGet", "TaskStop"]);
 const MAIN_SESSION_ONLY_TOOL_NAMES = new Set([
   "SkillTool",
@@ -96,6 +98,14 @@ export function isToolSchemaAllowedByPolicy(
     return false;
   }
 
+  if (PROCESS_CONTROL_TOOL_NAMES.has(toolName)) {
+    return false;
+  }
+
+  if (PTY_MUTATING_TOOL_NAMES.has(toolName)) {
+    return false;
+  }
+
   if (MAIN_SESSION_ONLY_TOOL_NAMES.has(toolName)) {
     return false;
   }
@@ -126,6 +136,14 @@ export function getToolPolicyViolation(
 
   if (ORCHESTRATION_TOOL_NAMES.has(toolName)) {
     return `${toolName} is blocked by the current subagent policy: parent orchestration tools are disabled inside subagents.`;
+  }
+
+  if (PROCESS_CONTROL_TOOL_NAMES.has(toolName)) {
+    return `${toolName} is blocked by the current subagent policy: background process control is disabled inside subagents.`;
+  }
+
+  if (PTY_MUTATING_TOOL_NAMES.has(toolName)) {
+    return `${toolName} is blocked by the current subagent policy: interactive PTY mutation is disabled inside subagents.`;
   }
 
   if (MAIN_SESSION_ONLY_TOOL_NAMES.has(toolName)) {

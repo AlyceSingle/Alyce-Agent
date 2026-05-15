@@ -20,12 +20,22 @@ export const PLAN_MODE_ALLOWED_TOOL_NAMES = new Set([
   "ListMcpResources",
   "ReadMcpResource",
   "TaskList",
-  "TaskGet"
+  "TaskGet",
+  "ProcessList",
+  "ProcessRead",
+  "PtyList",
+  "PtyRead"
 ]);
 
 const PLAN_MODE_DENIED_TOOL_NAMES = new Set([
   "AgentTool",
   "TaskStop",
+  "ProcessStart",
+  "ProcessStop",
+  "PtyCreate",
+  "PtyWrite",
+  "PtyResize",
+  "PtyClose",
   "SkillTool",
   "Edit",
   "MultiEdit",
@@ -41,6 +51,8 @@ export const PLAN_MODE_SYSTEM_INSTRUCTIONS = [
   "- Do not modify files.",
   "- Do not run commands that create, delete, move, edit, install packages, update dependencies, or otherwise mutate the workspace.",
   "- Use read-only tools for exploration: Read, Glob, Grep, LSP, WebFetch, WebSearch, MCP resource listing/reading, and user questions.",
+  "- You may inspect existing background processes with ProcessList and ProcessRead, but do not start or stop background processes.",
+  "- You may inspect existing PTY sessions with PtyList and PtyRead, but do not create, write to, resize, or close PTY sessions.",
   "- Bash and PowerShell are only for read-only inspection commands. If a command might write files, install packages, touch git state, or execute arbitrary code, do not run it.",
   "- Do not spawn subagents or stop tasks while planning.",
   "",

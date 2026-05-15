@@ -33,6 +33,7 @@ export function StatusBar(props: {
   planModeEnabled: boolean;
   todoSummary?: string;
   taskSummary?: string;
+  backgroundProcessCount?: number;
   statusText: string;
   contextBudget: ContextBudgetSnapshot | null;
 }) {
@@ -51,6 +52,10 @@ export function StatusBar(props: {
   const taskSummaryText =
     props.taskSummary && props.taskSummary.trim().length > 0
       ? ` | Bg ${props.taskSummary}`
+      : "";
+  const backgroundProcessText =
+    props.backgroundProcessCount && props.backgroundProcessCount > 0
+      ? ` | BG ${props.backgroundProcessCount}`
       : "";
   const contextText = ` | Context ${
     props.contextBudget ? `${Math.round(props.contextBudget.usedPercent)}%` : "--"
@@ -84,6 +89,7 @@ export function StatusBar(props: {
         Mode {props.planModeEnabled ? "Plan" : "Build"}
         {todoSummaryText}
         {taskSummaryText}
+        {backgroundProcessText}
         <Text color={contextColor}>{contextText}</Text>
         <Text color={terminalUiTheme.colors.subtle}>{inlineStatusText}</Text>
       </Text>

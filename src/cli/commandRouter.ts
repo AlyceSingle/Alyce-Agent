@@ -175,6 +175,24 @@ export const REPL_COMMAND_DEFINITIONS: ReplCommandDefinition[] = [
     completion: "/tasks cleanup --apply"
   },
   {
+    command: "/processes",
+    usage: "/processes",
+    description: "List managed background processes",
+    completion: "/processes"
+  },
+  {
+    command: "/bg",
+    usage: "/bg",
+    description: "Alias for /processes",
+    completion: "/bg"
+  },
+  {
+    command: "/stop",
+    usage: "/stop <id>",
+    description: "Stop a managed background process",
+    completion: "/stop "
+  },
+  {
     command: "/usage",
     usage: "/usage",
     description: "Show session token, duration, and estimated cost usage",
@@ -255,6 +273,8 @@ export type ParsedCommand =
   | { type: "tasks-get"; taskId: string }
   | { type: "tasks-stop"; taskId: string }
   | { type: "tasks-cleanup"; apply: boolean }
+  | { type: "processes-list" }
+  | { type: "process-stop"; processId: string }
   | { type: "usage-view" }
   | { type: "diff-view"; target: "overview" | "last" | "current" | { turnId: string } }
   | { type: "revert"; mode: "prompt" | "files-only" | "conversation-only" }
@@ -362,6 +382,11 @@ export function parseReplCommand(input: string): ParsedCommand {
   const tasksCommand = parseTasksCommand(input);
   if (tasksCommand) {
     return tasksCommand;
+  }
+
+  const processCommand = parseProcessCommand(input);
+  if (processCommand) {
+    return processCommand;
   }
 
   if (input === "/usage") {
@@ -699,4 +724,40 @@ function parseTasksCommand(
     input,
     message: "Unsupported /tasks cleanup argument."
   };
+}
+
+function parseProcessCommand(
+  input: string
+): Extract<ParsedCommand, { type: "processes-list" | "process-stop" | "command-error" }> | null {
+  if (input === "/processes" || input === "/bg") {
+    return {
+      type: "processes-list"
+    };
+  }
+
+  if (input.startsWith("/processes ") || input.startsWith("/bg ")) {
+    return {
+      type: "command-error",
+      input,
+      message: "Unsupported background process list argument. Use /processes or /bg."
+    };
+  }
+
+  if (input === "/stop" || input.startsWith("/stop ")) {
+    const tokens = input.split(/\s+/).filter(Boolean);
+    if (tokens.length !== 2) {
+      return {
+        type: "command-error",
+        input,
+        message: "Missing process id. Use /stop <id>."
+      };
+    }
+
+    return {
+      type: "process-stop",
+      processId: tokens[1]!
+    };
+  }
+
+  return null;
 }

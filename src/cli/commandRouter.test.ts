@@ -63,6 +63,26 @@ function testParserHandlesRepresentedCommands() {
     type: "tasks-cleanup",
     apply: true
   });
+  assert.deepEqual(parseReplCommand("/processes"), {
+    type: "processes-list"
+  });
+  assert.deepEqual(parseReplCommand("/bg"), {
+    type: "processes-list"
+  });
+  assert.deepEqual(parseReplCommand("/stop bg_test"), {
+    type: "process-stop",
+    processId: "bg_test"
+  });
+  assert.deepEqual(parseReplCommand("/stop"), {
+    type: "command-error",
+    input: "/stop",
+    message: "Missing process id. Use /stop <id>."
+  });
+  assert.deepEqual(parseReplCommand("/processes all"), {
+    type: "command-error",
+    input: "/processes all",
+    message: "Unsupported background process list argument. Use /processes or /bg."
+  });
   assert.deepEqual(parseReplCommand("/usage"), { type: "usage-view" });
   assert.deepEqual(parseReplCommand("/usage now"), {
     type: "command-error",

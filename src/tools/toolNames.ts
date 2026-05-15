@@ -19,6 +19,16 @@ export const KNOWN_TOOL_NAMES = new Set([
   "Write",
   "Bash",
   "PowerShell",
+  "ProcessStart",
+  "ProcessList",
+  "ProcessRead",
+  "ProcessStop",
+  "PtyCreate",
+  "PtyList",
+  "PtyRead",
+  "PtyWrite",
+  "PtyResize",
+  "PtyClose",
   "WebFetch",
   "WebSearch"
 ]);
