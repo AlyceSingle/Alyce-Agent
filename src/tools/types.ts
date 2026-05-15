@@ -120,6 +120,8 @@ export interface SubagentTaskInfo {
   error?: string;
   progress: SubagentProgressEvent[];
   worktreePath?: string;
+  transcriptPath?: string;
+  outputPath?: string;
   diffSummary?: string;
   hasChanges?: boolean;
 }
@@ -148,6 +150,7 @@ export interface ToolPermissionPolicy {
   allowWrite: boolean;
   allowNetwork: boolean;
   shell: ShellPermissionMode;
+  allowBuildTest?: boolean;
   allowedRoots?: string[];
 }
 

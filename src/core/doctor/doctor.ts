@@ -9,6 +9,9 @@ import type {
   SessionSettings,
   SessionSettingsState
 } from "../../config/runtime.js";
+import { getModelAdapterAvailability } from "../api/modelAdapters.js";
+import { resolveModelProfile } from "../providers/resolveModel.js";
+import type { ResolvedModelProfile } from "../providers/types.js";
 import { runNativeCommandWithTimeout } from "../../tools/internal/nativeCommandRunner.js";
 
 export type DoctorCheckStatus = "ok" | "warn" | "fail" | "skipped";
@@ -269,31 +272,78 @@ async function checkProjectIntegrity(workspaceRoot: string): Promise<DoctorCheck
 
 function checkConnection(
   connectionState: ConnectionConfigState,
-  hasConnectionConfig: boolean,
+  _hasConnectionConfig: boolean,
   env: NodeJS.ProcessEnv
 ): DoctorCheck {
-  const apiKey = connectionState.effective.apiKey.trim();
-  if (!hasConnectionConfig || apiKey.length === 0) {
+  const resolved = resolveDoctorModelProfile(connectionState, env);
+  if (!resolved.ok) {
     return {
       id: "connection.apiKey",
-      title: "API key",
+      title: "Model provider",
       status: "fail",
-      summary: "No effective API key is configured.",
+      summary: resolved.reason,
       details: [
-        `OPENAI_API_KEY present: ${formatBoolean(Boolean(env.OPENAI_API_KEY?.trim()))}`,
-        `Effective source: ${connectionState.sources.apiKey}`
+        `Effective model: ${connectionState.effective.model}`,
+        `Configured providers: ${Object.keys(connectionState.providerProfiles).join(", ") || "(none)"}`
       ],
-      suggestion: "Run /setup, set OPENAI_API_KEY, or save apiKey in .alyce/config.json."
+      suggestion: "Run /setup or fix the provider profile in .alyce/config.json."
+    };
+  }
+
+  const availability = getModelAdapterAvailability(resolved.profile);
+  if (!availability.available) {
+    const apiKeyEnv = resolved.profile.apiKeyEnv ?? "OPENAI_API_KEY";
+    return {
+      id: "connection.apiKey",
+      title: "Model provider",
+      status: "fail",
+      summary: availability.reason ?? "Current model provider is not available.",
+      details: [
+        `Provider: ${resolved.profile.providerId}`,
+        `Model: ${resolved.profile.modelId}`,
+        `${apiKeyEnv} present: ${formatBoolean(Boolean(env[apiKeyEnv]?.trim()))}`,
+        `Legacy API key source: ${connectionState.sources.apiKey}`
+      ],
+      suggestion: "Run /setup, set the provider API key/baseURL, or save provider settings in .alyce/config.json."
     };
   }
 
   return {
     id: "connection.apiKey",
-    title: "API key",
+    title: "Model provider",
     status: "ok",
-    summary: `API key is configured from ${connectionState.sources.apiKey}.`,
-    details: [`OPENAI_API_KEY present: ${formatBoolean(Boolean(env.OPENAI_API_KEY?.trim()))}`]
+    summary: resolved.profile.apiKey
+      ? `Provider ${resolved.profile.providerId} has an API key.`
+      : `Provider ${resolved.profile.providerId} is available without an API key.`,
+    details: [
+      `Provider: ${resolved.profile.providerId}`,
+      `Model: ${resolved.profile.modelId}`,
+      `Kind: ${resolved.profile.kind}`,
+      resolved.profile.baseURL
+        ? `Endpoint: ${resolved.profile.baseURL}`
+        : "Endpoint: OpenAI SDK default endpoint."
+    ]
   };
+}
+
+function resolveDoctorModelProfile(
+  connectionState: ConnectionConfigState,
+  env: NodeJS.ProcessEnv
+): { ok: true; profile: ResolvedModelProfile } | { ok: false; reason: string } {
+  try {
+    return {
+      ok: true,
+      profile: resolveModelProfile(connectionState.effective.model, {
+        providers: connectionState.providerProfiles,
+        env
+      })
+    };
+  } catch (error) {
+    return {
+      ok: false,
+      reason: error instanceof Error ? error.message : String(error)
+    };
+  }
 }
 
 function checkEndpointAndModel(

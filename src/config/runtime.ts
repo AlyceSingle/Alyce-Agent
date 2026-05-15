@@ -15,6 +15,13 @@ import {
   type ModelContextWindowOverrides
 } from "../core/context/modelContextWindows.js";
 import type { PermissionRuleInput } from "../core/permissions/permissionRules.js";
+import {
+  buildProviderRegistry,
+  mergeProviderProfileMaps,
+  normalizeProviderProfileInputMap,
+  type ProviderProfileInputMap
+} from "../core/providers/registry.js";
+import type { ProviderProfileMap } from "../core/providers/types.js";
 
 export interface PromptOverrideConfig {
   languagePreference?: string;
@@ -49,6 +56,10 @@ export interface ConnectionConfig {
   model: string;
 }
 
+export type ConnectionConfigLayer = Partial<ConnectionConfig> & {
+  providers?: ProviderProfileInputMap;
+};
+
 export type ConnectionConfigSaveTarget = "user" | "project";
 
 export type ApprovalMode = "manual" | "auto";
@@ -82,11 +93,12 @@ export type SessionSettingsSource = "default" | "project" | "user" | "env" | "cl
 
 export interface ConnectionConfigState {
   effective: ConnectionConfig;
-  user: Partial<ConnectionConfig>;
-  project: Partial<ConnectionConfig>;
+  user: ConnectionConfigLayer;
+  project: ConnectionConfigLayer;
   env: Partial<ConnectionConfig>;
   cli: Partial<ConnectionConfig>;
   sources: Record<keyof ConnectionConfig, ConnectionConfigSource>;
+  providerProfiles: ProviderProfileMap;
   saveTarget: ConnectionConfigSaveTarget;
   saveTargetPath: string;
   userPath: string;
@@ -128,12 +140,36 @@ const ConnectionConfigFileSchema = z
   .object({
     apiKey: z.string().optional(),
     baseURL: z.string().optional(),
-    model: z.string().optional()
+    model: z.string().optional(),
+    providers: z.record(z.object({
+      id: z.string().optional(),
+      label: z.string().optional(),
+      kind: z.union([
+        z.literal("openai-compatible"),
+        z.literal("openai"),
+        z.literal("anthropic"),
+        z.literal("google"),
+        z.literal("openrouter"),
+        z.literal("local")
+      ]).optional(),
+      apiKeyEnv: z.string().optional(),
+      apiKey: z.string().optional(),
+      baseURL: z.string().optional(),
+      defaultModel: z.string().optional(),
+      models: z.record(z.object({
+        label: z.string().optional(),
+        contextWindow: z.number().int().positive().optional(),
+        maxOutputTokens: z.number().int().positive().optional(),
+        inputCostPerMillionTokens: z.number().nonnegative().optional(),
+        outputCostPerMillionTokens: z.number().nonnegative().optional()
+      }).strict()).optional()
+    }).strict()).optional()
   })
   .strict();
 
 type SessionSettingsFile = Partial<SessionSettings> & {
   autoSummaryEnabled?: boolean;
+  statusUsageDisplayEnabled?: boolean;
   startupInstructionFiles?: string[];
 };
 
@@ -153,6 +189,8 @@ const SessionSettingsFileSchema: z.ZodType<SessionSettingsFile> = z
     markdownMessageRenderingEnabled: z.boolean().optional(),
     markdownToolMessageRenderingEnabled: z.boolean().optional(),
     markdownRenderMaxChars: z.number().int().positive().optional(),
+    // Accept and discard the removed status-bar usage setting.
+    statusUsageDisplayEnabled: z.boolean().optional(),
     diagnosticsPendingTimeoutMs: z.number().int().positive().optional(),
     diagnosticsFailureThreshold: z.number().int().positive().optional(),
     diagnosticsFailureCooldownMs: z.number().int().positive().optional(),
@@ -279,22 +317,22 @@ export function getRuntimePaths(workspaceRoot: string): RuntimePaths {
 export function buildConnectionConfigState(
   paths: Pick<RuntimePaths, "connectionConfigPath" | "userConnectionConfigPath">,
   layers: {
-    user?: Partial<ConnectionConfig>;
-    project?: Partial<ConnectionConfig>;
+    user?: ConnectionConfigLayer;
+    project?: ConnectionConfigLayer;
     env?: Partial<ConnectionConfig>;
     cli?: Partial<ConnectionConfig>;
     preferredSaveTarget?: ConnectionConfigSaveTarget;
   }
 ): ConnectionConfigState {
-  const user = compactObject(layers.user ?? {});
-  const project = compactObject(layers.project ?? {});
+  const user = normalizeConnectionConfigLayer(layers.user);
+  const project = normalizeConnectionConfigLayer(layers.project);
   const env = compactObject(layers.env ?? {});
   const cli = compactObject(layers.cli ?? {});
   // OPENAI_* values are startup defaults; saved connection config must override them.
   const orderedLayers: Array<SourceLayer<ConnectionConfig, ConnectionConfigSource>> = [
     { source: "env", values: env },
-    { source: "project", values: project },
-    { source: "user", values: user },
+    { source: "project", values: stripProviderProfiles(project) },
+    { source: "user", values: stripProviderProfiles(user) },
     { source: "cli", values: cli }
   ];
   const effective = normalizeConnectionConfig(mergeLayers(orderedLayers));
@@ -311,6 +349,10 @@ export function buildConnectionConfigState(
     env,
     cli,
     sources: buildSourceMap(effective, orderedLayers, "default"),
+    providerProfiles: buildProviderRegistry({
+      connection: effective,
+      configuredProviders: mergeProviderProfileMaps(project.providers, user.providers)
+    }).providers,
     saveTarget,
     saveTargetPath:
       saveTarget === "project" ? paths.connectionConfigPath : paths.userConnectionConfigPath,
@@ -351,7 +393,7 @@ export function buildSessionSettingsState(
 export async function saveConnectionConfig(
   paths: RuntimePaths,
   target: ConnectionConfigSaveTarget,
-  connection: Partial<ConnectionConfig>
+  connection: ConnectionConfigLayer
 ): Promise<void> {
   await writeJsonConfig(
     target === "project" ? paths.connectionConfigPath : paths.userConnectionConfigPath,
@@ -571,9 +613,34 @@ function normalizeConnectionConfig(input: Partial<ConnectionConfig>): Connection
   };
 }
 
+function normalizeConnectionConfigLayer(
+  input: ConnectionConfigLayer | undefined
+): ConnectionConfigLayer {
+  if (!input) {
+    return {};
+  }
+
+  const providers = normalizeProviderProfileInputMap(input.providers);
+  return compactObject({
+    apiKey: "apiKey" in input ? input.apiKey?.trim() ?? "" : undefined,
+    baseURL: "baseURL" in input ? normalizeOptionalText(input.baseURL) : undefined,
+    model: "model" in input ? normalizeOptionalText(input.model) : undefined,
+    providers:
+      "providers" in input && Object.keys(providers).length > 0
+        ? providers
+        : undefined
+  });
+}
+
+function stripProviderProfiles(input: ConnectionConfigLayer): Partial<ConnectionConfig> {
+  const { providers: _providers, ...connection } = input;
+  return connection;
+}
+
 function normalizeSessionSettingsFile(input: Partial<SessionSettingsFile>): Partial<SessionSettings> {
   const {
     autoSummaryEnabled,
+    statusUsageDisplayEnabled: _removedStatusUsageDisplayEnabled,
     startupInstructionFiles: _removedStartupInstructionFiles,
     ...settings
   } = input;
@@ -588,7 +655,8 @@ function normalizeSessionSettingsFile(input: Partial<SessionSettingsFile>): Part
   return compactObject(normalized);
 }
 
-function serializeConnectionConfig(connection: Partial<ConnectionConfig>): Partial<ConnectionConfig> {
+function serializeConnectionConfig(connection: ConnectionConfigLayer): ConnectionConfigLayer {
+  const providers = normalizeProviderProfileInputMap(connection.providers);
   return compactObject({
     apiKey: "apiKey" in connection ? connection.apiKey?.trim() ?? "" : undefined,
     baseURL:
@@ -597,7 +665,11 @@ function serializeConnectionConfig(connection: Partial<ConnectionConfig>): Parti
           ? ""
           : connection.baseURL.trim()
         : undefined,
-    model: "model" in connection ? normalizeOptionalText(connection.model) : undefined
+    model: "model" in connection ? normalizeOptionalText(connection.model) : undefined,
+    providers:
+      "providers" in connection && Object.keys(providers).length > 0
+        ? providers
+        : undefined
   });
 }
 
@@ -980,8 +1052,8 @@ function compactObjectExcept<T extends object>(
 
 function resolveConnectionSaveTarget(options: {
   preferred?: ConnectionConfigSaveTarget;
-  user: Partial<ConnectionConfig>;
-  project: Partial<ConnectionConfig>;
+  user: ConnectionConfigLayer;
+  project: ConnectionConfigLayer;
 }): ConnectionConfigSaveTarget {
   if (options.preferred) {
     return options.preferred;

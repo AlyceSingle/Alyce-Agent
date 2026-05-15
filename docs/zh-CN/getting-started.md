@@ -69,6 +69,96 @@ npm start
 
 启动时程序会自动检测 TTY 环境。如果配置有误（如缺少 API Key 或非交互式终端），程序会给出明确的错误提示。
 
+## VS Code 集成终端辅助入口
+
+你可以从 VS Code 集成终端把当前编辑文件或选区文件传给 Alyce，不需要安装 marketplace 插件：
+
+```bash
+alyce --cwd "C:\path\to\workspace" --context-file "src/index.ts" --initial-prompt "Review this file"
+```
+
+本地开发时，把 Alyce 参数放在 `npm run dev --` 后面：
+
+```bash
+npm run dev -- --context-file "src/index.ts" --initial-prompt "Review this file"
+```
+
+当前文件的 `.vscode/tasks.json` 示例：
+
+```json
+{
+  "version": "2.0.0",
+  "tasks": [
+    {
+      "label": "Alyce: Current File",
+      "type": "shell",
+      "command": "alyce",
+      "args": [
+        "--cwd",
+        "${workspaceFolder}",
+        "--context-file",
+        "${file}",
+        "--initial-prompt",
+        "Use the provided editor file as context."
+      ],
+      "problemMatcher": []
+    }
+  ]
+}
+```
+
+选区文本需要先写入一个显式文件，再把该文件传给 Alyce。`alyce-vscode-selection` 辅助命令支持 `--selection`、`ALYCE_VSCODE_SELECTION` 或 stdin：
+
+```bash
+alyce-vscode-selection --out ".alyce/vscode-selection.txt" --selection "selected text"
+alyce --cwd . --selection-file ".alyce/vscode-selection.txt" --initial-prompt "Review this selection"
+```
+
+当前文件加选区的 `.vscode/tasks.json` 示例：
+
+```json
+{
+  "version": "2.0.0",
+  "tasks": [
+    {
+      "label": "Alyce: Write Selection",
+      "type": "shell",
+      "command": "alyce-vscode-selection",
+      "args": [
+        "--out",
+        "${workspaceFolder}/.alyce/vscode-selection.txt"
+      ],
+      "options": {
+        "env": {
+          "ALYCE_VSCODE_SELECTION": "${selectedText}"
+        }
+      },
+      "problemMatcher": []
+    },
+    {
+      "label": "Alyce: Current File and Selection",
+      "type": "shell",
+      "dependsOn": "Alyce: Write Selection",
+      "dependsOrder": "sequence",
+      "command": "alyce",
+      "args": [
+        "--cwd",
+        "${workspaceFolder}",
+        "--context-file",
+        "${file}",
+        "--selection-file",
+        "${workspaceFolder}/.alyce/vscode-selection.txt",
+        "--initial-prompt",
+        "Use the provided file and selection as context."
+      ],
+      "problemMatcher": []
+    }
+  ]
+}
+```
+
+安全边界保持不变：启动文件必须位于 allowed roots 内，Alyce 不会自动读取整个 workspace，传入上下文也不会授予写入权限。
+
 ## 首次启动建议
 
 程序运行后，建议您先完成以下操作：

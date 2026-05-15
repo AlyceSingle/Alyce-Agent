@@ -21,11 +21,44 @@ async function runTests() {
   await testHealthyBaselineHasNoFailures();
   await testMissingApiKeyFails();
   await testMissingEndpointAndModelWarns();
+  await testLocalProviderWithoutBaseUrlFailsProviderCheck();
   await testInvalidMcpConfigFails();
   await testRipgrepUnavailableFails();
   await testOldNodeVersionFails();
   testFormatDoctorReportIncludesFixes();
   console.log("doctor tests passed");
+}
+
+async function testLocalProviderWithoutBaseUrlFailsProviderCheck() {
+  const workspaceRoot = await createWorkspace({ includeDist: true });
+  const input = createDoctorInput(workspaceRoot, {
+    connection: buildConnectionConfigState(getRuntimePaths(workspaceRoot), {
+      user: {
+        model: "local/qwen",
+        providers: {
+          local: {
+            kind: "local",
+            defaultModel: "qwen",
+            models: {
+              qwen: {}
+            }
+          }
+        }
+      }
+    })
+  });
+
+  const report = await runDoctorDiagnostics(input, {
+    env: {},
+    nodeVersion: "20.10.0",
+    stdinIsTTY: true,
+    stdoutIsTTY: true,
+    runCommand: fakeCommandRunner
+  });
+
+  const check = findCheck(report.checks, "connection.apiKey");
+  assert.equal(check.status, "fail");
+  assert.match(check.summary, /requires a baseURL/);
 }
 
 async function testHealthyBaselineHasNoFailures() {

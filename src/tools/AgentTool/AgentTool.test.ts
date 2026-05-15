@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import { AgentToolInputSchema, executeAgentTool } from "./AgentTool.js";
+import { getSubagentDefinition, getSubagentTypes } from "./agents.js";
 import type { ToolExecutionContext } from "../types.js";
 
 function createTestContext(
@@ -24,6 +25,7 @@ function createTestContext(
 }
 
 async function runTests() {
+  testBuiltInVerifyAgentDefinition();
   await testRequiresRuntimeHook();
   await testForegroundRequiresRuntimeHookBeforeApproval();
   await testBackgroundRequiresRuntimeHookBeforeApproval();
@@ -42,6 +44,7 @@ async function runTests() {
   await testBatchRejectsBackgroundFlag();
   await testRejectsUnknownTopLevelField();
   await testBackgroundLaunchesReadOnlySubagent();
+  await testBackgroundLaunchesVerifySubagent();
   await testBackgroundRejectsGeneralAgent();
   await testBackgroundRejectsCustomWritableAgent();
   await testRejectedApprovalDoesNotRecordToolActivity();
@@ -49,6 +52,19 @@ async function runTests() {
   await testApprovalDetailsHideOrchestrationTools();
   await testApprovalDetailsHideUnknownTools();
   console.log("AgentTool tests passed");
+}
+
+function testBuiltInVerifyAgentDefinition() {
+  const verify = getSubagentDefinition("verify");
+  assert.ok(verify);
+  assert.deepEqual(getSubagentTypes(), ["general", "explore", "review", "verify"]);
+  assert.equal(verify.policy.allowWrite, false);
+  assert.equal(verify.policy.allowNetwork, false);
+  assert.equal(verify.policy.shell, "read-only");
+  assert.equal(verify.policy.allowBuildTest, true);
+  assert.match(verify.systemPrompt, /Verdict: pass/);
+  assert.match(verify.systemPrompt, /Verdict: fail/);
+  assert.match(verify.systemPrompt, /Verdict: inconclusive/);
 }
 
 async function testRequiresRuntimeHook() {
@@ -118,7 +134,7 @@ async function testUnknownSubagentType() {
   assert.equal(result.error, "unknown_subagent_type");
   assert.deepEqual(
     (result as { available_subagent_types: string[] }).available_subagent_types,
-    ["general", "explore", "review"]
+    ["general", "explore", "review", "verify"]
   );
 }
 
@@ -246,6 +262,11 @@ async function testBatchRunsReadOnlyTasks() {
         description: "Review risks",
         prompt: "Review risky areas.",
         subagent_type: "review"
+      },
+      {
+        description: "Verify checks",
+        prompt: "Run available checks.",
+        subagent_type: "verify"
       }
     ]
   }, createTestContext({
@@ -263,11 +284,12 @@ async function testBatchRunsReadOnlyTasks() {
   }));
 
   assert.equal(result.status, "completed");
-  assert.deepEqual(started.sort(), ["explore", "review"]);
+  assert.deepEqual(started.sort(), ["explore", "review", "verify"]);
   const results = result.results as Array<Record<string, unknown>>;
-  assert.equal(results.length, 2);
+  assert.equal(results.length, 3);
   assert.equal(results[0]?.status, "completed");
   assert.equal(results[1]?.status, "completed");
+  assert.equal(results[2]?.status, "completed");
 }
 
 async function testBatchPartialFailure() {
@@ -480,6 +502,29 @@ async function testBackgroundLaunchesReadOnlySubagent() {
   assert.equal(result.task_id, "background-task");
   assert.equal(result.agent_type, "explore");
   assert.equal(result.started_at, "2026-05-06T00:00:00.000Z");
+}
+
+async function testBackgroundLaunchesVerifySubagent() {
+  const result = await executeAgentTool({
+    description: "Verify later",
+    prompt: "Run build and test checks if available.",
+    subagent_type: "verify",
+    run_in_background: true
+  }, createTestContext({
+    launchSubagentTask: async (input) => ({
+      taskId: "verify-task",
+      agentType: input.agentType,
+      description: input.description,
+      status: "running",
+      model: "test-model",
+      maxSteps: 8,
+      startedAt: "2026-05-06T00:00:00.000Z"
+    })
+  }));
+
+  assert.equal(result.status, "async_launched");
+  assert.equal(result.task_id, "verify-task");
+  assert.equal(result.agent_type, "verify");
 }
 
 async function testBackgroundRejectsGeneralAgent() {

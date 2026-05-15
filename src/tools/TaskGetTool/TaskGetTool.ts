@@ -40,6 +40,8 @@ export type TaskGetResult =
         result?: string;
       }>;
       worktree_path?: string;
+      transcript_path?: string;
+      output_path?: string;
       diff_summary?: string;
       has_changes?: boolean;
     };
@@ -86,6 +88,8 @@ export async function executeTaskGetTool(
       ...(event.result ? { result: event.result } : {})
     })),
     ...(task.worktreePath ? { worktree_path: task.worktreePath } : {}),
+    ...(task.transcriptPath ? { transcript_path: task.transcriptPath } : {}),
+    ...(task.outputPath ? { output_path: task.outputPath } : {}),
     ...(task.diffSummary ? { diff_summary: task.diffSummary } : {}),
     ...(task.hasChanges !== undefined ? { has_changes: task.hasChanges } : {})
   };

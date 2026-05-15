@@ -51,10 +51,12 @@
     "ALYce": "./dist/index.js",
     "ALYcE": "./dist/index.js",
     "ALYCe": "./dist/index.js",
-    "ALYCE": "./dist/index.js"
+    "ALYCE": "./dist/index.js",
+    "alyce-vscode-selection": "./scripts/write-vscode-selection.mjs"
   },
   "files": [
     "dist",
+    "scripts/write-vscode-selection.mjs",
     "README.md",
     "LICENSE"
   ],

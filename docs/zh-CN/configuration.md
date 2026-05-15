@@ -10,7 +10,7 @@
 
 Alyce 的配置采用分层加载机制，优先级从高到低排列如下（高优先级将覆盖低优先级）：
 
-### 连接配置（API Key、Base URL、Model）
+### 连接配置（API Key、Base URL、Model、Provider）
 1. **命令行参数**（启动时传入）。
 2. **环境变量**（`.env` 文件）。
 3. **项目级配置**（`./.alyce/config.json`）。
@@ -24,10 +24,66 @@ Alyce 的配置采用分层加载机制，优先级从高到低排列如下（�
 
 ## 环境变量说明
 
-### 核心配置（必填）
+## 启动上下文 CLI 参数
+
+Alyce 可以在不安装 VS Code 插件的情况下接收显式编辑器上下文：
+
+- `--cwd <path>`：在加载配置和检查路径前指定工作区根目录。
+- `--context-file <path>`：读取一个文件，并作为下一轮模型请求的 generated context 注入。可重复传入。
+- `--selection-file <path>`：读取包含编辑器选区文本的文件，并作为下一轮模型请求的 generated context 注入。可重复传入。
+- `--initial-prompt <text>`：预填输入框；Alyce 不会自动发送。
+- `--prompt-file <path>`：从文件读取预填输入；不能与 `--initial-prompt` 同时使用。
+
+所有启动文件路径都会走和文件工具相同的 allowed roots 规则。工作区外文件会被拒绝，除非对应目录已配置在 `additionalDirectories` 中。文件不存在时会给出明确启动错误。启动上下文不是“读取整个 workspace”，不会隐式授权写入，并且会像其他 generated context 一样在首轮模型调用后从 live message list 中移除。
+
+### 旧版 OpenAI-compatible 启动默认值
 - `OPENAI_API_KEY`：您的 API 密钥。
 - `OPENAI_BASE_URL`：API 接口地址。
 - `OPENAI_MODEL`：使用的模型标识符。
+
+保存到 `./.alyce/config.json` 或 `~/.alyce/config.json` 的连接配置会覆盖这些启动默认值。旧格式仍然有效：
+
+```json
+{
+  "apiKey": "sk-...",
+  "baseURL": "https://api.openai.com/v1",
+  "model": "gpt-5.2"
+}
+```
+
+也可以在同一配置文件的 `providers` 下声明 provider profile，并使用 `provider/model` 引用模型。裸 `/model gpt-5.2` 会沿用当前 provider。
+
+```json
+{
+  "model": "openrouter/openai/gpt-5.2",
+  "providers": {
+    "openrouter": {
+      "label": "OpenRouter",
+      "kind": "openrouter",
+      "apiKeyEnv": "OPENROUTER_API_KEY",
+      "baseURL": "https://openrouter.ai/api/v1",
+      "defaultModel": "openai/gpt-5.2",
+      "models": {
+        "openai/gpt-5.2": { "contextWindow": 400000 },
+        "anthropic/claude-sonnet-4.6": { "contextWindow": 1000000 }
+      }
+    },
+    "local": {
+      "label": "Local",
+      "kind": "local",
+      "baseURL": "http://127.0.0.1:11434/v1",
+      "defaultModel": "qwen",
+      "models": {
+        "qwen": { "contextWindow": 256000 }
+      }
+    }
+  }
+}
+```
+
+在 Alyce 中运行 `/model` 或 `/models` 可以查看当前 provider/model、provider 可用性、已知模型和切换示例。目前所有已配置 provider 都通过 OpenAI-compatible adapter 发送请求；原生 Anthropic/Google adapter 还未加入，需配置兼容 `baseURL`。
+
+模型可以在 `models` 里可选配置 `inputCostPerMillionTokens` 和 `outputCostPerMillionTokens`。`/usage` 只在两者都存在时估算成本；缺少价格元数据的模型只显示 tokens。
 
 ### 搜索与抓取（可选）
 - `AGENT_ADDITIONAL_DIRECTORIES`：工作区外的额外允许目录，使用系统路径分隔符分隔；Windows 是 `;`，Linux/macOS 是 `:`。

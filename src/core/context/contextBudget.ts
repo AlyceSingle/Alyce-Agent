@@ -6,9 +6,13 @@ import {
 } from "../api/generatedMessages.js";
 import {
   resolveModelContextWindow,
-  type ContextWindowSource,
   type ModelContextWindowOverrides
 } from "./modelContextWindows.js";
+import type {
+  ResolvedContextWindowSource,
+  ResolvedModelProfile
+} from "../providers/types.js";
+import { formatModelRef } from "../providers/resolveModel.js";
 
 export type MessageParam = OpenAI.Chat.Completions.ChatCompletionMessageParam;
 export type ChatCreateParams = OpenAI.Chat.Completions.ChatCompletionCreateParamsNonStreaming;
@@ -31,7 +35,7 @@ export type ContextBudgetBreakdown = Record<ContextBudgetCategoryName, number>;
 export interface ContextBudgetSnapshot {
   model: string;
   contextWindow: number;
-  contextWindowSource: ContextWindowSource;
+  contextWindowSource: ResolvedContextWindowSource;
   contextWindowLabel: string;
   contextWindowMatchedPattern?: string;
   estimatedInputTokens: number;
@@ -64,6 +68,15 @@ export interface ContextBudgetUsage {
 
 export interface ContextBudgetEstimateOptions {
   recordForUsage?: boolean;
+  resolvedModel?: Pick<
+    ResolvedModelProfile,
+    | "providerId"
+    | "modelId"
+    | "contextWindow"
+    | "contextWindowSource"
+    | "contextWindowLabel"
+    | "contextWindowMatchedPattern"
+  >;
 }
 
 export interface ContextBudgetServiceOptions {
@@ -106,10 +119,17 @@ export class ContextBudgetService {
     request: ChatCreateParams,
     options: ContextBudgetEstimateOptions = {}
   ): ContextBudgetSnapshot {
-    const contextWindowResolution = resolveModelContextWindow(
-      request.model,
-      this.modelContextWindowOverrides
-    );
+    const contextWindowResolution = options.resolvedModel
+      ? {
+          contextWindow: options.resolvedModel.contextWindow,
+          source: options.resolvedModel.contextWindowSource,
+          label: options.resolvedModel.contextWindowLabel,
+          matchedPattern: options.resolvedModel.contextWindowMatchedPattern
+        }
+      : resolveModelContextWindow(
+          request.model,
+          this.modelContextWindowOverrides
+        );
     const contextWindow = contextWindowResolution.contextWindow;
     const reservedOutputTokens = resolveReservedOutputTokens(contextWindow);
     const autoCompactBufferTokens = resolveAutoCompactBufferTokens(contextWindow);
@@ -131,7 +151,7 @@ export class ContextBudgetService {
     const remainingTokens = Math.max(0, hardLimitTokens - estimatedInputTokens);
 
     return {
-      model: request.model,
+      model: options.resolvedModel ? formatResolvedModel(options.resolvedModel) : request.model,
       contextWindow,
       contextWindowSource: contextWindowResolution.source,
       contextWindowLabel: contextWindowResolution.label,
@@ -163,6 +183,15 @@ export class ContextBudgetService {
 
     this.calibrationScale = clamp(nextScale, 0.75, 2.5);
   }
+}
+
+function formatResolvedModel(
+  resolvedModel: Pick<ResolvedModelProfile, "providerId" | "modelId">
+): string {
+  return formatModelRef({
+    providerId: resolvedModel.providerId,
+    modelId: resolvedModel.modelId
+  });
 }
 
 export function snipOversizedToolOutputs(

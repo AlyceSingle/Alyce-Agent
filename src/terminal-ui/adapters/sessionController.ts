@@ -7,6 +7,14 @@ import { runAgentTurn } from "../../agent.js";
 import { createBackgroundDiagnosticsMessage } from "../../core/api/generatedMessages.js";
 import { isTurnInterruptedError, throwIfAborted } from "../../core/abort.js";
 import { formatDoctorReport, runDoctorDiagnostics } from "../../core/doctor/doctor.js";
+import {
+  formatDiffDetails,
+  formatDiffOverview,
+  formatPostEditSummary,
+  type DiffFileReport,
+  type TurnDiffReport
+} from "../../core/diff/diffService.js";
+import type { FileHistoryRestoreResult } from "../../core/file-history/fileHistoryManager.js";
 import { createPlanModeOverlayRules } from "../../core/planMode/planMode.js";
 import {
   createDefaultPermissionRuleSet,
@@ -20,6 +28,18 @@ import {
   type PermissionRuleInput
 } from "../../core/permissions/permissionRules.js";
 import { parseReplCommand } from "../../cli/commandRouter.js";
+import {
+  formatCurrentModelDisplay,
+  formatModelStatusReport,
+  resolveModelSwitch
+} from "../../cli/modelCommand.js";
+import {
+  formatTaskCompletionNotification,
+  formatTaskDetails,
+  formatTaskList,
+  formatTaskStopResult,
+  isTerminalTaskStatus
+} from "../../cli/taskCommand.js";
 import { getLspDiagnosticRegistry } from "../../services/lsp/LspDiagnosticRegistry.js";
 import {
   ContextOverflowError,
@@ -41,6 +61,7 @@ import type {
 import type {
   AskUserQuestionRequest,
   AskUserQuestionResponse,
+  SubagentTaskInfo,
   TodoItem,
   ToolApprovalRequest,
   ToolPermissionKind
@@ -60,6 +81,7 @@ import {
   setConnectionConfigState,
   setContextBudget,
   setDraftInput,
+  setBackgroundTasks,
   setLoading,
   setPlanModeEnabled,
   setSessionAllowedKinds,
@@ -76,7 +98,8 @@ import type {
   RewindRestoreMode,
   SettingsSection,
   TerminalUiMessage,
-  TerminalUiRewindPoint
+  TerminalUiRewindPoint,
+  TerminalUiTaskSummary
 } from "../state/types.js";
 import {
   createAssistantMessage,
@@ -104,6 +127,11 @@ const RESTORABLE_TOOL_NAMES = new Set([
 const MAX_REWIND_POINTS = 100;
 const PAGED_HISTORY_INITIAL_WINDOW = 240;
 const PAGED_HISTORY_CHUNK_SIZE = 120;
+const TASK_SYNC_INTERVAL_MS = 1000;
+const REVERT_FILES_ONLY_LABEL = "Files only";
+const REVERT_FILES_AND_CONVERSATION_LABEL = "Files and conversation";
+const REVERT_CONVERSATION_ONLY_LABEL = "Conversation only";
+const REVERT_CANCEL_LABEL = "Cancel";
 
 // 每轮请求在执行前都会记录一个 checkpoint，便于中断时回滚消息和文件改动。
 interface TurnCheckpoint {
@@ -230,9 +258,14 @@ export interface SessionController {
   setExitHandler: (handler: (() => void) | null) => void;
 }
 
+export interface SessionControllerOptions {
+  startupContextSummary?: string;
+}
+
 export function createSessionController(
   runtime: SessionRuntime,
-  store: TerminalUiStore
+  store: TerminalUiStore,
+  options: SessionControllerOptions = {}
 ): SessionController {
   let exitHandler: (() => void) | null = null;
   let exitRequestedAfterTurn = false;
@@ -248,6 +281,12 @@ export function createSessionController(
   const turnEphemeralMessageIds = new Map<"thinking" | "progress", string>();
   let disposeDiagnosticsSubscription: (() => void) | null = null;
   const pendingDiagnosticContextMessages: Array<ReturnType<typeof createBackgroundDiagnosticsMessage>> = [];
+  let taskSyncTimer: NodeJS.Timeout | null = null;
+  let taskSyncInitialized = false;
+  let lastTaskSnapshotJson = "";
+  const knownTaskStatuses = new Map<string, SubagentTaskInfo["status"]>();
+  const unreadTaskIds = new Set<string>();
+  const notifiedTerminalTaskIds = new Set<string>();
 
   const resetSessionHistoryPaging = () => {
     sessionHistoryPaging = null;
@@ -324,11 +363,97 @@ export function createSessionController(
 
   const filterUiMessages = (messages: TerminalUiMessage[]) => messages.filter(shouldKeepUiMessage);
 
+  const toTerminalTaskSummary = (task: SubagentTaskInfo): TerminalUiTaskSummary => ({
+    taskId: task.taskId,
+    agentType: task.agentType,
+    description: task.description,
+    status: task.status,
+    updatedAt: task.updatedAt,
+    unread: unreadTaskIds.has(task.taskId),
+    ...(task.worktreePath ? { worktreePath: task.worktreePath } : {}),
+    ...(task.hasChanges !== undefined ? { hasChanges: task.hasChanges } : {}),
+    ...(task.error ? { error: task.error } : {}),
+    ...(task.progress.at(-1)?.message ? { latestProgress: task.progress.at(-1)?.message } : {})
+  });
+
+  const updateTaskState = (tasks: SubagentTaskInfo[]) => {
+    const summaries = tasks.map(toTerminalTaskSummary);
+    const snapshotJson = JSON.stringify(summaries);
+    if (snapshotJson === lastTaskSnapshotJson) {
+      return;
+    }
+
+    lastTaskSnapshotJson = snapshotJson;
+    store.updateState((state) => setBackgroundTasks(state, summaries));
+  };
+
+  const resetTaskTracking = () => {
+    taskSyncInitialized = false;
+    lastTaskSnapshotJson = "";
+    knownTaskStatuses.clear();
+    unreadTaskIds.clear();
+    notifiedTerminalTaskIds.clear();
+    store.updateState((state) => setBackgroundTasks(state, []));
+  };
+
+  const syncBackgroundTasks = (options: { notify?: boolean } = {}) => {
+    let tasks: SubagentTaskInfo[];
+    try {
+      tasks = runtime.listSubagentTasks();
+    } catch {
+      return;
+    }
+
+    const shouldNotify = options.notify !== false && taskSyncInitialized;
+    for (const task of tasks) {
+      const previousStatus = knownTaskStatuses.get(task.taskId);
+      const becameTerminal =
+        (previousStatus === "running" || previousStatus === undefined) &&
+        isTerminalTaskStatus(task.status) &&
+        !notifiedTerminalTaskIds.has(task.taskId);
+
+      if (shouldNotify && becameTerminal) {
+        if (task.status === "completed") {
+          unreadTaskIds.add(task.taskId);
+        }
+        notifiedTerminalTaskIds.add(task.taskId);
+        appendUiMessage(createSystemMessage(formatTaskCompletionNotification(task), "Task"));
+      }
+
+      knownTaskStatuses.set(task.taskId, task.status);
+    }
+
+    updateTaskState(tasks);
+    taskSyncInitialized = true;
+  };
+
+  const startTaskSync = () => {
+    if (taskSyncTimer) {
+      return;
+    }
+
+    syncBackgroundTasks({ notify: false });
+    taskSyncTimer = setInterval(() => {
+      syncBackgroundTasks();
+    }, TASK_SYNC_INTERVAL_MS);
+    taskSyncTimer.unref?.();
+  };
+
+  const stopTaskSync = () => {
+    if (!taskSyncTimer) {
+      return;
+    }
+
+    clearInterval(taskSyncTimer);
+    taskSyncTimer = null;
+  };
+
   const finishExit = () => {
     if (disposeDiagnosticsSubscription) {
       disposeDiagnosticsSubscription();
       disposeDiagnosticsSubscription = null;
     }
+    stopTaskSync();
     void runtime.flushSessionHistory().finally(() => exitHandler?.());
   };
 
@@ -516,7 +641,8 @@ export function createSessionController(
   const hasRestorableFileSnapshot = (point: RewindPoint) =>
     point.hasFileChanges &&
     !point.isRestoredFromHistory &&
-    runtime.hasTrackedFileChanges(point.turnId);
+    runtime.hasTrackedFileChanges(point.turnId) &&
+    runtime.canRestoreFilesForTurn(point.turnId);
 
   const toTerminalRewindPoint = (point: RewindPoint): TerminalUiRewindPoint => {
     const affected = getAffectedRewindPoints(point);
@@ -572,11 +698,46 @@ export function createSessionController(
       point
     ].sort((a, b) => a.uiMessageCount - b.uiMessageCount);
 
-    if (!hasFileChanges || checkpoint.hasNonRestorableToolActivity) {
+    if (!hasFileChanges) {
       runtime.discardTurn(checkpoint.turnId);
     }
 
     trimRewindPoints();
+  };
+
+  const finalizeTurnFileChangesForRewind = async (
+    checkpoint: TurnCheckpoint,
+    postResponseFailures?: string[]
+  ): Promise<TurnDiffReport | null> => {
+    if (!runtime.hasTrackedFileChanges(checkpoint.turnId)) {
+      return null;
+    }
+
+    try {
+      return await runtime.getTurnDiff(checkpoint.turnId);
+    } catch (error) {
+      const message = formatPostResponseFailure("File diff snapshot failed", error);
+      if (postResponseFailures) {
+        postResponseFailures.push(message);
+      } else {
+        appendUiMessage(createErrorMessage(message));
+      }
+      return null;
+    }
+  };
+
+  const appendPostEditSummary = (report: TurnDiffReport | null | undefined) => {
+    if (!report) {
+      return false;
+    }
+
+    const summary = formatPostEditSummary(report);
+    if (!summary) {
+      return false;
+    }
+
+    appendUiMessage(createSystemMessage(summary, "Diff"));
+    return true;
   };
 
   const openRewindSelector = () => {
@@ -615,6 +776,7 @@ export function createSessionController(
     }
 
     const affected = getAffectedRewindPoints(target);
+    const fileRestoreResults: Array<{ turnId: string; result: FileHistoryRestoreResult }> = [];
 
     try {
       if (mode === "code-and-conversation") {
@@ -624,7 +786,14 @@ export function createSessionController(
             continue;
           }
 
-          await runtime.restoreFilesForTurn(point.turnId);
+          const result = await runtime.restoreFilesForTurn(point.turnId);
+          if (result.missingSnapshot) {
+            throw new Error(`File snapshots for turn ${point.turnId} are no longer available.`);
+          }
+          if (result.alreadyRestored) {
+            throw new Error(`File snapshots for turn ${point.turnId} were already restored.`);
+          }
+          fileRestoreResults.push({ turnId: point.turnId, result });
         }
       }
 
@@ -653,11 +822,48 @@ export function createSessionController(
       });
 
       pruneRewindPointsFrom(target);
+      appendUiMessage(
+        createSystemMessage(
+          formatConversationRestoreResult({
+            target,
+            mode,
+            affectedTurnCount: affected.length,
+            fileRestoreResults
+          }),
+          mode === "conversation" ? "Rewind" : "Revert"
+        )
+      );
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       appendUiMessage(createErrorMessage(`Failed to rewind: ${message}`));
       store.updateState((state) => setStatusText(state, "Error"));
     }
+  };
+
+  const formatConversationRestoreResult = (options: {
+    target: RewindPoint;
+    mode: RewindRestoreMode;
+    affectedTurnCount: number;
+    fileRestoreResults: Array<{ turnId: string; result: FileHistoryRestoreResult }>;
+  }) => {
+    const fileTotals = options.fileRestoreResults.reduce(
+      (totals, entry) => ({
+        restored: totals.restored + entry.result.restored.length,
+        removed: totals.removed + entry.result.removed.length
+      }),
+      { restored: 0, removed: 0 }
+    );
+
+    return [
+      options.mode === "code-and-conversation"
+        ? "Reverted tracked files and rewound the conversation."
+        : "Rewound the conversation only. Files on disk were left unchanged.",
+      `Turn: ${options.target.turnId}`,
+      `Conversation turns removed: ${options.affectedTurnCount}`,
+      options.mode === "code-and-conversation"
+        ? `Files restored: ${fileTotals.restored}; created files removed: ${fileTotals.removed}`
+        : "Files restored: 0; created files removed: 0"
+    ].join("\n");
   };
 
   const rebuildRewindPointsFromCurrentConversation = (uiMessages: TerminalUiMessage[]) => {
@@ -1006,6 +1212,8 @@ export function createSessionController(
         "Session resumed"
       )
     );
+    resetTaskTracking();
+    syncBackgroundTasks({ notify: false });
   };
 
   const resumeSessionByQuery = async (query: string) => {
@@ -1184,6 +1392,224 @@ export function createSessionController(
       .some((allowedRoot) => normalizePathForComparison(allowedRoot) === targetKey);
   };
 
+  const formatDiffView = async (
+    target: Extract<ReturnType<typeof parseReplCommand>, { type: "diff-view" }>["target"]
+  ) => {
+    if (target === "overview") {
+      const [lastTurn, workingTree] = await Promise.all([
+        runtime.getLastAlyceTurnDiff(),
+        runtime.getWorkingTreeDiff()
+      ]);
+      return formatDiffOverview({ lastTurn, workingTree });
+    }
+
+    if (target === "last") {
+      const report = await runtime.getLastAlyceTurnDiff();
+      return report ? formatDiffDetails(report) : "No Alyce turn file changes tracked yet.";
+    }
+
+    if (target === "current") {
+      return formatDiffDetails(await runtime.getWorkingTreeDiff());
+    }
+
+    return formatDiffDetails(await runtime.getTurnDiff(target.turnId));
+  };
+
+  const getLatestRevertTarget = async () => {
+    const report = await runtime.getLastAlyceTurnDiff();
+    if (!report) {
+      return null;
+    }
+
+    const point = rewindPoints.find((candidate) => candidate.turnId === report.turnId);
+    return {
+      report,
+      point,
+      view: point ? toTerminalRewindPoint(point) : null
+    };
+  };
+
+  const recordFilesOnlyRevertEvent = async () => {
+    await runtime.recordSessionRewind({
+      apiMessageCount: Math.max(0, runtime.messages.length - 1),
+      uiMessageCount: store.getState().messages.length,
+      sessionMemory: runtime.memoryService.getSessionMemory(),
+      restoreMode: "files-only"
+    });
+  };
+
+  const restoreLatestTurnFilesOnly = async (
+    target?: Awaited<ReturnType<typeof getLatestRevertTarget>>
+  ) => {
+    const resolvedTarget = target ?? (await getLatestRevertTarget());
+    if (!resolvedTarget) {
+      appendUiMessage(createSystemMessage("No Alyce turn file changes tracked yet.", "Revert"));
+      return;
+    }
+
+    if (resolvedTarget.report.summary.filesChanged === 0) {
+      appendUiMessage(
+        createSystemMessage(
+          [
+            `Turn ${resolvedTarget.report.turnId} has no tracked file changes to revert.`
+          ].join("\n"),
+          "Revert"
+        )
+      );
+      return;
+    }
+
+    const result = await runtime.restoreFilesForTurn(resolvedTarget.report.turnId);
+    if (!result.missingSnapshot && !result.alreadyRestored) {
+      await recordFilesOnlyRevertEvent();
+    }
+
+    appendUiMessage(
+      createSystemMessage(
+        formatFilesOnlyRevertResult(resolvedTarget.report, result),
+        "Revert"
+      )
+    );
+  };
+
+  const restoreLatestTurnConversationOnly = async (
+    target?: Awaited<ReturnType<typeof getLatestRevertTarget>>
+  ) => {
+    const resolvedTarget = target ?? (await getLatestRevertTarget());
+    if (!resolvedTarget) {
+      appendUiMessage(createSystemMessage("No Alyce turn file changes tracked yet.", "Revert"));
+      return;
+    }
+
+    if (!resolvedTarget.point) {
+      appendUiMessage(
+        createSystemMessage(
+          [
+            `Conversation rewind is unavailable for turn ${resolvedTarget.report.turnId}.`,
+            "This can happen after session resume, clear, or when the in-memory rewind point was pruned.",
+            "Tracked files can still be reverted with /revert --files-only if their file snapshots remain."
+          ].join("\n"),
+          "Revert"
+        )
+      );
+      return;
+    }
+
+    await restoreRewindPointById(resolvedTarget.point.id, "conversation");
+  };
+
+  const confirmAndRestoreLatestTurn = async () => {
+    const target = await getLatestRevertTarget();
+    if (!target) {
+      appendUiMessage(createSystemMessage("No Alyce turn file changes tracked yet.", "Revert"));
+      return;
+    }
+
+    if (target.report.summary.filesChanged === 0) {
+      appendUiMessage(
+        createSystemMessage(
+          [
+            `Turn ${target.report.turnId} has no tracked file changes to revert.`
+          ].join("\n"),
+          "Revert"
+        )
+      );
+      return;
+    }
+
+    if (!runtime.canRestoreFilesForTurn(target.report.turnId)) {
+      await restoreLatestTurnFilesOnly(target);
+      return;
+    }
+
+    const options = [
+      {
+        label: REVERT_FILES_ONLY_LABEL,
+        description: "Restore tracked files; keep the conversation unchanged.",
+        preview: formatRevertPreview(target.report, "files")
+      },
+      ...(target.point && target.view?.canRestoreCode
+        ? [{
+            label: REVERT_FILES_AND_CONVERSATION_LABEL,
+            description: "Restore tracked files and remove conversation turns from this point onward.",
+            preview: formatRevertPreview(target.report, "files-and-conversation")
+          }]
+        : []),
+      ...(target.point
+        ? [{
+            label: REVERT_CONVERSATION_ONLY_LABEL,
+            description: "Remove conversation turns from this point onward; keep files on disk unchanged.",
+            preview: formatRevertPreview(target.report, "conversation")
+          }]
+        : []),
+      {
+        label: REVERT_CANCEL_LABEL,
+        description: "Leave files and conversation unchanged."
+      }
+    ];
+
+    try {
+      const response = await askUserQuestions({
+        toolName: "Revert",
+        title: "Confirm revert",
+        metadata: { source: "user" },
+        questions: [
+          {
+            header: "Revert",
+            question: [
+              "How should Alyce revert the latest turn?",
+              "",
+              "Alyce can revert the latest tracked file changes.",
+              `Turn: ${target.report.turnId}`,
+              "",
+              "Files:",
+              ...formatRevertFileLines(target.report.files),
+              "",
+              "Choose whether to restore files only or also rewind the conversation."
+            ].join("\n"),
+            options
+          }
+        ]
+      });
+      const answer = Object.values(response.answers)[0] ?? "";
+
+      if (answer === REVERT_FILES_ONLY_LABEL) {
+        await restoreLatestTurnFilesOnly(target);
+        return;
+      }
+
+      if (answer === REVERT_FILES_AND_CONVERSATION_LABEL && target.point) {
+        await restoreRewindPointById(target.point.id, "code-and-conversation");
+        return;
+      }
+
+      if (answer === REVERT_CONVERSATION_ONLY_LABEL) {
+        await restoreLatestTurnConversationOnly(target);
+        return;
+      }
+
+      appendUiMessage(createSystemMessage("Revert cancelled.", "Revert"));
+    } catch (error) {
+      appendUiMessage(createSystemMessage(`Revert cancelled: ${getErrorMessage(error)}`, "Revert"));
+    }
+  };
+
+  const handleRevertCommand = async (
+    mode: Extract<ReturnType<typeof parseReplCommand>, { type: "revert" }>["mode"]
+  ) => {
+    if (mode === "files-only") {
+      await restoreLatestTurnFilesOnly();
+      return;
+    }
+
+    if (mode === "conversation-only") {
+      await restoreLatestTurnConversationOnly();
+      return;
+    }
+
+    await confirmAndRestoreLatestTurn();
+  };
+
   const handleCommand = async (
     parsedCommand: ReturnType<typeof parseReplCommand>
   ): Promise<boolean> => {
@@ -1207,7 +1633,7 @@ export function createSessionController(
     }
 
     if (parsedCommand.type === "help") {
-      appendUiMessage(createSystemMessage(getHelpText(runtime.getCurrentModel()), "Help"));
+      appendUiMessage(createSystemMessage(getHelpText(formatCurrentModelDisplay(runtime.getCurrentModel())), "Help"));
       return true;
     }
 
@@ -1264,6 +1690,28 @@ export function createSessionController(
       return true;
     }
 
+    if (parsedCommand.type === "revert") {
+      try {
+        await handleRevertCommand(parsedCommand.mode);
+      } catch (error) {
+        appendUiMessage(createErrorMessage(`Revert failed: ${getErrorMessage(error)}`));
+        store.updateState((state) => setStatusText(state, "Error"));
+      }
+      return true;
+    }
+
+    if (parsedCommand.type === "diff-view") {
+      store.updateState((state) => setStatusText(state, "Loading diff..."));
+      try {
+        appendUiMessage(createSystemMessage(await formatDiffView(parsedCommand.target), "Diff"));
+      } catch (error) {
+        appendUiMessage(createErrorMessage(`Diff failed: ${getErrorMessage(error)}`));
+      } finally {
+        store.updateState((state) => setStatusText(state, "Idle"));
+      }
+      return true;
+    }
+
     if (parsedCommand.type === "clear") {
       for (const point of rewindPoints) {
         if (!point.isRestoredFromHistory) {
@@ -1273,6 +1721,7 @@ export function createSessionController(
       rewindPoints = [];
       resetSessionHistoryPaging();
       await runtime.clearConversation();
+      resetTaskTracking();
       store.updateState((state) =>
         setDraftInput(
           setContextBudget(
@@ -1335,6 +1784,34 @@ export function createSessionController(
       return true;
     }
 
+    if (parsedCommand.type === "tasks-list") {
+      syncBackgroundTasks();
+      appendUiMessage(
+        createSystemMessage(
+          formatTaskList(runtime.listSubagentTasks(), unreadTaskIds),
+          "Tasks"
+        )
+      );
+      return true;
+    }
+
+    if (parsedCommand.type === "tasks-get") {
+      const task = await runtime.getSubagentTask(parsedCommand.taskId);
+      if (task) {
+        unreadTaskIds.delete(task.taskId);
+      }
+      appendUiMessage(createSystemMessage(formatTaskDetails(task, parsedCommand.taskId), "Tasks"));
+      syncBackgroundTasks();
+      return true;
+    }
+
+    if (parsedCommand.type === "tasks-stop") {
+      const result = await runtime.stopSubagentTask(parsedCommand.taskId);
+      appendUiMessage(createSystemMessage(formatTaskStopResult(result), "Tasks"));
+      syncBackgroundTasks();
+      return true;
+    }
+
     if (parsedCommand.type === "tasks-cleanup") {
       const report = await runtime.runSubagentStorageCleanup({
         apply: parsedCommand.apply
@@ -1355,6 +1832,11 @@ export function createSessionController(
           "Subagent Cleanup"
         )
       );
+      return true;
+    }
+
+    if (parsedCommand.type === "usage-view") {
+      appendUiMessage(createSystemMessage(runtime.formatUsageReport(), "Usage"));
       return true;
     }
 
@@ -1432,10 +1914,48 @@ export function createSessionController(
       return true;
     }
 
+    if (parsedCommand.type === "model-view") {
+      appendUiMessage(
+        createSystemMessage(
+          formatModelStatusReport({
+            connectionState: runtime.getConnectionConfigState(),
+            settings: runtime.getSettings(),
+            currentModel: runtime.getCurrentModel(),
+            env: process.env
+          }),
+          "Model"
+        )
+      );
+      return true;
+    }
+
     if (parsedCommand.type === "switch-model") {
-      await runtime.setCurrentModel(parsedCommand.model);
+      const result = resolveModelSwitch(parsedCommand.model, {
+        currentModel: runtime.getCurrentModel(),
+        providers: runtime.getConnectionConfigState().providerProfiles,
+        settings: runtime.getSettings(),
+        env: process.env
+      });
+      if (!result.ok) {
+        appendUiMessage(
+          createErrorMessage(
+            [result.message, ...result.suggestions].filter(Boolean).join("\n")
+          )
+        );
+        return true;
+      }
+
+      await runtime.setCurrentModel(result.persistModel);
       store.updateState((state) => setConnectionConfigState(state, runtime.getConnectionConfigState()));
-      appendUiMessage(createSystemMessage("Switched model to: " + runtime.getCurrentModel(), "Model"));
+      appendUiMessage(
+        createSystemMessage(
+          [
+            `Switched model to: ${result.displayModel}`,
+            ...result.warnings
+          ].join("\n"),
+          "Model"
+        )
+      );
       return true;
     }
 
@@ -1446,6 +1966,7 @@ export function createSessionController(
     initialize: () => {
       syncDiagnosticsRegistrySettings();
       subscribeDiagnosticsFollowUps();
+      startTaskSync();
       store.updateState((state) =>
         setPlanModeEnabled(state, runtime.getPlanModeState().enabled)
       );
@@ -1454,15 +1975,18 @@ export function createSessionController(
         createSystemMessage(
           [
             ...buildAccessScopeSnapshot(),
-            "Model: " + runtime.getCurrentModel(),
+            "Model: " + formatCurrentModelDisplay(runtime.getCurrentModel()),
             "Approval: " + sessionApprovalMode,
             runtime.hasConnectionConfig()
               ? "Connection: ready"
-              : "Connection: API key missing, open /settings or /setup"
+              : "Connection: provider/model unavailable, open /settings or /setup"
           ].join("\n"),
           "Session"
         )
       );
+      if (options.startupContextSummary) {
+        appendUiMessage(createSystemMessage(options.startupContextSummary, "Startup Context"));
+      }
 
       if (!runtime.hasConnectionConfig()) {
         store.updateState((state) =>
@@ -1495,7 +2019,7 @@ export function createSessionController(
           openSettingsDialog(state, "connection", "Fill API key, URL, and model before sending a prompt.")
         );
         appendUiMessage(
-          createErrorMessage("Connection is incomplete. Open settings and fill API key, URL, and model.")
+          createErrorMessage("Connection is incomplete. Open settings and fill provider/model details.")
         );
         return;
       }
@@ -1531,14 +2055,23 @@ export function createSessionController(
       let conversationWasCompacted = false;
       let thinkingSnapshot = "";
       let thinkingSegmentContent = "";
+      let postEditSummaryAppended = false;
+      const appendPostEditSummaryOnce = (report: TurnDiffReport | null | undefined) => {
+        if (postEditSummaryAppended) {
+          return;
+        }
+
+        postEditSummaryAppended = appendPostEditSummary(report);
+      };
 
       try {
         // 每轮都绑定独立的 abort controller 和 tool context，确保取消只影响当前轮次。
-        const client = runtime.requireClient();
+        const client = runtime.requireChatCompletionAdapter();
         const currentModel = runtime.getCurrentModel();
+        const resolvedModel = runtime.getResolvedModelProfile();
         const gcliGeminiCompat = shouldUseGcliGeminiCompat(
-          runtime.getConnectionConfig().baseURL,
-          currentModel
+          resolvedModel.baseURL,
+          resolvedModel.modelId
         );
         const tools = await runtime.getMainAgentToolSchemas({
           abortSignal: controller.signal
@@ -1551,6 +2084,7 @@ export function createSessionController(
         throwIfAborted(controller.signal);
         const initialBudget = runtime.estimateContextBudget({
           model: currentModel,
+          resolvedModel,
           messages: runtime.messages,
           tools,
           gcliGeminiCompat
@@ -1561,11 +2095,17 @@ export function createSessionController(
         store.updateState((state) => setStatusText(state, "Thinking..."));
         const reply = await runAgentTurn(client, runtime.messages, {
           model: currentModel,
+          resolvedModel,
           maxSteps: runtime.getSettings().maxSteps,
           querySource: "main",
           gcliGeminiCompat,
           messageTimestampsEnabled: runtime.getSettings().messageTimestampsEnabled,
           abortSignal: controller.signal,
+          usageSource: "main",
+          usageTurnId: turnId,
+          onUsage: (event) => {
+            runtime.recordUsage(event);
+          },
           context: runtime.createToolContext({
             turnId,
             abortSignal: controller.signal,
@@ -1597,8 +2137,10 @@ export function createSessionController(
             runtime.maybeCompactConversation({
               client,
               model: currentModel,
+              resolvedModel,
               force: true,
               querySource,
+              usageTurnId: turnId,
               abortSignal
             }),
           onContextBudget: (snapshot) => {
@@ -1699,6 +2241,11 @@ export function createSessionController(
         };
         throwIfAborted(controller.signal);
         const postResponseFailures: string[] = [];
+        const turnDiffReport = await finalizeTurnFileChangesForRewind(
+          checkpoint,
+          postResponseFailures
+        );
+        appendPostEditSummaryOnce(turnDiffReport);
 
         try {
           if (!completedTurnHistoryPlan) {
@@ -1710,7 +2257,9 @@ export function createSessionController(
           runtime.scheduleSessionMemoryExtraction({
             client,
             model: currentModel,
+            resolvedModel,
             querySource: "main",
+            usageTurnId: turnId,
             abortSignal: controller.signal
           });
         } catch (error) {
@@ -1726,6 +2275,8 @@ export function createSessionController(
       } catch (error) {
         if (checkpoint.hasAssistantOutput) {
           activeTurn = null;
+          const turnDiffReport = await finalizeTurnFileChangesForRewind(checkpoint);
+          appendPostEditSummaryOnce(turnDiffReport);
 
           if (!turnRecorded && completedTurnHistoryPlan) {
             try {
@@ -1783,6 +2334,8 @@ export function createSessionController(
               appendUiMessage(createErrorMessage(`Interrupted turn was not saved: ${historyMessage}`));
             }
 
+            const turnDiffReport = await finalizeTurnFileChangesForRewind(checkpoint);
+            appendPostEditSummaryOnce(turnDiffReport);
             rememberRewindPoint(checkpoint);
             appendUiMessage(
               createSystemMessage(
@@ -1971,6 +2524,73 @@ function formatSessionTime(value: string): string {
     hour: "2-digit",
     minute: "2-digit"
   });
+}
+
+function formatRevertFileLines(files: DiffFileReport[], limit = 20): string[] {
+  if (files.length === 0) {
+    return ["- (no tracked file changes)"];
+  }
+
+  const visibleFiles = files.slice(0, limit);
+  const lines = visibleFiles.map((file) =>
+    `- ${file.path}: ${file.status}, +${file.additions} -${file.deletions}`
+  );
+  const hiddenCount = files.length - visibleFiles.length;
+  if (hiddenCount > 0) {
+    lines.push(`- ... ${hiddenCount} more file(s)`);
+  }
+
+  return lines;
+}
+
+function formatRevertPreview(
+  report: TurnDiffReport,
+  mode: "files" | "files-and-conversation" | "conversation"
+): string {
+  const modeLine =
+    mode === "files"
+      ? "Files will be restored. Conversation stays as-is."
+      : mode === "files-and-conversation"
+        ? "Files will be restored and conversation turns from this point onward will be removed."
+        : "Conversation turns from this point onward will be removed. Files stay as-is.";
+
+  return [
+    modeLine,
+    `Turn: ${report.turnId}`,
+    "Files:",
+    ...formatRevertFileLines(report.files)
+  ].join("\n");
+}
+
+function formatFilesOnlyRevertResult(
+  report: TurnDiffReport,
+  result: FileHistoryRestoreResult
+): string {
+  if (result.missingSnapshot) {
+    return [
+      `File revert is unavailable for turn ${report.turnId}.`,
+      "The file snapshots are missing or were pruned.",
+      "No file changes were applied."
+    ].join("\n");
+  }
+
+  if (result.alreadyRestored) {
+    return [
+      `Turn ${report.turnId} was already restored${result.restoredAt ? ` at ${result.restoredAt}` : ""}.`,
+      "No file changes were applied.",
+      "Use /rewind or /revert --conversation-only if you only need to move the conversation."
+    ].join("\n");
+  }
+
+  return [
+    `Reverted tracked file changes for turn ${report.turnId}.`,
+    "Conversation: unchanged.",
+    `Restored existing files: ${result.restored.length}`,
+    `Removed files created by the turn: ${result.removed.length}`,
+    "",
+    "Files:",
+    ...formatRevertFileLines(report.files)
+  ].join("\n");
 }
 
 function extractMessageText(value: unknown): string {

@@ -10,6 +10,7 @@ import { terminalUiTheme } from "../theme/theme.js";
 import TextInput from "./TextInput.js";
 
 const PROMPT_INPUT_VIEWPORT_OFFSET = 8;
+const MAX_VISIBLE_SLASH_COMMAND_SUGGESTIONS = 10;
 
 export function isSlashCommandInput(value: string) {
   return value.startsWith("/") && !value.includes("\n");
@@ -25,6 +26,30 @@ export function getSlashCommandSuggestions(value: string): ReplCommandDefinition
     const candidates = [command.command, command.usage, command.completion];
     return candidates.some((candidate) => candidate.toLowerCase().startsWith(query));
   });
+}
+
+export function getVisibleSlashCommandSuggestions(
+  suggestions: ReplCommandDefinition[],
+  selectedIndex: number
+) {
+  const visibleCount = Math.min(MAX_VISIBLE_SLASH_COMMAND_SUGGESTIONS, suggestions.length);
+  if (visibleCount === 0) {
+    return {
+      startIndex: 0,
+      suggestions: []
+    };
+  }
+
+  const safeSelectedIndex = Math.min(Math.max(0, selectedIndex), suggestions.length - 1);
+  const startIndex = Math.min(
+    Math.max(0, safeSelectedIndex - visibleCount + 1),
+    suggestions.length - visibleCount
+  );
+
+  return {
+    startIndex,
+    suggestions: suggestions.slice(startIndex, startIndex + visibleCount)
+  };
 }
 
 export function shouldCompleteSlashCommandInput(value: string, command: ReplCommandDefinition) {
@@ -63,7 +88,9 @@ export function PromptInput(props: {
   const inputColumns = Math.max(20, viewportWidth - PROMPT_INPUT_VIEWPORT_OFFSET);
   const slashSuggestions = useMemo(() => getSlashCommandSuggestions(props.value), [props.value]);
   const slashMenuVisible = !props.disabled && isSlashCommandInput(props.value) && slashSuggestions.length > 0;
-  const layoutRowCount = slashMenuVisible ? slashSuggestions.length + 1 : 0;
+  const layoutRowCount = slashMenuVisible
+    ? Math.min(slashSuggestions.length, MAX_VISIBLE_SLASH_COMMAND_SUGGESTIONS) + 1
+    : 0;
   const selectedSlashSuggestion = slashSuggestions[Math.min(selectedSlashIndex, slashSuggestions.length - 1)];
 
   useEffect(() => {
@@ -285,15 +312,19 @@ function SlashCommandSuggestions(props: {
   suggestions: ReplCommandDefinition[];
   selectedIndex: number;
 }) {
+  const visibleSuggestions = getVisibleSlashCommandSuggestions(
+    props.suggestions,
+    props.selectedIndex
+  );
   const usageWidth = Math.min(
     30,
-    props.suggestions.reduce((width, command) => Math.max(width, command.usage.length), 0)
+    visibleSuggestions.suggestions.reduce((width, command) => Math.max(width, command.usage.length), 0)
   );
 
   return (
     <Box marginBottom={1} flexDirection="column" flexShrink={0} width="100%">
-      {props.suggestions.map((suggestion, index) => {
-        const selected = index === props.selectedIndex;
+      {visibleSuggestions.suggestions.map((suggestion, index) => {
+        const selected = visibleSuggestions.startIndex + index === props.selectedIndex;
         const marker = selected ? "› " : "  ";
         const color = selected ? terminalUiTheme.colors.promptAccent : terminalUiTheme.colors.inputTray;
         return (

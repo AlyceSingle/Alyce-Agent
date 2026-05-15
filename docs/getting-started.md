@@ -70,6 +70,96 @@ npm start
 
 The app validates the TTY environment on startup. If the configuration is incorrect (e.g., missing API key or non-interactive terminal), it will provide a clear error message.
 
+## VS Code Integrated Terminal Helper
+
+You can pass the current editor file or a selection file into Alyce from a VS Code integrated terminal without installing a marketplace extension:
+
+```bash
+alyce --cwd "C:\path\to\workspace" --context-file "src/index.ts" --initial-prompt "Review this file"
+```
+
+For local development, use `npm run dev --` before the Alyce flags:
+
+```bash
+npm run dev -- --context-file "src/index.ts" --initial-prompt "Review this file"
+```
+
+Example `.vscode/tasks.json` task for the current file:
+
+```json
+{
+  "version": "2.0.0",
+  "tasks": [
+    {
+      "label": "Alyce: Current File",
+      "type": "shell",
+      "command": "alyce",
+      "args": [
+        "--cwd",
+        "${workspaceFolder}",
+        "--context-file",
+        "${file}",
+        "--initial-prompt",
+        "Use the provided editor file as context."
+      ],
+      "problemMatcher": []
+    }
+  ]
+}
+```
+
+For selected text, write the selection to a file first, then pass that file explicitly. The `alyce-vscode-selection` helper accepts `--selection`, `ALYCE_VSCODE_SELECTION`, or stdin and writes a UTF-8 file:
+
+```bash
+alyce-vscode-selection --out ".alyce/vscode-selection.txt" --selection "selected text"
+alyce --cwd . --selection-file ".alyce/vscode-selection.txt" --initial-prompt "Review this selection"
+```
+
+Example `.vscode/tasks.json` tasks for the current file plus selected text:
+
+```json
+{
+  "version": "2.0.0",
+  "tasks": [
+    {
+      "label": "Alyce: Write Selection",
+      "type": "shell",
+      "command": "alyce-vscode-selection",
+      "args": [
+        "--out",
+        "${workspaceFolder}/.alyce/vscode-selection.txt"
+      ],
+      "options": {
+        "env": {
+          "ALYCE_VSCODE_SELECTION": "${selectedText}"
+        }
+      },
+      "problemMatcher": []
+    },
+    {
+      "label": "Alyce: Current File and Selection",
+      "type": "shell",
+      "dependsOn": "Alyce: Write Selection",
+      "dependsOrder": "sequence",
+      "command": "alyce",
+      "args": [
+        "--cwd",
+        "${workspaceFolder}",
+        "--context-file",
+        "${file}",
+        "--selection-file",
+        "${workspaceFolder}/.alyce/vscode-selection.txt",
+        "--initial-prompt",
+        "Use the provided file and selection as context."
+      ],
+      "problemMatcher": []
+    }
+  ]
+}
+```
+
+Security boundaries stay the same: startup file paths must be inside allowed roots, Alyce does not read the whole workspace, and passing context does not grant write approval.
+
 ## First-Run Recommendations
 
 Once Alyce is running, we recommend the following steps:

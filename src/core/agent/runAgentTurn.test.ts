@@ -3,6 +3,7 @@ import type OpenAI from "openai";
 import { TurnInterruptedError } from "../abort.js";
 import { runAgentTurn } from "./runAgentTurn.js";
 import type { ToolExecutionContext } from "../../tools.js";
+import type { UsageRecordInput } from "../usage/types.js";
 
 function createTestContext(
   abortSignal: AbortSignal,
@@ -28,6 +29,7 @@ function createTestContext(
 async function runTests() {
   await testInterruptedToolCallDoesNotLeaveUnansweredAssistantMessage();
   await testRejectedToolApprovalReturnsToolResultAndContinues();
+  await testUsageCallbackIncludesTurnMetadata();
   await testMcpStatusRefreshesToolsBeforeNextStep();
   await testToolSchemaRefreshFailureContinuesWithWarning();
   await testMaxStepsLeavesAnsweredToolCallPair();
@@ -100,6 +102,62 @@ async function testInterruptedToolCallDoesNotLeaveUnansweredAssistantMessage() {
   );
 
   assert.deepEqual(messages.map((message) => message.role), ["system", "user"]);
+}
+
+async function testUsageCallbackIncludesTurnMetadata() {
+  const controller = new AbortController();
+  const messages: OpenAI.Chat.Completions.ChatCompletionMessageParam[] = [
+    {
+      role: "system",
+      content: "system"
+    },
+    {
+      role: "user",
+      content: "ask"
+    }
+  ];
+  const client = {
+    chat: {
+      completions: {
+        create: async () => ({
+          choices: [{
+            message: {
+              role: "assistant",
+              content: "answer"
+            }
+          }],
+          usage: {
+            prompt_tokens: 12,
+            completion_tokens: 3,
+            total_tokens: 15
+          }
+        })
+      }
+    }
+  } as unknown as OpenAI;
+  const usageEvents: UsageRecordInput[] = [];
+
+  const reply = await runAgentTurn(client, messages, {
+    model: "gpt-test",
+    maxSteps: 1,
+    tools: [],
+    abortSignal: controller.signal,
+    context: createTestContext(controller.signal),
+    usageSource: "main",
+    usageTurnId: "turn-1",
+    onUsage: (event) => {
+      usageEvents.push(event);
+    }
+  });
+
+  assert.equal(reply, "answer");
+  assert.equal(usageEvents.length, 1);
+  assert.equal(usageEvents[0]?.requestedModel, "gpt-test");
+  assert.equal(usageEvents[0]?.usage?.total_tokens, 15);
+  assert.equal(usageEvents[0]?.retryCount, 0);
+  assert.equal(usageEvents[0]?.source, "main");
+  assert.equal(usageEvents[0]?.turnId, "turn-1");
+  assert.ok((usageEvents[0]?.durationMs ?? -1) >= 0);
 }
 
 async function testMcpStatusRefreshesToolsBeforeNextStep() {

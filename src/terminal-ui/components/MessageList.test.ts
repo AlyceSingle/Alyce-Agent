@@ -95,8 +95,9 @@ function runTests() {
   testCombineShellOutputVariants();
   testReadToolCollapsedPreviewUsesThreeLines();
   testShellToolCollapsedPreviewUsesThreeLines();
-  testToolCodeLinesUseToolHeaderColor();
+  testToolOutputLinesUseBodyColor();
   testSystemLinesUseSystemColor();
+  testSystemPaletteUsesSystemHeaderAndRailColor();
   testWriteToolMessagesDefaultToCollapsedAndCanExpand(renderPolicy);
   testMarkdownFriendlyToolUsesMarkdownWhenExpanded(renderPolicy);
   testMarkdownFriendlyToolStillUsesMarkdownWhenMessageContentOverBudget();
@@ -267,18 +268,32 @@ function testShellToolCollapsedPreviewUsesThreeLines() {
   assert.equal(renderedLineCount <= 3, true);
 }
 
-function testToolCodeLinesUseToolHeaderColor() {
+function testToolOutputLinesUseBodyColor() {
   const section = {
     lines: [{ content: "$ npm run build" }],
     tone: "default" as const,
     style: "code" as const
   };
-  const toolPalette = testing.getMessagePalette("tool", false);
+  const toolPalette = testing.getMessagePalette("tool", false) as {
+    bodyColor: string;
+  };
   const assistantPalette = testing.getMessagePalette("assistant", false);
 
   assert.equal(
     testing.getRenderedLineColors(section.lines[0]!, section, "tool", toolPalette).color,
-    terminalUiTheme.colors.tool
+    toolPalette.bodyColor
+  );
+  assert.deepEqual(
+    testing.getRenderedLineColors(
+      { content: "+changed", diffKind: "add" },
+      section,
+      "tool",
+      toolPalette
+    ),
+    {
+      color: terminalUiTheme.colors.diffAdded,
+      backgroundColor: terminalUiTheme.colors.diffAddedBackground
+    }
   );
   assert.equal(
     testing.getRenderedLineColors(section.lines[0]!, section, "assistant", assistantPalette).color,
@@ -301,12 +316,24 @@ function testSystemLinesUseSystemColor() {
 
   assert.equal(
     testing.getRenderedLineColors(plainSection.lines[0]!, plainSection, "system", systemPalette).color,
-    terminalUiTheme.colors.system
+    terminalUiTheme.colors.chrome
   );
   assert.equal(
     testing.getRenderedLineColors(codeSection.lines[0]!, codeSection, "system", systemPalette).color,
-    terminalUiTheme.colors.system
+    terminalUiTheme.colors.chrome
   );
+}
+
+function testSystemPaletteUsesSystemHeaderAndRailColor() {
+  const systemPalette = testing.getMessagePalette("system", false) as {
+    headerColor: string;
+    bodyColor: string;
+    railColor: string;
+  };
+
+  assert.equal(systemPalette.headerColor, terminalUiTheme.colors.system);
+  assert.equal(systemPalette.railColor, terminalUiTheme.colors.system);
+  assert.equal(systemPalette.bodyColor, terminalUiTheme.colors.chrome);
 }
 
 function testWriteToolMessagesDefaultToCollapsedAndCanExpand(

@@ -129,7 +129,7 @@ const markdownCjkStrongExtension: TokenizerAndRendererExtension = {
     if (
       content.length === 0 ||
       src[closeIndex + 2] === "*" ||
-      !shouldForceCjkStrongFallback(content)
+      !shouldForceCjkDelimitedFallback(content)
     ) {
       return undefined;
     }
@@ -163,7 +163,7 @@ const markdownCjkEmphasisExtension: TokenizerAndRendererExtension = {
     if (
       content.length === 0 ||
       src[closeIndex + 1] === "*" ||
-      !shouldForceCjkEmphasisFallback(content)
+      !shouldForceCjkDelimitedFallback(content)
     ) {
       return undefined;
     }
@@ -438,20 +438,26 @@ export function MarkdownRenderer(props: {
   plan: MarkdownRenderPlan;
   kind: TerminalUiMessageKind;
   baseColor?: string;
+  colorMode?: "semantic" | "plain";
 }) {
+  const plainColor = props.colorMode === "plain"
+    ? props.baseColor ?? terminalUiTheme.colors.messageCardText
+    : undefined;
+
   return (
     <Box flexDirection="column" width="100%">
       {props.plan.blocks.map((block) => (
         <Box key={block.key} flexDirection="column" marginTop={block.marginTop} width="100%">
           {block.lines.map((line) => {
             const lineStyle = getLineStyle(line.variant, props.kind, props.baseColor, line.quoteDepth);
+            const textStyle = plainColor ? { ...lineStyle, color: plainColor } : lineStyle;
 
             return (
               <Text
                 key={line.key}
-                {...buildInkTextProps(lineStyle)}
+                {...buildInkTextProps(textStyle)}
               >
-                {renderLineContent(line)}
+                {renderLineContent(line, plainColor)}
               </Text>
             );
           })}
@@ -461,7 +467,7 @@ export function MarkdownRenderer(props: {
   );
 }
 
-function renderLineContent(line: MarkdownRenderLine) {
+function renderLineContent(line: MarkdownRenderLine, plainColor?: string) {
   const prefixText = `${" ".repeat(Math.max(0, line.indent))}${line.prefix}`;
 
   if (line.spans.length === 0) {
@@ -473,7 +479,7 @@ function renderLineContent(line: MarkdownRenderLine) {
       {prefixText}
       {line.spans.map((span, index) => (
         <React.Fragment key={`${line.key}-span-${index}`}>
-          {renderSpan(span)}
+          {renderSpan(span, plainColor)}
         </React.Fragment>
       ))}
     </>
@@ -1417,8 +1423,9 @@ function buildInkTextProps(style: MarkdownSpanStyle): React.ComponentProps<typeo
   return props as React.ComponentProps<typeof Text>;
 }
 
-function renderSpan(span: MarkdownSpan) {
-  const node = <Text {...buildInkTextProps(span)}>{span.text}</Text>;
+function renderSpan(span: MarkdownSpan, plainColor?: string) {
+  const style = plainColor ? { ...span, color: plainColor } : span;
+  const node = <Text {...buildInkTextProps(style)}>{span.text}</Text>;
   if (!span.href) {
     return node;
   }
@@ -1698,14 +1705,6 @@ function measureStringWidth(value: string): number {
 
 function normalizeInlineMarkdownText(value: string): string {
   return normalizeMarkdownInput(value, { normalizeLineEndings: false });
-}
-
-function shouldForceCjkStrongFallback(content: string): boolean {
-  return shouldForceCjkDelimitedFallback(content);
-}
-
-function shouldForceCjkEmphasisFallback(content: string): boolean {
-  return shouldForceCjkDelimitedFallback(content);
 }
 
 function shouldForceCjkDelimitedFallback(content: string): boolean {

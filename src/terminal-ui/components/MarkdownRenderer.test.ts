@@ -215,7 +215,11 @@ function testDisplayMathRendersStructuredEnvironments() {
       "",
       "cases:",
       "",
-      "$$\\begin{cases} x^2 & \\text{if } x \\geq 0 \\\\ -x & otherwise \\end{cases}$$"
+      "$$\\begin{cases} x^2 & \\text{if } x \\geq 0 \\\\ -x & otherwise \\end{cases}$$",
+      "",
+      "text cell:",
+      "",
+      "$$\\begin{pmatrix} a & \\text{b \\\\ c} \\\\ d & e \\end{pmatrix}$$"
     ].join("\n"),
     120
   );
@@ -223,6 +227,7 @@ function testDisplayMathRendersStructuredEnvironments() {
 
   assert.match(renderedText, /\( a  b \)\n\( c  d \)/);
   assert.match(renderedText, /\{ x², if x ≥ 0\n\{ -x, otherwise/);
+  assert.match(renderedText, /\( a  b \\ c \)\n\( d  e \)/);
 }
 
 function testMarkdownCacheKeyIncludesPolicyVersion() {

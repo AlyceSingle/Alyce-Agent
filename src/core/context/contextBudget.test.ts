@@ -31,9 +31,29 @@ function runTests() {
   testModelNameContextSuffixWinsBeforeBuiltin();
   testPreviewEstimatesDoNotCalibrateUsage();
   testRecordedEstimatesCalibrateUsage();
+  testResolvedModelContextWindowFeedsBudget();
   testLatestToolOutputsAreProtectedAcrossGeneratedContextMessages();
   testSnippingNeverReportsNegativeTokenSavings();
   console.log("contextBudget tests passed");
+}
+
+function testResolvedModelContextWindowFeedsBudget() {
+  const service = new ContextBudgetService();
+  const snapshot = service.estimateRequest(createRequest("hello"), {
+    resolvedModel: {
+      providerId: "local",
+      modelId: "qwen",
+      contextWindow: 256_000,
+      contextWindowSource: "provider_profile",
+      contextWindowLabel: "provider profile: local/qwen",
+      contextWindowMatchedPattern: "local/qwen"
+    }
+  });
+
+  assert.equal(snapshot.model, "local/qwen");
+  assert.equal(snapshot.contextWindow, 256_000);
+  assert.equal(snapshot.contextWindowSource, "provider_profile");
+  assert.equal(snapshot.contextWindowMatchedPattern, "local/qwen");
 }
 
 function testModelContextWindowResolutionUsesLooseTokens() {

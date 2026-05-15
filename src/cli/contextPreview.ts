@@ -8,9 +8,11 @@ import {
 } from "../core/context/contextBudget.js";
 import type { RequestPatchOperation } from "../core/api/requestPatch.js";
 import { TOOL_SCHEMAS } from "../tools/registry.js";
+import type { ResolvedModelProfile } from "../core/providers/types.js";
 
 export function buildNextTurnContextPreview(options: {
   currentModel: string;
+  resolvedModel?: ResolvedModelProfile;
   messages: OpenAI.Chat.Completions.ChatCompletionMessageParam[];
   nextUserInput?: string;
   gcliGeminiCompat?: boolean;
@@ -35,6 +37,7 @@ export function buildNextTurnContextPreview(options: {
   // 与实际调用保持字段一致，确保预览结果可直接对照请求。
   const payloadPreview = buildPatchedChatCompletionRequest({
     model: options.currentModel,
+    resolvedModel: options.resolvedModel,
     temperature: 0.2,
     toolChoice: "auto",
     tools: options.tools ?? TOOL_SCHEMAS,
@@ -51,7 +54,9 @@ export function buildNextTurnContextPreview(options: {
   }
 
   return [
-    formatContextBudgetReport(options.contextBudgetService.estimateRequest(payloadPreview)),
+    formatContextBudgetReport(options.contextBudgetService.estimateRequest(payloadPreview, {
+      resolvedModel: options.resolvedModel
+    })),
     "",
     "=== Request Payload ===",
     payloadJson

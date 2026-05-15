@@ -4,7 +4,7 @@ import { spawn } from "node:child_process";
 import { promises as fs } from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import OpenAI from "openai";
+import type OpenAI from "openai";
 import {
   buildConnectionConfigState,
   buildSessionSettingsState,
@@ -14,6 +14,7 @@ import {
   saveConnectionConfig,
   saveUserSessionSettings,
   type ConnectionConfig,
+  type ConnectionConfigLayer,
   type ConnectionConfigSaveTarget,
   type ConnectionConfigState,
   type RuntimeConfig,
@@ -46,6 +47,12 @@ import {
   type SessionMemoryTriggerState
 } from "../core/memory/sessionMemoryTrigger.js";
 import { FileHistoryManager, type FileHistoryRestoreResult } from "../core/file-history/fileHistoryManager.js";
+import {
+  DiffService,
+  type DiffReport,
+  type TurnDiffReport,
+  type WorkingTreeDiffReport
+} from "../core/diff/diffService.js";
 import { isTurnInterruptedError, throwIfAborted, TurnInterruptedError } from "../core/abort.js";
 import type {
   MemorySnapshot,
@@ -53,11 +60,22 @@ import type {
   SessionMemoryFileState
 } from "../core/memory/types.js";
 import { buildPatchedChatCompletionRequest } from "../core/api/sendChatCompletion.js";
+import {
+  createModelAdapter,
+  getModelAdapterAvailability,
+  type ChatCompletionAdapter,
+  type ChatCompletionTransport
+} from "../core/api/modelAdapters.js";
 import { cloneJson } from "../core/json/clone.js";
 import { buildEffectiveSystemPrompt } from "../core/prompt/builder.js";
 import { PromptSectionResolver } from "../core/prompt/sectionResolver.js";
+import { parseModelRef, resolveModelProfile } from "../core/providers/resolveModel.js";
+import type { ModelRef, ResolvedModelProfile } from "../core/providers/types.js";
 import { runAgentTurn } from "../core/agent/runAgentTurn.js";
 import type { AgentQuerySource } from "../core/agent/querySource.js";
+import { formatUsageReport } from "../core/usage/formatUsage.js";
+import { UsageLedger } from "../core/usage/usageLedger.js";
+import type { UsageRecordInput } from "../core/usage/types.js";
 import { prepareSessionResume } from "../core/session-history/sessionResume.js";
 import { SessionHistoryStore } from "../core/session-history/sessionStorage.js";
 import type {
@@ -197,8 +215,10 @@ export interface SessionRuntime {
   getSettingsState: () => SessionSettingsState;
   getPlanModeState: () => PlanModeState;
   setPlanModeEnabled: (enabled: boolean) => Promise<PlanModeState>;
-  requireClient: () => OpenAI;
+  requireChatCompletionAdapter: () => ChatCompletionAdapter;
   getCurrentModel: () => string;
+  getCurrentModelRef: () => ModelRef;
+  getResolvedModelProfile: () => ResolvedModelProfile;
   setCurrentModel: (model: string) => Promise<void>;
   updateConnectionConfig: (
     patch: Partial<ConnectionConfig>,
@@ -238,6 +258,9 @@ export interface SessionRuntime {
     excludeCurrent?: boolean;
   }) => Promise<SessionHistoryListItem[]>;
   resumeSessionHistory: (sessionId: SessionId) => Promise<SessionResumePayload>;
+  listSubagentTasks: () => SubagentTaskInfo[];
+  getSubagentTask: (taskId: string) => Promise<SubagentTaskInfo | undefined>;
+  stopSubagentTask: (taskId: string) => Promise<SubagentTaskStopResult>;
   runSubagentStorageCleanup: (options?: { apply?: boolean }) => Promise<SubagentStorageCleanupReport>;
   buildContextPreview: (nextUserInput?: string, options?: { abortSignal?: AbortSignal }) => Promise<string>;
   getContextBudgetService: () => ContextBudgetService;
@@ -245,27 +268,40 @@ export interface SessionRuntime {
     messages?: SessionMessage[];
     tools?: OpenAI.Chat.Completions.ChatCompletionTool[];
     model?: string;
+    resolvedModel?: ResolvedModelProfile;
     gcliGeminiCompat?: boolean;
   }) => ContextBudgetSnapshot;
+  recordUsage: (event: UsageRecordInput) => void;
+  formatUsageReport: () => string;
   maybeCompactConversation: (options: {
-    client: OpenAI;
+    client: ChatCompletionTransport;
     model: string;
+    resolvedModel?: ResolvedModelProfile;
     force?: boolean;
     querySource?: AgentQuerySource;
+    usageTurnId?: string;
     abortSignal?: AbortSignal;
   }) => Promise<boolean>;
   scheduleSessionMemoryExtraction: (options: {
-    client: OpenAI;
+    client: ChatCompletionTransport;
     model: string;
+    resolvedModel?: ResolvedModelProfile;
     querySource?: AgentQuerySource;
+    usageTurnId?: string;
     abortSignal?: AbortSignal;
   }) => void;
   createVolatileConversationSnapshot: () => VolatileConversationSnapshot;
   restoreVolatileConversationSnapshot: (snapshot: VolatileConversationSnapshot) => Promise<void>;
   beginTurn: (turnId: string) => void;
+  finalizeTurnFileChanges: (turnId: string) => Promise<void>;
   hasTrackedFileChanges: (turnId: string) => boolean;
+  canRestoreFilesForTurn: (turnId: string) => boolean;
   restoreFilesForTurn: (turnId: string) => Promise<FileHistoryRestoreResult>;
   discardTurn: (turnId: string) => void;
+  getTurnDiff: (turnId: string) => Promise<TurnDiffReport>;
+  getLastAlyceTurnDiff: () => Promise<TurnDiffReport | undefined>;
+  getWorkingTreeDiff: () => Promise<WorkingTreeDiffReport>;
+  formatDiffSummary: (report: DiffReport) => string;
   createToolContext: (options: {
     turnId: string;
     abortSignal: AbortSignal;
@@ -357,14 +393,19 @@ export async function createSessionRuntime(
   let planModeState: PlanModeState = { enabled: false };
   let sessionAdditionalDirectories: string[] = [];
   let connectionSaveTarget = connectionState.saveTarget;
-  let client: OpenAI | null = createClientFromConnection(connection);
-
   const promptResolver = new PromptSectionResolver();
   const fileHistoryManager = new FileHistoryManager();
+  const diffService = new DiffService({
+    workspaceRoot: config.paths.workspaceRoot,
+    fileHistoryManager
+  });
   const conversationCompactor = new ConversationCompactor(
     createConversationCompactionConfig(settings)
   );
   const contextBudgetService = createContextBudgetService(settings);
+  const usageLedger = new UsageLedger({
+    jsonlPath: path.join(config.paths.alyceDirectory, "usage.jsonl")
+  });
   const sessionMemoryTrigger = new SessionMemoryTrigger(
     createSessionMemoryTriggerConfig(config, settings)
   );
@@ -576,8 +617,8 @@ export async function createSessionRuntime(
   };
 
   const rebuildConnectionState = (options: {
-    user?: Partial<ConnectionConfig>;
-    project?: Partial<ConnectionConfig>;
+    user?: ConnectionConfigLayer;
+    project?: ConnectionConfigLayer;
     preferredSaveTarget?: ConnectionConfigSaveTarget;
   }) => {
     connectionState = buildConnectionConfigState(config.paths, {
@@ -589,7 +630,6 @@ export async function createSessionRuntime(
     });
     connection = connectionState.effective;
     connectionSaveTarget = connectionState.saveTarget;
-    client = createClientFromConnection(connection);
   };
 
   const persistConnection = async (target: ConnectionConfigSaveTarget) => {
@@ -602,6 +642,21 @@ export async function createSessionRuntime(
 
   const persistSettings = async () => {
     await saveUserSessionSettings(config.paths, settingsState.user);
+  };
+
+  const resolveModelProfileFor = (model = connection.model) =>
+    resolveModelProfile(model, {
+      providers: connectionState.providerProfiles,
+      modelContextWindowOverrides: settings.modelContextWindowOverrides,
+      env
+    });
+
+  const hasUsableModelAdapter = () => {
+    try {
+      return getModelAdapterAvailability(resolveModelProfileFor()).available;
+    } catch {
+      return false;
+    }
   };
 
   const applyConnectionPatch = async (
@@ -630,6 +685,14 @@ export async function createSessionRuntime(
     await resetSystemMessage();
   };
 
+  const recordUsage = (event: UsageRecordInput) => {
+    try {
+      usageLedger.recordEvent(event);
+    } catch {
+      // Usage visibility is best-effort and must not affect agent execution.
+    }
+  };
+
   return {
     config,
     memoryService,
@@ -639,7 +702,7 @@ export async function createSessionRuntime(
     getMainAgentToolSchemas,
     getSessionId: () => sessionHistory.getCurrentSessionId(),
     getSessionHistoryDirectory: () => path.join(config.paths.alyceDirectory, "sessions"),
-    hasConnectionConfig: () => connection.apiKey.trim().length > 0,
+    hasConnectionConfig: () => hasUsableModelAdapter(),
     getConnectionConfig: () => ({ ...connection }),
     getConnectionConfigState: () => cloneConnectionConfigState(connectionState),
     getSettings: () => ({ ...settings }),
@@ -667,22 +730,10 @@ export async function createSessionRuntime(
       );
       await resetSystemMessage();
     },
-    requireClient: () => {
-      if (!connection.apiKey.trim()) {
-        throw new Error("Connection is incomplete. Open settings and fill API key, URL, and model.");
-      }
-
-      if (!client) {
-        client = createClientFromConnection(connection);
-      }
-
-      if (!client) {
-        throw new Error("Failed to initialize OpenAI client from current connection config.");
-      }
-
-      return client;
-    },
+    requireChatCompletionAdapter: () => createModelAdapter(resolveModelProfileFor()),
     getCurrentModel: () => connection.model,
+    getCurrentModelRef: () => parseModelRef(connection.model),
+    getResolvedModelProfile: () => resolveModelProfileFor(),
     setCurrentModel: async (model) => {
       await applyConnectionPatch({ model });
     },
@@ -780,6 +831,9 @@ export async function createSessionRuntime(
       );
       return resume;
     },
+    listSubagentTasks: () => listSubagentTasks(),
+    getSubagentTask: (taskId) => getSubagentTask(taskId),
+    stopSubagentTask: (taskId) => stopSubagentTask(taskId),
     runSubagentStorageCleanup: async (options = {}) => {
       const report = await cleanupSubagentStorageArtifacts({
         storage: subagentTaskStorage,
@@ -808,11 +862,13 @@ export async function createSessionRuntime(
           availableTools: getToolNamesFromSchemas(tools)
         })
       };
+      const resolvedModel = resolveModelProfileFor(connection.model);
 
       return buildNextTurnContextPreview({
         currentModel: connection.model,
+        resolvedModel,
         messages: previewMessages,
-        gcliGeminiCompat: shouldUseGcliGeminiCompat(connection.baseURL, connection.model),
+        gcliGeminiCompat: shouldUseGcliGeminiCompat(resolvedModel.baseURL, resolvedModel.modelId),
         messageTimestampsEnabled: settings.messageTimestampsEnabled,
         currentRequestTimestamp: previewTimestamp,
         tools,
@@ -822,19 +878,26 @@ export async function createSessionRuntime(
     },
     getContextBudgetService: () => contextBudgetService,
     estimateContextBudget: (options = {}) => {
+      const model = options.model ?? connection.model;
+      const resolvedModel = options.resolvedModel ?? resolveModelProfileFor(model);
       return contextBudgetService.estimateRequest(buildPatchedChatCompletionRequest({
-        model: options.model ?? connection.model,
+        model,
+        resolvedModel,
         messages: options.messages ?? messages,
         tools: options.tools ?? TOOL_SCHEMAS,
         temperature: 0.2,
         toolChoice: "auto",
         gcliGeminiCompat: options.gcliGeminiCompat ??
-          shouldUseGcliGeminiCompat(connection.baseURL, options.model ?? connection.model),
+          shouldUseGcliGeminiCompat(resolvedModel.baseURL, resolvedModel.modelId),
         messageTimestampsEnabled: settings.messageTimestampsEnabled,
         requestPatches: config.requestPatches
-      }));
+      }), {
+        resolvedModel
+      });
     },
-    maybeCompactConversation: async ({ client: compactClient, model, force, querySource = "main", abortSignal }) => {
+    recordUsage,
+    formatUsageReport: () => formatUsageReport(usageLedger.getSummary()),
+    maybeCompactConversation: async ({ client: compactClient, model, resolvedModel, force, querySource = "main", usageTurnId, abortSignal }) => {
       if (!settings.conversationCompactionEnabled) {
         return false;
       }
@@ -845,30 +908,42 @@ export async function createSessionRuntime(
       const compacted = await conversationCompactor.maybeCompact({
         client: compactClient,
         model,
+        resolvedModel: resolvedModel ?? resolveModelProfileFor(model),
         messages,
         force,
-        abortSignal
+        abortSignal,
+        onUsage: (event) => recordUsage({
+          ...event,
+          ...(usageTurnId ? { turnId: usageTurnId } : {})
+        })
       });
       if (compacted) {
         fileReadState.clear();
       }
       return compacted;
     },
-    scheduleSessionMemoryExtraction: ({ client: extractionClient, model, querySource = "main", abortSignal }) => {
+    scheduleSessionMemoryExtraction: ({ client: extractionClient, model, resolvedModel, querySource = "main", usageTurnId, abortSignal }) => {
       if (querySource !== "main") {
         return;
       }
+      const effectiveResolvedModel = resolvedModel ?? resolveModelProfileFor(model);
 
       const snapshot = contextBudgetService.estimateRequest(buildPatchedChatCompletionRequest({
         model,
+        resolvedModel: effectiveResolvedModel,
         messages,
         tools: TOOL_SCHEMAS,
         temperature: 0.2,
         toolChoice: "auto",
-        gcliGeminiCompat: shouldUseGcliGeminiCompat(connection.baseURL, model),
+        gcliGeminiCompat: shouldUseGcliGeminiCompat(
+          effectiveResolvedModel.baseURL,
+          effectiveResolvedModel.modelId
+        ),
         messageTimestampsEnabled: settings.messageTimestampsEnabled,
         requestPatches: config.requestPatches
-      }));
+      }), {
+        resolvedModel: effectiveResolvedModel
+      });
       const decision = sessionMemoryTrigger.shouldExtract({
         messages,
         currentTokens: snapshot.estimatedInputTokens
@@ -886,11 +961,16 @@ export async function createSessionRuntime(
         const extraction = sessionMemoryExtractor.schedule({
           client: extractionClient,
           model,
+          resolvedModel: effectiveResolvedModel,
           messages: extractionMessages,
           currentMemory: currentMemory?.markdown ?? "",
           memoryPath: memoryService.getSessionMemoryFilePath(),
           requestPatches: config.requestPatches,
           abortSignal,
+          onUsage: (event) => recordUsage({
+            ...event,
+            ...(usageTurnId ? { turnId: usageTurnId } : {})
+          }),
           shouldCommit: () =>
             sessionHistory.getCurrentSessionId() === expectedSessionId &&
             messages.length >= expectedMessageCount
@@ -925,11 +1005,19 @@ export async function createSessionRuntime(
     beginTurn: (turnId) => {
       fileHistoryManager.beginTurn(turnId);
     },
+    finalizeTurnFileChanges: async (turnId) => {
+      await fileHistoryManager.finalizeTurn(turnId);
+    },
     hasTrackedFileChanges: (turnId) => fileHistoryManager.hasTrackedFiles(turnId),
+    canRestoreFilesForTurn: (turnId) => fileHistoryManager.canRestoreTurn(turnId),
     restoreFilesForTurn: (turnId) => fileHistoryManager.restoreTurn(turnId),
     discardTurn: (turnId) => {
       fileHistoryManager.removeTurn(turnId);
     },
+    getTurnDiff: (turnId) => diffService.getTurnDiff(turnId),
+    getLastAlyceTurnDiff: () => diffService.getLastAlyceTurnDiff(),
+    getWorkingTreeDiff: () => diffService.getWorkingTreeDiff(),
+    formatDiffSummary: (report) => diffService.formatDiffSummary(report),
     createToolContext: ({
       turnId,
       abortSignal,
@@ -1205,7 +1293,12 @@ export async function createSessionRuntime(
       ...(session?.completedAt ?? item.completedAt ? { completedAt: session?.completedAt ?? item.completedAt } : {}),
       ...(session?.output !== undefined ? { output: session.output } : {}),
       ...(session?.error ?? item.error ? { error: session?.error ?? item.error } : {}),
-      progress: session?.progress ?? []
+      progress: session?.progress ?? [],
+      ...(session?.worktreePath ? { worktreePath: session.worktreePath } : {}),
+      ...(session?.transcriptPath ? { transcriptPath: session.transcriptPath } : {}),
+      ...(session?.outputPath ?? item.outputPath ? { outputPath: session?.outputPath ?? item.outputPath } : {}),
+      ...(session?.diffSummary ? { diffSummary: session.diffSummary } : {}),
+      ...(session?.hasChanges !== undefined ? { hasChanges: session.hasChanges } : {})
     };
   }
 
@@ -1555,10 +1648,8 @@ export async function createSessionRuntime(
       throw new Error(`Unknown subagent type: ${session.agentType}`);
     }
 
-    const clientForSubagent = client ?? createClientFromConnection(connection);
-    if (!clientForSubagent) {
-      throw new Error("Connection is incomplete. Open settings and fill API key, URL, and model.");
-    }
+    const resolvedSubagentModel = resolveModelProfileFor(session.model);
+    const clientForSubagent = createModelAdapter(resolvedSubagentModel);
 
     const runToken = session.runToken;
     const isCurrentRun = () => session.runToken === runToken;
@@ -1633,8 +1724,14 @@ export async function createSessionRuntime(
     try {
       const output = await runAgentTurn(clientForSubagent, session.messages, {
         model: session.model,
+        resolvedModel: resolvedSubagentModel,
         maxSteps: session.maxSteps,
         querySource: "subagent",
+        usageSource: "subagent",
+        usageTurnId: parentContextOptions.turnId,
+        usageTaskId: session.taskId,
+        usageLabel: session.agentType,
+        onUsage: recordUsage,
         context: subagentContext,
         tools: getToolSchemasByName(getAllowedToolNamesForSubagent(agent)),
         requestPatches: config.requestPatches,
@@ -1647,9 +1744,16 @@ export async function createSessionRuntime(
           return session.conversationCompactor.maybeCompact({
             client: clientForSubagent,
             model: session.model,
+            resolvedModel: resolvedSubagentModel,
             messages: session.messages,
             force: true,
-            abortSignal
+            abortSignal,
+            onUsage: (event) => recordUsage({
+              ...event,
+              turnId: parentContextOptions.turnId,
+              taskId: session.taskId,
+              label: session.agentType
+            })
           });
         },
         onContextCompactionStart: (snapshot) => {
@@ -1663,7 +1767,10 @@ export async function createSessionRuntime(
         },
         abortSignal: parentContextOptions.abortSignal,
         messageTimestampsEnabled: settings.messageTimestampsEnabled,
-        gcliGeminiCompat: shouldUseGcliGeminiCompat(connection.baseURL, session.model),
+        gcliGeminiCompat: shouldUseGcliGeminiCompat(
+          resolvedSubagentModel.baseURL,
+          resolvedSubagentModel.modelId
+        ),
         onThinking: (content) => {
           recordProgress("thinking", content);
         },
@@ -1902,6 +2009,8 @@ export async function createSessionRuntime(
       ...(session.error !== undefined ? { error: session.error } : {}),
       progress: [...session.progress],
       ...(session.worktreePath ? { worktreePath: session.worktreePath } : {}),
+      ...(session.transcriptPath ? { transcriptPath: session.transcriptPath } : {}),
+      ...(session.outputPath ? { outputPath: session.outputPath } : {}),
       ...(session.diffSummary ? { diffSummary: session.diffSummary } : {}),
       ...(session.hasChanges !== undefined ? { hasChanges: session.hasChanges } : {})
     };
@@ -2229,11 +2338,12 @@ function mergePersistedSource<T extends object>(base: Partial<T>, patch: Partial
 function cloneConnectionConfigState(state: ConnectionConfigState): ConnectionConfigState {
   return {
     effective: { ...state.effective },
-    user: { ...state.user },
-    project: { ...state.project },
+    user: cloneJson(state.user),
+    project: cloneJson(state.project),
     env: { ...state.env },
     cli: { ...state.cli },
     sources: { ...state.sources },
+    providerProfiles: cloneJson(state.providerProfiles),
     saveTarget: state.saveTarget,
     saveTargetPath: state.saveTargetPath,
     userPath: state.userPath,
@@ -2252,17 +2362,6 @@ function cloneSessionSettingsState(state: SessionSettingsState): SessionSettings
     saveTargetPath: state.saveTargetPath,
     projectPath: state.projectPath
   };
-}
-
-function createClientFromConnection(connection: ConnectionConfig): OpenAI | null {
-  if (!connection.apiKey.trim()) {
-    return null;
-  }
-
-  return new OpenAI({
-    apiKey: connection.apiKey,
-    baseURL: connection.baseURL
-  });
 }
 
 function createContextBudgetService(settings: SessionSettings): ContextBudgetService {

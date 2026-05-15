@@ -221,7 +221,7 @@ function getMessagePalette(
     default:
       return makePalette(
         terminalUiTheme.colors.system,
-        terminalUiTheme.colors.system,
+        terminalUiTheme.colors.chrome,
         terminalUiTheme.colors.muted
       );
   }
@@ -354,9 +354,11 @@ function getRenderedLineColors(
       return {
         color:
           section.style === "code"
-            ? messageKind === "tool" || messageKind === "system"
-              ? palette.headerColor
-              : terminalUiTheme.colors.code
+            ? messageKind === "system"
+              ? palette.bodyColor
+              : messageKind === "tool"
+                ? palette.bodyColor
+                : terminalUiTheme.colors.code
             : getToneColor(section.tone, messageKind, palette)
       };
   }
@@ -1078,7 +1080,7 @@ const TranscriptRows = React.memo(function TranscriptRows(props: {
             <SelectionSafeRow wrap="truncate-end">
               <Text color={entry.palette.headerColor}>{entry.headerLabel}</Text>
               {entry.headerTitle ? (
-                <Text color={entry.palette.bodyColor}> · {entry.headerTitle}</Text>
+                <Text color={entry.palette.headerColor}> · {entry.headerTitle}</Text>
               ) : null}
               <Text color={entry.palette.mutedColor}> · {timestamp}</Text>
             </SelectionSafeRow>
@@ -1087,6 +1089,7 @@ const TranscriptRows = React.memo(function TranscriptRows(props: {
                 plan={entry.markdownPlan}
                 kind={entry.message.kind}
                 baseColor={entry.palette.bodyColor}
+                colorMode={entry.message.kind === "tool" ? "plain" : "semantic"}
               />
             ) : (
               entry.sections.map((section, sectionIndex) => (

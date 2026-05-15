@@ -10,7 +10,7 @@ Alyce's configuration is layered. Multiple sources can set the same value, and a
 
 ## Where Settings Come From
 
-### Connection Config (API key, base URL, model)
+### Connection Config (API key, base URL, model, providers)
 
 Loaded in this priority order — **earlier wins over later**:
 
@@ -45,10 +45,72 @@ Do not commit `.env`, `./.alyce/`, `~/.alyce/`, or generated `dist/` output. Pro
 
 ## Environment Variables
 
-### Required (the app won't start without these)
+## Startup Context CLI Flags
+
+Alyce can start with explicit editor context without installing a VS Code extension:
+
+- `--cwd <path>` — choose the workspace root before config and path checks run.
+- `--context-file <path>` — read one file and inject it as generated context for the next model turn. May be repeated.
+- `--selection-file <path>` — read a file containing selected editor text and inject it as generated context for the next model turn. May be repeated.
+- `--initial-prompt <text>` — prefill the input box. Alyce does not auto-send it.
+- `--prompt-file <path>` — read the prefilled input text from a file. Cannot be combined with `--initial-prompt`.
+
+All startup file paths are resolved under the same allowed-root rules as file tools. A file outside the workspace is rejected unless the directory is already configured in `additionalDirectories`. Missing files fail startup with a clear error. Startup context is not a broad workspace read, does not grant write approval, and is removed from the live message list after the first model turn like other generated context.
+
+### Legacy OpenAI-compatible startup defaults
 - `OPENAI_API_KEY`
 - `OPENAI_BASE_URL`
 - `OPENAI_MODEL`
+
+Saved connection config still overrides these startup defaults. The old shape remains valid:
+
+```json
+{
+  "apiKey": "sk-...",
+  "baseURL": "https://api.openai.com/v1",
+  "model": "gpt-5.2"
+}
+```
+
+Provider profiles can be stored in `./.alyce/config.json` or `~/.alyce/config.json` under `providers`. Model references use `provider/model`; a bare `/model gpt-5.2` keeps using the current provider.
+
+```json
+{
+  "model": "openrouter/openai/gpt-5.2",
+  "providers": {
+    "openrouter": {
+      "label": "OpenRouter",
+      "kind": "openrouter",
+      "apiKeyEnv": "OPENROUTER_API_KEY",
+      "baseURL": "https://openrouter.ai/api/v1",
+      "defaultModel": "openai/gpt-5.2",
+      "models": {
+        "openai/gpt-5.2": {
+          "contextWindow": 400000
+        },
+        "anthropic/claude-sonnet-4.6": {
+          "contextWindow": 1000000
+        }
+      }
+    },
+    "local": {
+      "label": "Local",
+      "kind": "local",
+      "baseURL": "http://127.0.0.1:11434/v1",
+      "defaultModel": "qwen",
+      "models": {
+        "qwen": {
+          "contextWindow": 256000
+        }
+      }
+    }
+  }
+}
+```
+
+Use `/model` or `/models` to see the current provider/model, provider availability, known models, and switch examples. Alyce currently sends configured providers through the OpenAI-compatible adapter. Native Anthropic and Google provider kinds require an OpenAI-compatible `baseURL` until native adapters are added.
+
+Optional model price metadata can be added per model with `inputCostPerMillionTokens` and `outputCostPerMillionTokens`. `/usage` uses these values for estimated cost; models without both values are shown as tokens only.
 
 ### Optional (memory tuning, mostly)
 - `AGENT_ADDITIONAL_DIRECTORIES` — extra paths separated by the system path delimiter (`;` on Windows, `:` on Linux/macOS)

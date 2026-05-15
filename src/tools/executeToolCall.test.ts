@@ -33,6 +33,8 @@ async function runTests() {
   await testReadOnlyPolicyBlocksWriteShell();
   await testReadOnlyPolicyBlocksWriteLikeReadCommands();
   await testReadOnlyPolicyBlocksWindowsPackageManagerCmdTest();
+  await testVerificationPolicyAllowsBuildTestCommands();
+  await testVerificationPolicyStillBlocksMutatingCommands();
   await testReadOnlyPolicyBlocksCommandChaining();
   await testAnyShellPolicyBlocksWindowsPackageManagerCmdWhenWriteDisabled();
   await testAnyShellPolicyBlocksWindowsPackageManagerCmdInstallWhenNetworkDisabled();
@@ -145,6 +147,48 @@ async function testReadOnlyPolicyBlocksWindowsPackageManagerCmdTest() {
   );
 
   assert.match(violation ?? "", /read-only shell policy/);
+}
+
+async function testVerificationPolicyAllowsBuildTestCommands() {
+  const policy = {
+    allowWrite: false,
+    allowNetwork: false,
+    shell: "read-only" as const,
+    allowBuildTest: true
+  };
+
+  for (const command of [
+    "npm.cmd test",
+    "npm run build",
+    "pnpm lint",
+    "tsc -p tsconfig.json"
+  ]) {
+    assert.equal(
+      getToolPolicyViolation("PowerShell", { command, timeout_ms: 1000 }, policy),
+      undefined
+    );
+  }
+}
+
+async function testVerificationPolicyStillBlocksMutatingCommands() {
+  const policy = {
+    allowWrite: false,
+    allowNetwork: false,
+    shell: "read-only" as const,
+    allowBuildTest: true
+  };
+
+  for (const command of [
+    "npm install",
+    "npm test && Remove-Item test.txt",
+    "npm test > output.txt",
+    "npm test -- --output output.txt"
+  ]) {
+    assert.match(
+      getToolPolicyViolation("PowerShell", { command, timeout_ms: 1000 }, policy) ?? "",
+      /read-only shell policy|file writes are disabled|network access is disabled/
+    );
+  }
 }
 
 async function testReadOnlyPolicyBlocksCommandChaining() {

@@ -45,7 +45,7 @@ const SingleAgentTaskSchema = BaseAgentTaskSchema.extend({
   run_in_background: z
     .boolean()
     .optional()
-    .describe("When true, start a read-only explore/review subagent asynchronously and return immediately."),
+    .describe("When true, start a read-only explore/review/verify subagent asynchronously and return immediately."),
   model: z
     .string()
     .trim()

@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import {
   getSlashCommandSuggestions,
+  getVisibleSlashCommandSuggestions,
   isSlashCommandInput,
   shouldCompleteSlashCommandInput,
   shouldToggleModeFromPromptKey
@@ -9,6 +10,8 @@ import {
 function runTests() {
   testSlashInputDetection();
   testSlashSuggestionsFilterByPrefix();
+  testSlashSuggestionsKeepAllMatches();
+  testVisibleSlashSuggestionsAreCappedAndScrollable();
   testSlashCompletionRules();
   testModeToggleKeyRules();
   console.log("PromptInput tests passed");
@@ -28,6 +31,25 @@ function testSlashSuggestionsFilterByPrefix() {
     ["/memory clear", "/memory clear --all"]
   );
   assert.deepEqual(getSlashCommandSuggestions("/model g"), []);
+}
+
+function testSlashSuggestionsKeepAllMatches() {
+  assert.equal(getSlashCommandSuggestions("/").length > 10, true);
+}
+
+function testVisibleSlashSuggestionsAreCappedAndScrollable() {
+  const suggestions = getSlashCommandSuggestions("/");
+  const firstWindow = getVisibleSlashCommandSuggestions(suggestions, 0);
+  const laterWindow = getVisibleSlashCommandSuggestions(suggestions, 12);
+
+  assert.equal(firstWindow.suggestions.length, 10);
+  assert.equal(firstWindow.startIndex, 0);
+  assert.equal(laterWindow.suggestions.length, 10);
+  assert.equal(laterWindow.startIndex > 0, true);
+  assert.equal(
+    laterWindow.suggestions.some((suggestion) => suggestion.command === suggestions[12]?.command),
+    true
+  );
 }
 
 function testSlashCompletionRules() {

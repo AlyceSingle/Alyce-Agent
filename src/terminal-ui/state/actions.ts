@@ -15,6 +15,7 @@ import type {
   SettingsSection,
   TerminalUiMessage,
   TerminalUiOverlayId,
+  TerminalUiTaskSummary,
   TerminalUiState
 } from "./types.js";
 import type { SessionHistoryListItem } from "../../core/session-history/types.js";
@@ -26,7 +27,11 @@ export function createInitialTerminalUiState(options: {
   workspaceRoot: string;
   requestPatchCount: number;
   planModeEnabled?: boolean;
+  connectionReady?: boolean;
 }): TerminalUiState {
+  const connectionReady =
+    options.connectionReady ?? options.connectionState.effective.apiKey.trim().length > 0;
+
   return {
     workspaceRoot: options.workspaceRoot,
     connection: options.connectionState.effective,
@@ -36,14 +41,14 @@ export function createInitialTerminalUiState(options: {
     requestPatchCount: options.requestPatchCount,
     draftInput: "",
     isLoading: false,
-    // 连接是否可用要和运行时校验保持一致，避免把纯空白 API key 误判成已配置。
-    statusText: options.connectionState.effective.apiKey.trim().length > 0 ? "Idle" : "Setup required",
+    statusText: connectionReady ? "Idle" : "Setup required",
     planModeEnabled: options.planModeEnabled ?? false,
     contextBudget: null,
     dialogQueue: [],
     activeOverlays: [],
     messages: [],
     todos: [],
+    backgroundTasks: [],
     selectedMessageId: null,
     transcriptSticky: true,
     unseenDividerMessageId: null,
@@ -207,6 +212,16 @@ export function setTodos(state: TerminalUiState, todos: TodoItem[]): TerminalUiS
   return {
     ...state,
     todos
+  };
+}
+
+export function setBackgroundTasks(
+  state: TerminalUiState,
+  backgroundTasks: TerminalUiTaskSummary[]
+): TerminalUiState {
+  return {
+    ...state,
+    backgroundTasks
   };
 }
 

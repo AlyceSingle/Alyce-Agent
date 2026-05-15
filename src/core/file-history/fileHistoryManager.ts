@@ -8,17 +8,45 @@ export interface TrackedFileSnapshot {
   absolutePath: string;
   existed: boolean;
   originalContent: Buffer;
+  afterExisted?: boolean;
+  afterContent?: Buffer;
 }
 
 export interface TurnFileHistorySnapshot {
   turnId: string;
   createdAt: string;
+  finalizedAt?: string;
+  restoredAt?: string;
   trackedFiles: Map<string, TrackedFileSnapshot>;
 }
 
 export interface FileHistoryRestoreResult {
   restored: string[];
   removed: string[];
+  alreadyRestored: boolean;
+  missingSnapshot: boolean;
+  restoredAt?: string;
+}
+
+export type TrackedFileChangeKind = "added" | "modified" | "deleted" | "unchanged";
+
+export interface FileContentSnapshot {
+  existed: boolean;
+  content: Buffer;
+}
+
+export interface TurnFileSnapshot {
+  absolutePath: string;
+  before: FileContentSnapshot;
+  after: FileContentSnapshot;
+  changeKind: TrackedFileChangeKind;
+}
+
+export interface TurnFileChangeSummary {
+  absolutePath: string;
+  changeKind: TrackedFileChangeKind;
+  beforeBytes: number;
+  afterBytes: number;
 }
 
 export class FileHistoryManager {
@@ -71,8 +99,85 @@ export class FileHistoryManager {
     return (this.snapshots.get(turnId)?.trackedFiles.size ?? 0) > 0;
   }
 
+  canRestoreTurn(turnId: string) {
+    const snapshot = this.snapshots.get(turnId);
+    return Boolean(
+      snapshot &&
+      snapshot.trackedFiles.size > 0 &&
+      !snapshot.restoredAt &&
+      this.getFileSnapshotsForTurn(turnId).some((file) => file.changeKind !== "unchanged")
+    );
+  }
+
+  isTurnRestored(turnId: string) {
+    return Boolean(this.snapshots.get(turnId)?.restoredAt);
+  }
+
   getSnapshot(turnId: string): TurnFileHistorySnapshot | undefined {
     return this.snapshots.get(turnId);
+  }
+
+  async finalizeTurn(turnId: string): Promise<TurnFileChangeSummary[]> {
+    const snapshot = this.snapshots.get(turnId);
+    if (!snapshot || snapshot.trackedFiles.size === 0) {
+      return [];
+    }
+
+    if (!snapshot.finalizedAt) {
+      for (const entry of snapshot.trackedFiles.values()) {
+        const after = await readFileContentSnapshot(entry.absolutePath);
+        entry.afterExisted = after.existed;
+        entry.afterContent = after.content;
+      }
+      snapshot.finalizedAt = new Date().toISOString();
+    }
+
+    return this.getChangedFilesForTurn(turnId);
+  }
+
+  getChangedFilesForTurn(turnId: string): TurnFileChangeSummary[] {
+    return this.getFileSnapshotsForTurn(turnId).map((snapshot) => ({
+      absolutePath: snapshot.absolutePath,
+      changeKind: snapshot.changeKind,
+      beforeBytes: snapshot.before.existed ? snapshot.before.content.byteLength : 0,
+      afterBytes: snapshot.after.existed ? snapshot.after.content.byteLength : 0
+    }));
+  }
+
+  getFileSnapshotsForTurn(turnId: string): TurnFileSnapshot[] {
+    const snapshot = this.snapshots.get(turnId);
+    if (!snapshot) {
+      return [];
+    }
+
+    return Array.from(snapshot.trackedFiles.values()).map((entry) => {
+      const before = {
+        existed: entry.existed,
+        content: Buffer.from(entry.originalContent)
+      };
+      const after = {
+        existed: entry.afterExisted ?? entry.existed,
+        content: Buffer.from(entry.afterContent ?? entry.originalContent)
+      };
+
+      return {
+        absolutePath: entry.absolutePath,
+        before,
+        after,
+        changeKind: getChangeKind(before, after)
+      };
+    });
+  }
+
+  getLatestTurnIdWithTrackedFiles(): string | undefined {
+    for (let index = this.snapshotOrder.length - 1; index >= 0; index -= 1) {
+      const turnId = this.snapshotOrder[index];
+      if (turnId && this.hasTrackedFiles(turnId)) {
+        return turnId;
+      }
+    }
+
+    return undefined;
   }
 
   async restoreTurn(turnId: string): Promise<FileHistoryRestoreResult> {
@@ -80,9 +185,23 @@ export class FileHistoryManager {
     if (!snapshot || snapshot.trackedFiles.size === 0) {
       return {
         restored: [],
-        removed: []
+        removed: [],
+        alreadyRestored: false,
+        missingSnapshot: true
       };
     }
+
+    if (snapshot.restoredAt) {
+      return {
+        restored: [],
+        removed: [],
+        alreadyRestored: true,
+        missingSnapshot: false,
+        restoredAt: snapshot.restoredAt
+      };
+    }
+
+    await this.finalizeTurn(turnId);
 
     const restored: string[] = [];
     const removed: string[] = [];
@@ -90,6 +209,18 @@ export class FileHistoryManager {
     const entries = Array.from(snapshot.trackedFiles.values()).reverse();
 
     for (const entry of entries) {
+      const before = {
+        existed: entry.existed,
+        content: entry.originalContent
+      };
+      const after = {
+        existed: entry.afterExisted ?? entry.existed,
+        content: entry.afterContent ?? entry.originalContent
+      };
+      if (getChangeKind(before, after) === "unchanged") {
+        continue;
+      }
+
       if (entry.existed) {
         await fs.mkdir(path.dirname(entry.absolutePath), { recursive: true });
         await fs.writeFile(entry.absolutePath, entry.originalContent);
@@ -107,9 +238,13 @@ export class FileHistoryManager {
       }
     }
 
+    snapshot.restoredAt = new Date().toISOString();
     return {
       restored,
-      removed
+      removed,
+      alreadyRestored: false,
+      missingSnapshot: false,
+      restoredAt: snapshot.restoredAt
     };
   }
 
@@ -163,4 +298,41 @@ function isMissingFileError(error: unknown) {
     "code" in error &&
     (error as { code?: string }).code === "ENOENT"
   );
+}
+
+async function readFileContentSnapshot(absolutePath: string): Promise<FileContentSnapshot> {
+  try {
+    return {
+      existed: true,
+      content: await fs.readFile(absolutePath)
+    };
+  } catch (error) {
+    if (isMissingFileError(error)) {
+      return {
+        existed: false,
+        content: Buffer.alloc(0)
+      };
+    }
+
+    throw error;
+  }
+}
+
+function getChangeKind(
+  before: FileContentSnapshot,
+  after: FileContentSnapshot
+): TrackedFileChangeKind {
+  if (!before.existed && after.existed) {
+    return "added";
+  }
+
+  if (before.existed && !after.existed) {
+    return "deleted";
+  }
+
+  if (before.existed && after.existed && !before.content.equals(after.content)) {
+    return "modified";
+  }
+
+  return "unchanged";
 }

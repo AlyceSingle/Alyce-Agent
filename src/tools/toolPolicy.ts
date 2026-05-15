@@ -81,6 +81,12 @@ const NETWORK_COMMAND_PATTERNS = [
 ];
 
 const COMMAND_CHAIN_PATTERN = /(?:;|&&|\|\||\r|\n)/;
+const REDIRECT_PATTERN = /(^|[^>])>(?!\s*&\d)|>>/;
+const OUTPUT_FLAG_PATTERN = /(?:^|\s)--output(?:=|\s+)/i;
+const BUILD_TEST_COMMAND_PATTERN = new RegExp(
+  String.raw`${JS_PACKAGE_MANAGER_BUILD_TEST_PATTERN.source}|\b(?:pytest|vitest|jest|tsc|cargo\s+(?:test|build)|go\s+(?:test|build)|make\s+(?:test|build))\b`,
+  "i"
+);
 
 export function isToolSchemaAllowedByPolicy(
   toolName: string,
@@ -143,11 +149,12 @@ export function getToolPolicyViolation(
   }
 
   const command = typeof args.command === "string" ? args.command.trim() : "";
-  if (policy.shell === "read-only" && !isReadOnlyCommand(command)) {
+  const isAllowedBuildTest = policy.allowBuildTest === true && isBuildTestCommand(command);
+  if (policy.shell === "read-only" && !isReadOnlyCommand(command) && !isAllowedBuildTest) {
     return `${toolName} command is blocked by read-only shell policy.`;
   }
 
-  if (!policy.allowWrite && isWriteCommand(command)) {
+  if (!policy.allowWrite && isWriteCommand(command) && !isAllowedBuildTest) {
     return `${toolName} command is blocked by the current subagent policy: file writes are disabled.`;
   }
 
@@ -176,6 +183,30 @@ function isReadOnlyCommand(command: string): boolean {
     .split("|")
     .map((segment) => segment.trim())
     .every((segment) => segment.length > 0 && isReadOnlyCommandSegment(segment));
+}
+
+function isBuildTestCommand(command: string): boolean {
+  if (
+    COMMAND_CHAIN_PATTERN.test(command) ||
+    REDIRECT_PATTERN.test(command) ||
+    OUTPUT_FLAG_PATTERN.test(command)
+  ) {
+    return false;
+  }
+
+  const normalized = command.replace(/\s+/g, " ").trim();
+  if (!normalized) {
+    return false;
+  }
+
+  if (
+    JS_PACKAGE_MANAGER_INSTALL_PATTERN.test(normalized) ||
+    isNetworkCommand(normalized)
+  ) {
+    return false;
+  }
+
+  return BUILD_TEST_COMMAND_PATTERN.test(normalized);
 }
 
 function isReadOnlyCommandSegment(command: string): boolean {

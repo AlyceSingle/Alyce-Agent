@@ -6,6 +6,12 @@ import {
 } from "./chatCompletionRequest.js";
 import { isContextOverflowError, toContextOverflowError } from "../context/contextBudget.js";
 import { applyRequestPatchOperations, type RequestPatchOperation } from "./requestPatch.js";
+import {
+  isChatCompletionAdapter,
+  type ChatCompletionTransport
+} from "./modelAdapters.js";
+import type { ResolvedModelProfile } from "../providers/types.js";
+import type { ModelUsageEvent } from "../usage/types.js";
 
 const RECONNECT_DELAY_MS = 10_000;
 const MAX_RECONNECT_RETRIES = 5;
@@ -27,31 +33,39 @@ export type ChatCompletionReconnectEvent =
     };
 
 export interface SendChatCompletionOptions extends ChatCompletionRequestOptions {
+  resolvedModel?: ResolvedModelProfile;
   requestPatches?: RequestPatchOperation[];
   abortSignal?: AbortSignal;
   onReconnect?: (event: ChatCompletionReconnectEvent) => void;
+  onUsage?: (event: ModelUsageEvent) => void;
 }
 
 export function buildPatchedChatCompletionRequest(
-  options: ChatCompletionRequestOptions & { requestPatches?: RequestPatchOperation[] }
+  options: ChatCompletionRequestOptions & {
+    resolvedModel?: ResolvedModelProfile;
+    requestPatches?: RequestPatchOperation[];
+  }
 ) {
-  const baseRequest = buildChatCompletionRequest(options);
+  const baseRequest = buildChatCompletionRequest({
+    ...options,
+    model: options.resolvedModel?.modelId ?? options.model
+  });
   return applyRequestPatchOperations(baseRequest, options.requestPatches ?? []);
 }
 
 // 统一模型请求发送逻辑，支持请求标准化和 JSON Patch 二次改写。
 export async function sendChatCompletion(
-  client: OpenAI,
+  transport: ChatCompletionTransport,
   options: SendChatCompletionOptions
 ): Promise<OpenAI.Chat.Completions.ChatCompletion> {
   const patchedRequest = buildPatchedChatCompletionRequest(options);
+  const startedAtMs = Date.now();
+  const startedAt = new Date(startedAtMs).toISOString();
   let retriesUsed = 0;
 
   while (true) {
     try {
-      const response = await client.chat.completions.create(patchedRequest, {
-        signal: options.abortSignal
-      });
+      const response = await createChatCompletion(transport, patchedRequest, options);
       ensureResponseHasUsableAssistantOutput(response);
 
       if (retriesUsed > 0) {
@@ -60,6 +74,16 @@ export async function sendChatCompletion(
           attemptsUsed: retriesUsed
         });
       }
+
+      notifyUsage(options, {
+        requestedModel: options.model,
+        resolvedModel: options.resolvedModel,
+        usage: response.usage,
+        startedAt,
+        completedAt: new Date().toISOString(),
+        durationMs: Date.now() - startedAtMs,
+        retryCount: retriesUsed
+      });
 
       return response;
     } catch (error) {
@@ -91,6 +115,35 @@ export async function sendChatCompletion(
       await waitForReconnect(RECONNECT_DELAY_MS, options.abortSignal);
     }
   }
+}
+
+function notifyUsage(options: SendChatCompletionOptions, event: ModelUsageEvent) {
+  try {
+    options.onUsage?.(event);
+  } catch {
+    // Usage collection must never break a successful model response.
+  }
+}
+
+async function createChatCompletion(
+  transport: ChatCompletionTransport,
+  request: OpenAI.Chat.Completions.ChatCompletionCreateParamsNonStreaming,
+  options: SendChatCompletionOptions
+): Promise<OpenAI.Chat.Completions.ChatCompletion> {
+  if (isChatCompletionAdapter(transport)) {
+    if (!options.resolvedModel) {
+      throw new Error("Resolved model profile is required when using a model adapter.");
+    }
+
+    return transport.sendChatCompletion(request, {
+      resolvedModel: options.resolvedModel,
+      abortSignal: options.abortSignal
+    });
+  }
+
+  return transport.chat.completions.create(request, {
+    signal: options.abortSignal
+  });
 }
 
 function ensureResponseHasUsableAssistantOutput(response: OpenAI.Chat.Completions.ChatCompletion) {

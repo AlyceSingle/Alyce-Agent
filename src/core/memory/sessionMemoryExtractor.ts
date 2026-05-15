@@ -1,7 +1,10 @@
 import OpenAI from "openai";
 import { extractAssistantTextContent } from "../api/assistantContent.js";
-import { buildPatchedChatCompletionRequest } from "../api/sendChatCompletion.js";
+import { sendChatCompletion } from "../api/sendChatCompletion.js";
+import type { ChatCompletionTransport } from "../api/modelAdapters.js";
 import type { RequestPatchOperation } from "../api/requestPatch.js";
+import type { ResolvedModelProfile } from "../providers/types.js";
+import type { UsageRecordInput } from "../usage/types.js";
 
 type MessageParam = OpenAI.Chat.Completions.ChatCompletionMessageParam;
 type InFlightExtraction = {
@@ -39,14 +42,16 @@ export interface SessionMemoryExtractionResult {
 }
 
 export interface SessionMemoryExtractionOptions {
-  client: OpenAI;
+  client: ChatCompletionTransport;
   model: string;
+  resolvedModel?: ResolvedModelProfile;
   messages: readonly MessageParam[];
   currentMemory: string;
   memoryPath: string;
   requestPatches?: RequestPatchOperation[];
   abortSignal?: AbortSignal;
   shouldCommit?: () => boolean;
+  onUsage?: (event: UsageRecordInput) => void;
 }
 
 export const DEFAULT_SESSION_MEMORY_EXTRACTOR_CONFIG: SessionMemoryExtractorConfig = {
@@ -214,18 +219,21 @@ export class SessionMemoryExtractor {
       return { status: "aborted", reason: "aborted" };
     }
 
-    const response = await options.client.chat.completions.create(
-      buildPatchedChatCompletionRequest({
-        model: options.model,
-        messages: buildSessionMemoryExtractionMessages(options, this.config),
-        tools: [],
-        temperature: 0.1,
-        requestPatches: options.requestPatches
-      }),
-      {
-        signal: abortSignal
+    const response = await sendChatCompletion(options.client, {
+      model: options.model,
+      resolvedModel: options.resolvedModel,
+      messages: buildSessionMemoryExtractionMessages(options, this.config),
+      tools: [],
+      temperature: 0.1,
+      requestPatches: options.requestPatches,
+      abortSignal,
+      onUsage: (event) => {
+        options.onUsage?.({
+          ...event,
+          source: "session_memory"
+        });
       }
-    );
+    });
     const markdown = normalizeSessionMemoryMarkdown(
       extractAssistantTextContent(response.choices[0]?.message?.content)
     );

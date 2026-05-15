@@ -34,6 +34,25 @@ Type these into the main input. They start with `/` and execute immediately.
 
 Plan Mode still allows read-oriented exploration: `Read`, `Glob`, `Grep`, `LSP`, web fetch/search, MCP status/resource listing/resource reads, `TaskList`, `TaskGet`, and read-only shell or PowerShell inspection commands after approval. If a shell command looks like it might write files, install packages, mutate git state, or run arbitrary code, Alyce blocks it while Plan Mode is active.
 
+### Diff
+
+| Command | What it does |
+|---|---|
+| `/diff` | Shows a combined overview: the latest Alyce turn summary plus the current git working tree summary. |
+| `/diff last` | Shows the latest Alyce turn diff from Alyce's file-history snapshots. This does not require git. |
+| `/diff current` | Shows the current git working tree diff. If git is unavailable, Alyce reports that clearly. |
+| `/diff <turn>` | Shows a specific Alyce turn diff by turn ID. |
+
+After a turn edits files, Alyce also prints a concise diff summary with file counts, added/modified/deleted counts, line stats, and a pointer to `/diff last` for the full patch.
+
+### Revert
+
+| Command | What it does |
+|---|---|
+| `/revert` | Opens a confirmation prompt for the latest Alyce turn with tracked file changes. You can restore files only, restore files and rewind conversation, rewind conversation only, or cancel. |
+| `/revert --files-only` | Restores tracked files from the latest Alyce turn and leaves the conversation unchanged. |
+| `/revert --conversation-only` | Rewinds the conversation to the latest Alyce turn's rewind point and leaves files unchanged. |
+
 ### Memory
 
 | Command | What it does |
@@ -52,7 +71,17 @@ Plan Mode still allows read-oriented exploration: `Read`, `Glob`, `Grep`, `LSP`,
 |---|---|
 | `/context` | Previews the exact payload the model will receive next turn. *This is incredibly useful for debugging — it shows you things like memory injections and compaction summaries that aren't visible in the chat.* |
 | `/context <text>` | Same as above, but with an additional message added to the context. |
-| `/model <name>` | Switches the active model on the fly. e.g. `/model gpt-4o` |
+| `/model` or `/models` | Shows the current provider/model, configured providers, known models, and switch examples. |
+| `/model <name>` | Switches the active model on the current provider, e.g. `/model gpt-5.2`. |
+| `/model <provider>/<model>` | Switches to a provider-qualified model, e.g. `/model openrouter/openai/gpt-5.2`. |
+
+### Usage
+
+| Command | What it does |
+|---|---|
+| `/usage` | Shows current-session model usage: total tokens, provider/model groups, recent turns, subagent usage, durations, retries, and estimated cost when provider/model price metadata exists. |
+
+When pricing is unknown, Alyce shows tokens only and does not invent a cost.
 
 ### Directory Scope
 
@@ -75,10 +104,18 @@ Plan Mode still allows read-oriented exploration: `Read`, `Glob`, `Grep`, `LSP`,
 
 ### Subagent Storage
 
+Alyce's model-facing `AgentTool` includes built-in `general`, `explore`, `review`, and `verify` subagents. `verify` is read-only, can run approved build/test/lint/typecheck commands, and reports a final `pass`, `fail`, or `inconclusive` verdict. It is not a top-level `/verify` mode.
+
 | Command | What it does |
 |---|---|
+| `/tasks` | Lists current-session background subagent tasks with status, agent type, and short descriptions. |
+| `/tasks get <id>` | Shows bounded task details: status, paths, recent progress, result preview, error, and diff metadata when available. |
+| `/tasks log <id>` | Alias for `/tasks get <id>`. |
+| `/tasks stop <id>` | Requests stop for a running background task. |
 | `/tasks cleanup` | Scans stale subagent storage artifacts without deleting them. |
 | `/tasks cleanup --apply` | Deletes stale subagent storage artifacts found by the cleanup scan. Review the scan output before using `--apply`. |
+
+The status bar also shows compact background task counts: running, unread completed tasks, and failed tasks. Completed background tasks post a short summary into the main conversation; use `/tasks get <id>` for details.
 
 ## Global Shortcuts
 
@@ -96,7 +133,7 @@ These work anywhere in the app — no matter what dialog is open.
 |---|---|
 | `Ctrl+C` | Clears your current input. If a model request is running, it interrupts that request instead. |
 
-After an interrupted turn, press `Esc` from empty input to choose where to rewind. Pick a prompt with `Enter`; if tracked file edits are available, Alyce can restore code and conversation together.
+After an interrupted turn, press `Esc` from empty input to choose where to rewind. Pick a prompt with `Enter`; if tracked file edits are available, Alyce can restore code and conversation together. If snapshots were already restored, pruned, or mixed with non-reversible side effects, the rewind picker falls back to conversation-only.
 
 ## Navigating Conversations
 

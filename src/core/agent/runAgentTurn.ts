@@ -8,6 +8,7 @@ import {
   sendChatCompletion,
   type ChatCompletionReconnectEvent
 } from "../api/sendChatCompletion.js";
+import type { ChatCompletionTransport } from "../api/modelAdapters.js";
 import type { RequestPatchOperation } from "../api/requestPatch.js";
 import type { AgentQuerySource } from "./querySource.js";
 import {
@@ -18,6 +19,8 @@ import {
   snipOversizedToolOutputs,
   type ToolOutputSnipResult
 } from "../context/contextBudget.js";
+import type { ResolvedModelProfile } from "../providers/types.js";
+import type { UsageRecordInput, UsageSource } from "../usage/types.js";
 
 type MessageParam = OpenAI.Chat.Completions.ChatCompletionMessageParam;
 type UnknownRecord = Record<string, unknown>;
@@ -30,6 +33,7 @@ const ASSISTANT_HISTORY_EXTENSION_KEYS = [
 // 单轮 Agent 执行采用“模型回复 -> 运行工具 -> 回填结果 -> 再次请求模型”的闭环。
 export interface AgentTurnOptions {
   model: string;
+  resolvedModel?: ResolvedModelProfile;
   maxSteps: number;
   context: ToolExecutionContext;
   querySource?: AgentQuerySource;
@@ -42,6 +46,11 @@ export interface AgentTurnOptions {
   onToolCallResult?: (toolName: string, result: string, rawArguments: string) => void;
   onMessagesAppended?: (messages: MessageParam[]) => void | Promise<void>;
   onReconnect?: (event: ChatCompletionReconnectEvent) => void;
+  onUsage?: (event: UsageRecordInput) => void;
+  usageSource?: UsageSource;
+  usageTurnId?: string;
+  usageTaskId?: string;
+  usageLabel?: string;
   onContextBudget?: (snapshot: ContextBudgetSnapshot) => void;
   onContextCompactionStart?: (snapshot: ContextBudgetSnapshot) => void;
   onContextCompactionResult?: (event: {
@@ -60,7 +69,7 @@ export interface AgentTurnOptions {
 }
 
 export async function runAgentTurn(
-  client: OpenAI,
+  client: ChatCompletionTransport,
   messages: MessageParam[],
   options: AgentTurnOptions
 ): Promise<string> {
@@ -75,6 +84,7 @@ export async function runAgentTurn(
         await preflightContextBudget(messages, options, activeTools);
         response = await sendChatCompletion(client, {
           model: options.model,
+          resolvedModel: options.resolvedModel,
           messages,
           tools: activeTools,
           toolChoice: "auto",
@@ -83,7 +93,16 @@ export async function runAgentTurn(
           messageTimestampsEnabled: options.messageTimestampsEnabled,
           requestPatches: options.requestPatches,
           abortSignal: options.abortSignal,
-          onReconnect: options.onReconnect
+          onReconnect: options.onReconnect,
+          onUsage: (event) => {
+            options.onUsage?.({
+              ...event,
+              source: options.usageSource ?? querySourceToUsageSource(options.querySource),
+              ...(options.usageTurnId ? { turnId: options.usageTurnId } : {}),
+              ...(options.usageTaskId ? { taskId: options.usageTaskId } : {}),
+              ...(options.usageLabel ? { label: options.usageLabel } : {})
+            });
+          }
         });
         options.contextBudgetService?.recordUsage(response.usage);
       } catch (error) {
@@ -157,6 +176,20 @@ export async function runAgentTurn(
   throw new Error(`Max tool steps reached (${options.maxSteps})`);
 }
 
+function querySourceToUsageSource(querySource: AgentQuerySource | undefined): UsageSource {
+  switch (querySource) {
+    case "subagent":
+      return "subagent";
+    case "compact":
+      return "compact";
+    case "session_memory":
+      return "session_memory";
+    case "main":
+    default:
+      return "main";
+  }
+}
+
 async function preflightContextBudget(
   messages: MessageParam[],
   options: AgentTurnOptions,
@@ -173,14 +206,18 @@ async function preflightContextBudget(
   }
 
   let request = buildAgentTurnRequest(messages, options, tools);
-  const beforeSnip = budgetService.estimateRequest(request);
+  const beforeSnip = budgetService.estimateRequest(request, {
+    resolvedModel: options.resolvedModel
+  });
   let snapshot = beforeSnip;
   options.onContextBudget?.(snapshot);
 
   const snipResult = snipOversizedToolOutputs(messages);
   if (snipResult.changed) {
     request = buildAgentTurnRequest(messages, options, tools);
-    snapshot = budgetService.estimateRequest(request);
+    snapshot = budgetService.estimateRequest(request, {
+      resolvedModel: options.resolvedModel
+    });
     options.onContextBudget?.(snapshot);
   }
 
@@ -193,7 +230,10 @@ async function preflightContextBudget(
         snipResult
       });
     }
-    budgetService.estimateRequest(request, { recordForUsage: true });
+    budgetService.estimateRequest(request, {
+      recordForUsage: true,
+      resolvedModel: options.resolvedModel
+    });
     return;
   }
 
@@ -206,7 +246,9 @@ async function preflightContextBudget(
       querySource
     });
     request = buildAgentTurnRequest(messages, options, tools);
-    snapshot = budgetService.estimateRequest(request);
+    snapshot = budgetService.estimateRequest(request, {
+      resolvedModel: options.resolvedModel
+    });
     options.onContextBudget?.(snapshot);
     options.onContextCompactionResult?.({
       compacted,
@@ -227,7 +269,10 @@ async function preflightContextBudget(
     throw new ContextOverflowError(formatContextOverflowMessage(snapshot), snapshot);
   }
 
-  budgetService.estimateRequest(request, { recordForUsage: true });
+  budgetService.estimateRequest(request, {
+    recordForUsage: true,
+    resolvedModel: options.resolvedModel
+  });
 }
 
 function buildAgentTurnRequest(
@@ -237,6 +282,7 @@ function buildAgentTurnRequest(
 ) {
   return buildPatchedChatCompletionRequest({
     model: options.model,
+    resolvedModel: options.resolvedModel,
     messages,
     tools,
     toolChoice: "auto",

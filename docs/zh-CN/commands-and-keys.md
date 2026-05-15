@@ -32,6 +32,27 @@
 
 Plan Mode 仍允许只读探索：`Read`、`Glob`、`Grep`、`LSP`、网页抓取/搜索、MCP 状态/资源列表/资源读取、`TaskList`、`TaskGet`，以及经过审批的只读 shell 或 PowerShell 检查命令。疑似会写文件、安装依赖、修改 git 状态或执行任意代码的命令会被阻止。
 
+### Diff
+
+| 命令 | 说明 |
+|---|---|
+| `/diff` | 显示组合概览：最近 Alyce turn 的摘要，以及当前 git working tree 摘要。 |
+| `/diff last` | 显示最近 Alyce turn 的完整 diff，基于 Alyce 文件历史快照，不依赖 git。 |
+| `/diff current` | 显示当前 git working tree diff；如果 git 不可用，会给出明确提示。 |
+| `/diff <turn>` | 按 turn ID 显示指定 Alyce turn 的 diff。 |
+
+当某一轮修改了文件后，Alyce 还会输出简短 diff summary，包括文件数量、added/modified/deleted 统计、每个文件的行数变化，并提示用 `/diff last` 查看完整 patch。
+
+### Revert
+
+| 命令 | 说明 |
+|---|---|
+| `/revert` | 对最近一个带文件改动的 Alyce turn 打开确认提示，可选择只恢复文件、恢复文件并回退对话、只回退对话或取消。 |
+| `/revert --files-only` | 恢复最近 Alyce turn 的已跟踪文件改动，不改变当前对话。 |
+| `/revert --conversation-only` | 将对话回退到最近 Alyce turn 对应的 rewind 点，不改变磁盘文件。 |
+
+Revert 的边界会明确显示：文件恢复只覆盖 Alyce 在写工具执行前捕获到的文件；对话回退只修改 Alyce 的运行时/会话对话状态。Shell 副作用、包安装、外部服务变化，以及不在文件历史范围内的生成文件不会被自动恢复。
+
 ### 记忆管理
 
 | 命令 | 说明 |
@@ -48,7 +69,17 @@ Plan Mode 仍允许只读探索：`Read`、`Glob`、`Grep`、`LSP`、网页抓�
 |---|---|
 | `/context` | 预览模型在下一轮对话中实际接收到的完整 Payload。 |
 | `/context <内容>` | 预览 Payload，并临时追加一段自定义上下文。 |
-| `/model <名称>` | 实时切换当前使用的模型（例如 `/model gpt-4o`）。 |
+| `/model` 或 `/models` | 查看当前 provider/model、已配置 provider、已知模型和切换示例。 |
+| `/model <名称>` | 在当前 provider 下切换模型（例如 `/model gpt-5.2`）。 |
+| `/model <provider>/<model>` | 切换到带 provider 的模型引用（例如 `/model openrouter/openai/gpt-5.2`）。 |
+
+### Usage
+
+| 命令 | 说明 |
+|---|---|
+| `/usage` | 查看当前 session 的模型用量：总 token、provider/model 分组、最近 turn、子代理用量、耗时、重试次数，以及在 provider/model 有价格元数据时的估算成本。 |
+
+当价格未知时，Alyce 只显示 tokens，不会虚构成本。
 
 ### 目录授权
 
@@ -67,10 +98,18 @@ Plan Mode 仍允许只读探索：`Read`、`Glob`、`Grep`、`LSP`、网页抓�
 
 ### 子代理存储
 
+Alyce 面向模型的 `AgentTool` 内置 `general`、`explore`、`review` 和 `verify` 子代理。`verify` 是只读验证子代理，可以在审批后运行 build/test/lint/typecheck 命令，并在最后给出 `pass`、`fail` 或 `inconclusive` verdict。它不是顶层 `/verify` 模式。
+
 | 命令 | 说明 |
 |---|---|
+| `/tasks` | 列出当前会话的后台子代理任务，包含状态、agent type 和简短描述。 |
+| `/tasks get <id>` | 查看受限长度的任务详情：状态、路径、最近进度、结果预览、错误和 diff metadata。 |
+| `/tasks log <id>` | `/tasks get <id>` 的别名。 |
+| `/tasks stop <id>` | 请求停止正在运行的后台任务。 |
 | `/tasks cleanup` | 扫描陈旧的子代理存储产物，不删除文件。 |
 | `/tasks cleanup --apply` | 删除 cleanup 扫描到的陈旧子代理存储产物。使用前建议先看普通扫描输出。 |
+
+StatusBar 也会显示紧凑的后台任务计数：running、未读取的 completed 任务和 failed 任务。后台任务完成后会在主会话里显示简短摘要；用 `/tasks get <id>` 查看详情。
 
 ## 全局快捷键
 
@@ -87,7 +126,7 @@ Plan Mode 仍允许只读探索：`Read`、`Glob`、`Grep`、`LSP`、网页抓�
 ### 中断与回退
 
 - **`Ctrl+C`**：清空当前输入内容；如果模型正在生成回复，则中断请求。
-- **回退功能**：任务中断后，在空输入状态按 `Esc` 可选择回退点。如果开启了文件历史记录，还可以选择同步回滚受影响的文件。
+- **回退功能**：任务中断后，在空输入状态按 `Esc` 可选择回退点。如果开启了文件历史记录，还可以选择同步回滚受影响的文件。若快照已经恢复、被裁剪，或混有不可自动恢复的副作用，回退选择器会降级为仅回退对话。
 
 ### 视图导航
 

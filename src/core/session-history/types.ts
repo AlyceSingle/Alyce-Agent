@@ -19,7 +19,7 @@ export const SESSION_HISTORY_SCHEMA_VERSION = 1;
 
 export type SessionId = string;
 export type SessionHistoryApiMessage = OpenAI.Chat.Completions.ChatCompletionMessageParam;
-export type SessionHistoryRewindMode = "conversation" | "code-and-conversation";
+export type SessionHistoryRewindMode = "conversation" | "code-and-conversation" | "files-only";
 export type SessionHistorySubagentEventType =
   | "subagent-started"
   | "subagent-notification"

@@ -1,4 +1,5 @@
-import type { ApprovalMode, ConnectionConfig } from "../../config/runtime.js";
+import type { ApprovalMode, ConnectionConfigState } from "../../config/runtime.js";
+import { isConnectionStateReady } from "../../cli/modelCommand.js";
 import type { ContextBudgetSnapshot } from "../../core/context/contextBudget.js";
 import { Box, Text } from "../runtime/ink.js";
 import { terminalUiTheme } from "../theme/theme.js";
@@ -24,16 +25,18 @@ function formatApprovalMode(
 }
 
 export function StatusBar(props: {
-  connection: ConnectionConfig;
+  connectionState: ConnectionConfigState;
   sessionApprovalMode: ApprovalMode;
   sessionFullApprovalEnabled: boolean;
   sessionAllowedKinds: string[];
   requestPatchCount: number;
+  planModeEnabled: boolean;
   todoSummary?: string;
+  taskSummary?: string;
   statusText: string;
   contextBudget: ContextBudgetSnapshot | null;
 }) {
-  const isReady = props.connection.apiKey.trim().length > 0;
+  const isReady = isConnectionStateReady(props.connectionState);
   const connectionColor = isReady
     ? terminalUiTheme.colors.success
     : terminalUiTheme.colors.warning;
@@ -45,9 +48,13 @@ export function StatusBar(props: {
     props.todoSummary && props.todoSummary.trim().length > 0
       ? ` | Todos ${props.todoSummary}`
       : "";
-  const contextText = props.contextBudget
-    ? ` | Context ${Math.round(props.contextBudget.usedPercent)}%`
-    : "";
+  const taskSummaryText =
+    props.taskSummary && props.taskSummary.trim().length > 0
+      ? ` | Bg ${props.taskSummary}`
+      : "";
+  const contextText = ` | Context ${
+    props.contextBudget ? `${Math.round(props.contextBudget.usedPercent)}%` : "--"
+  }`;
   const contextColor =
     props.contextBudget?.state === "blocking"
       ? terminalUiTheme.colors.danger
@@ -68,14 +75,15 @@ export function StatusBar(props: {
         {" | "}
         <Text color={connectionColor}>{isReady ? "Ready" : "Setup required"}</Text>
         {" | "}
-        Model {props.connection.model}
-        {" | "}
         Approval {formatApprovalMode(
           props.sessionApprovalMode,
           props.sessionAllowedKinds,
           props.sessionFullApprovalEnabled
         )}
+        {" | "}
+        Mode {props.planModeEnabled ? "Plan" : "Build"}
         {todoSummaryText}
+        {taskSummaryText}
         <Text color={contextColor}>{contextText}</Text>
         <Text color={terminalUiTheme.colors.subtle}>{inlineStatusText}</Text>
       </Text>

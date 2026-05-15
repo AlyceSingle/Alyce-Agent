@@ -61,6 +61,42 @@ export const REPL_COMMAND_DEFINITIONS: ReplCommandDefinition[] = [
     completion: "/rewind"
   },
   {
+    command: "/revert",
+    usage: "/revert",
+    description: "Revert the latest Alyce turn with confirmation",
+    completion: "/revert"
+  },
+  {
+    command: "/revert --files-only",
+    usage: "/revert --files-only",
+    description: "Revert the latest Alyce turn file changes only",
+    completion: "/revert --files-only"
+  },
+  {
+    command: "/revert --conversation-only",
+    usage: "/revert --conversation-only",
+    description: "Rewind conversation to the latest Alyce turn only",
+    completion: "/revert --conversation-only"
+  },
+  {
+    command: "/diff",
+    usage: "/diff",
+    description: "Show last Alyce turn and working tree diff summaries",
+    completion: "/diff"
+  },
+  {
+    command: "/diff last",
+    usage: "/diff last",
+    description: "Show the latest Alyce turn diff",
+    completion: "/diff last"
+  },
+  {
+    command: "/diff current",
+    usage: "/diff current",
+    description: "Show the current git working tree diff",
+    completion: "/diff current"
+  },
+  {
     command: "/resume",
     usage: "/resume [id|text]",
     description: "Resume a previous project session",
@@ -103,6 +139,30 @@ export const REPL_COMMAND_DEFINITIONS: ReplCommandDefinition[] = [
     completion: "/memory clear --all"
   },
   {
+    command: "/tasks",
+    usage: "/tasks",
+    description: "List current-session background subagent tasks",
+    completion: "/tasks"
+  },
+  {
+    command: "/tasks get",
+    usage: "/tasks get <id>",
+    description: "Show background task details",
+    completion: "/tasks get "
+  },
+  {
+    command: "/tasks log",
+    usage: "/tasks log <id>",
+    description: "Alias for /tasks get <id>",
+    completion: "/tasks log "
+  },
+  {
+    command: "/tasks stop",
+    usage: "/tasks stop <id>",
+    description: "Stop a running background task",
+    completion: "/tasks stop "
+  },
+  {
     command: "/tasks cleanup",
     usage: "/tasks cleanup [--apply]",
     description: "Scan or clean stale subagent storage artifacts",
@@ -115,6 +175,12 @@ export const REPL_COMMAND_DEFINITIONS: ReplCommandDefinition[] = [
     completion: "/tasks cleanup --apply"
   },
   {
+    command: "/usage",
+    usage: "/usage",
+    description: "Show session token, duration, and estimated cost usage",
+    completion: "/usage"
+  },
+  {
     command: "/context",
     usage: "/context [text]",
     description: "Show full next-turn AI context payload",
@@ -122,9 +188,15 @@ export const REPL_COMMAND_DEFINITIONS: ReplCommandDefinition[] = [
   },
   {
     command: "/model",
-    usage: "/model <name>",
-    description: "Switch model and persist it",
+    usage: "/model [provider/model]",
+    description: "Show or switch provider/model",
     completion: "/model "
+  },
+  {
+    command: "/models",
+    usage: "/models",
+    description: "List configured providers and models",
+    completion: "/models"
   },
   {
     command: "/add-dir",
@@ -177,8 +249,15 @@ export type ParsedCommand =
   | { type: "memory-view" }
   | { type: "memory-clear"; clearPersistent: boolean }
   | { type: "add-directory"; directory: string; persist: boolean }
+  | { type: "model-view" }
   | { type: "switch-model"; model: string }
+  | { type: "tasks-list" }
+  | { type: "tasks-get"; taskId: string }
+  | { type: "tasks-stop"; taskId: string }
   | { type: "tasks-cleanup"; apply: boolean }
+  | { type: "usage-view" }
+  | { type: "diff-view"; target: "overview" | "last" | "current" | { turnId: string } }
+  | { type: "revert"; mode: "prompt" | "files-only" | "conversation-only" }
   | { type: "context-preview"; nextUserInput?: string };
 
 // Parse REPL commands in one place so the main loop stays simple.
@@ -208,6 +287,14 @@ export function parseReplCommand(input: string): ParsedCommand {
     return { type: "plan-exit" };
   }
 
+  if (input.startsWith("/build ")) {
+    return {
+      type: "command-error",
+      input,
+      message: "Unsupported /build argument. In Alyce, /build only exits Plan Mode; run build commands as normal prompts or approved shell commands."
+    };
+  }
+
   if (input.startsWith("/plan ")) {
     return {
       type: "command-error",
@@ -222,6 +309,16 @@ export function parseReplCommand(input: string): ParsedCommand {
 
   if (input === "/rewind") {
     return { type: "rewind" };
+  }
+
+  const revertCommand = parseRevertCommand(input);
+  if (revertCommand) {
+    return revertCommand;
+  }
+
+  const diffCommand = parseDiffCommand(input);
+  if (diffCommand) {
+    return diffCommand;
   }
 
   if (input === "/resume") {
@@ -265,6 +362,18 @@ export function parseReplCommand(input: string): ParsedCommand {
   const tasksCommand = parseTasksCommand(input);
   if (tasksCommand) {
     return tasksCommand;
+  }
+
+  if (input === "/usage") {
+    return { type: "usage-view" };
+  }
+
+  if (input.startsWith("/usage ")) {
+    return {
+      type: "command-error",
+      input,
+      message: "Unsupported /usage argument. Use /usage."
+    };
   }
 
   if (input === "/remember") {
@@ -363,6 +472,10 @@ export function parseReplCommand(input: string): ParsedCommand {
     };
   }
 
+  if (input === "/model" || input === "/model list" || input === "/models") {
+    return { type: "model-view" };
+  }
+
   if (input.startsWith("/model ")) {
     // /model only takes effect when a non-empty model name is provided.
     const model = input.slice(7).trim();
@@ -372,14 +485,6 @@ export function parseReplCommand(input: string): ParsedCommand {
         model
       };
     }
-  }
-
-  if (input === "/model") {
-    return {
-      type: "command-error",
-      input,
-      message: "Missing model name."
-    };
   }
 
   if (input.startsWith("/")) {
@@ -393,10 +498,91 @@ export function parseReplCommand(input: string): ParsedCommand {
   return { type: "none" };
 }
 
+function parseRevertCommand(
+  input: string
+): Extract<ParsedCommand, { type: "revert" | "command-error" }> | null {
+  if (input !== "/revert" && !input.startsWith("/revert ")) {
+    return null;
+  }
+
+  const tokens = input.split(/\s+/).filter(Boolean);
+  if (tokens.length === 1) {
+    return {
+      type: "revert",
+      mode: "prompt"
+    };
+  }
+
+  if (tokens.length === 2 && tokens[1] === "--files-only") {
+    return {
+      type: "revert",
+      mode: "files-only"
+    };
+  }
+
+  if (tokens.length === 2 && tokens[1] === "--conversation-only") {
+    return {
+      type: "revert",
+      mode: "conversation-only"
+    };
+  }
+
+  return {
+    type: "command-error",
+    input,
+    message: "Unsupported /revert argument. Use /revert, /revert --files-only, or /revert --conversation-only."
+  };
+}
+
+function parseDiffCommand(
+  input: string
+): Extract<ParsedCommand, { type: "diff-view" | "command-error" }> | null {
+  if (input !== "/diff" && !input.startsWith("/diff ")) {
+    return null;
+  }
+
+  const tokens = input.split(/\s+/).filter(Boolean);
+  if (tokens.length === 1) {
+    return {
+      type: "diff-view",
+      target: "overview"
+    };
+  }
+
+  if (tokens.length !== 2) {
+    return {
+      type: "command-error",
+      input,
+      message: "Unsupported /diff argument. Use /diff, /diff last, /diff current, or /diff <turn>."
+    };
+  }
+
+  if (tokens[1] === "last") {
+    return {
+      type: "diff-view",
+      target: "last"
+    };
+  }
+
+  if (tokens[1] === "current") {
+    return {
+      type: "diff-view",
+      target: "current"
+    };
+  }
+
+  return {
+    type: "diff-view",
+    target: {
+      turnId: tokens[1]
+    }
+  };
+}
+
 function parseMemoryCommand(
   input: string
 ): Extract<ParsedCommand, { type: "memory-view" | "memory-clear" | "command-error" }> | null {
-  if (!input.startsWith("/memory")) {
+  if (input !== "/memory" && !input.startsWith("/memory ")) {
     return null;
   }
 
@@ -436,7 +622,7 @@ function parseMemoryCommand(
 
 function parseTasksCommand(
   input: string
-): Extract<ParsedCommand, { type: "tasks-cleanup" | "command-error" }> | null {
+): Extract<ParsedCommand, { type: "tasks-list" | "tasks-get" | "tasks-stop" | "tasks-cleanup" | "command-error" }> | null {
   if (input !== "/tasks" && !input.startsWith("/tasks ")) {
     return null;
   }
@@ -444,9 +630,45 @@ function parseTasksCommand(
   const tokens = input.split(/\s+/).filter(Boolean);
   if (tokens.length === 1) {
     return {
+      type: "tasks-list"
+    };
+  }
+
+  if (tokens[1] === "get" || tokens[1] === "log") {
+    if (tokens.length !== 3) {
+      return {
+        type: "command-error",
+        input,
+        message: `Missing task id. Use /tasks ${tokens[1]} <id>.`
+      };
+    }
+
+    return {
+      type: "tasks-get",
+      taskId: tokens[2]!
+    };
+  }
+
+  if (tokens[1] === "stop") {
+    if (tokens.length !== 3) {
+      return {
+        type: "command-error",
+        input,
+        message: "Missing task id. Use /tasks stop <id>."
+      };
+    }
+
+    return {
+      type: "tasks-stop",
+      taskId: tokens[2]!
+    };
+  }
+
+  if (tokens[1] === "resume") {
+    return {
       type: "command-error",
       input,
-      message: "Missing /tasks subcommand."
+      message: "/tasks resume is not supported yet. Use AgentTool with an existing task_id when a resumable task model is available."
     };
   }
 

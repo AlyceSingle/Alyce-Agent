@@ -1,6 +1,13 @@
 import OpenAI from "openai";
 import { isTurnInterruptedError, toTurnInterruptedError } from "../abort.js";
 import { isGeneratedContextMessage } from "../api/generatedMessages.js";
+import {
+  sendChatCompletion,
+  type ChatCompletionReconnectEvent
+} from "../api/sendChatCompletion.js";
+import type { ChatCompletionTransport } from "../api/modelAdapters.js";
+import type { ResolvedModelProfile } from "../providers/types.js";
+import type { UsageRecordInput } from "../usage/types.js";
 
 type MessageParam = OpenAI.Chat.Completions.ChatCompletionMessageParam;
 
@@ -77,11 +84,13 @@ export class ConversationCompactor {
   }
 
   async maybeCompact(options: {
-    client: OpenAI;
+    client: ChatCompletionTransport;
     model: string;
+    resolvedModel?: ResolvedModelProfile;
     messages: MessageParam[];
     force?: boolean;
     abortSignal?: AbortSignal;
+    onUsage?: (event: UsageRecordInput) => void;
   }): Promise<boolean> {
     if (this.tracking.disabledForSession) {
       return false;
@@ -117,12 +126,14 @@ export class ConversationCompactor {
     try {
       markdown = await buildConversationCompactionSummary(options.client, {
         model: options.model,
+        resolvedModel: options.resolvedModel,
         existingSummary: existingState?.markdown,
         messages: archivedMessages,
         maxMessagesForSummary: this.config.maxMessagesForSummary,
         maxCharsPerMessage: this.config.maxCharsPerMessage,
         timeoutMs: this.config.timeoutMs,
         abortSignal: options.abortSignal,
+        onUsage: options.onUsage,
         onAbortSource: (source) => {
           abortSource = source;
         }
@@ -215,9 +226,10 @@ function createCompactionSummaryMessage(
 }
 
 async function buildConversationCompactionSummary(
-  client: OpenAI,
+  client: ChatCompletionTransport,
   options: {
     model: string;
+    resolvedModel?: ResolvedModelProfile;
     existingSummary?: string;
     messages: MessageParam[];
     maxMessagesForSummary: number;
@@ -225,6 +237,8 @@ async function buildConversationCompactionSummary(
     timeoutMs: number;
     abortSignal?: AbortSignal;
     onAbortSource?: (source: "parent" | "timeout") => void;
+    onReconnect?: (event: ChatCompletionReconnectEvent) => void;
+    onUsage?: (event: UsageRecordInput) => void;
   }
 ) {
   const conversationWindow = formatConversationWindow(
@@ -239,43 +253,48 @@ async function buildConversationCompactionSummary(
   });
   let response: OpenAI.Chat.Completions.ChatCompletion;
   try {
-    response = await client.chat.completions.create(
-      {
-        model: options.model,
-        temperature: 0.1,
-        messages: [
-          {
-            role: "system",
-            content: [
-              "You summarize older coding-agent conversation during context compaction.",
-              "Merge the existing summary with the archived conversation segment.",
-              "Output markdown only.",
-              "Preserve the exact section headers in the template.",
-              "Prefer durable engineering context over chatter.",
-              "Do not hallucinate; say unknown when necessary."
-            ].join(" ")
-          },
-          {
-            role: "user",
-            content: [
-              "Update the compacted conversation summary with the archived conversation segment.",
-              "",
-              "## Existing Summary",
-              options.existingSummary?.trim() || "(none)",
-              "",
-              "## Required Template",
-              COMPACTION_SUMMARY_TEMPLATE,
-              "",
-              "## Archived Conversation Segment",
-              conversationWindow || "(empty)"
-            ].join("\n")
-          }
-        ]
-      },
-      {
-        signal: scopedAbort.signal
+    response = await sendChatCompletion(client, {
+      model: options.model,
+      resolvedModel: options.resolvedModel,
+      temperature: 0.1,
+      tools: [],
+      messages: [
+        {
+          role: "system",
+          content: [
+            "You summarize older coding-agent conversation during context compaction.",
+            "Merge the existing summary with the archived conversation segment.",
+            "Output markdown only.",
+            "Preserve the exact section headers in the template.",
+            "Prefer durable engineering context over chatter.",
+            "Do not hallucinate; say unknown when necessary."
+          ].join(" ")
+        },
+        {
+          role: "user",
+          content: [
+            "Update the compacted conversation summary with the archived conversation segment.",
+            "",
+            "## Existing Summary",
+            options.existingSummary?.trim() || "(none)",
+            "",
+            "## Required Template",
+            COMPACTION_SUMMARY_TEMPLATE,
+            "",
+            "## Archived Conversation Segment",
+            conversationWindow || "(empty)"
+          ].join("\n")
+        }
+      ],
+      abortSignal: scopedAbort.signal,
+      onReconnect: options.onReconnect,
+      onUsage: (event) => {
+        options.onUsage?.({
+          ...event,
+          source: "compact"
+        });
       }
-    );
+    });
   } finally {
     scopedAbort.cleanup();
   }

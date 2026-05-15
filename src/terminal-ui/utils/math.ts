@@ -171,8 +171,6 @@ const SPACING_COMMANDS = new Set([
   "scriptscriptstyle",
   "limits",
   "nolimits",
-  "left",
-  "right",
   "big",
   "Big",
   "bigg",
@@ -714,28 +712,54 @@ function renderMathEnvironment(name: string, content: string): string {
 function splitLatexRows(content: string): string[] {
   const rows: string[] = [];
   let buffer = "";
+  let braceDepth = 0;
   let index = 0;
   while (index < content.length) {
-    if (content[index] === "\\" && content[index + 1] === "\\") {
-      rows.push(buffer);
-      buffer = "";
-      index += 2;
-      continue;
+    const character = content[index] ?? "";
+    if (character === "\\") {
+      const next = content[index + 1] ?? "";
+      if (braceDepth === 0 && next === "\\") {
+        rows.push(buffer);
+        buffer = "";
+        index += 2;
+        continue;
+      }
+
+      if (
+        braceDepth === 0 &&
+        content.slice(index, index + 3) === "\\cr" &&
+        isLatexCommandBoundary(content, index + 3)
+      ) {
+        rows.push(buffer);
+        buffer = "";
+        index += 3;
+        continue;
+      }
+
+      if (next === "{" || next === "}") {
+        buffer += content.slice(index, index + 2);
+        index += 2;
+        continue;
+      }
     }
 
-    if (content[index] === "\\" && content.slice(index, index + 3) === "\\cr") {
-      rows.push(buffer);
-      buffer = "";
-      index += 3;
-      continue;
+    if (character === "{") {
+      braceDepth += 1;
+    } else if (character === "}") {
+      braceDepth = Math.max(0, braceDepth - 1);
     }
 
-    buffer += content[index] ?? "";
+    buffer += character;
     index += 1;
   }
 
   rows.push(buffer);
   return rows;
+}
+
+function isLatexCommandBoundary(input: string, index: number): boolean {
+  const character = input[index] ?? "";
+  return !/[A-Za-z]/.test(character);
 }
 
 function splitLatexCells(row: string): string[] {

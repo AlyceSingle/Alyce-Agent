@@ -5,12 +5,17 @@ import { MessageList, type MessageListHandle } from "../components/MessageList.j
 import { PromptInput } from "../components/PromptInput.js";
 import { StatusBar } from "../components/StatusBar.js";
 import { TodoPanel } from "../components/TodoPanel.js";
+import { TaskPanel } from "../components/TaskPanel.js";
 import { ApprovalDialog } from "../components/ApprovalDialog.js";
 import { AskUserQuestionDialog } from "../components/AskUserQuestionDialog.js";
 import { SettingsDialog } from "../components/SettingsDialog.js";
 import { SessionPickerDialog } from "../components/SessionPickerDialog.js";
 import { RewindPickerDialog } from "../components/RewindPickerDialog.js";
 import type { SessionController } from "../adapters/sessionController.js";
+import {
+  formatCurrentModelDisplay,
+  isConnectionStateReady
+} from "../../cli/modelCommand.js";
 import { getBuiltinPersonaPresetTitle } from "../../core/prompt/fragments/personaPresets.js";
 import { useIsOverlayActive } from "../context/overlayContext.js";
 import { useKeybindings } from "../keybindings/useKeybindings.js";
@@ -104,6 +109,7 @@ export function AgentScreen(props: { controller: SessionController }) {
   const isLoading = useTerminalUiSelector((value) => value.isLoading);
   const draftInput = useTerminalUiSelector((value) => value.draftInput);
   const todos = useTerminalUiSelector((value) => value.todos);
+  const backgroundTasks = useTerminalUiSelector((value) => value.backgroundTasks);
   const transcriptSticky = useTerminalUiSelector((value) => value.transcriptSticky);
   const unseenDividerMessageId = useTerminalUiSelector((value) => value.unseenDividerMessageId);
   const unseenMessageCount = useTerminalUiSelector((value) => value.unseenMessageCount);
@@ -134,7 +140,7 @@ export function AgentScreen(props: { controller: SessionController }) {
   const activeDialog = dialogQueue[0] ?? null;
   const hasDialog = activeDialog !== null;
   const hasActiveOverlay = useIsOverlayActive();
-  const hasConnectionConfig = connection.apiKey.trim().length > 0;
+  const hasConnectionConfig = isConnectionStateReady(connectionState);
   const layoutSurfaceKey =
     activeDialog === null
       ? "conversation"
@@ -404,9 +410,16 @@ export function AgentScreen(props: { controller: SessionController }) {
 
   const displayedStatusText =
     copyStatusText ?? (historyEscPending ? "Press ESC again to open input history." : statusText);
-  const currentModeLabel = planModeEnabled ? "Plan" : "Build";
   const completedTodoCount = todos.filter((todo) => todo.status === "completed").length;
   const todoSummary = todos.length > 0 ? `${completedTodoCount}/${todos.length}` : undefined;
+  const runningTaskCount = backgroundTasks.filter((task) => task.status === "running").length;
+  const unreadTaskCount = backgroundTasks.filter((task) => task.status === "completed" && task.unread).length;
+  const failedTaskCount = backgroundTasks.filter((task) => task.status === "failed").length;
+  const taskSummary = [
+    runningTaskCount > 0 ? `${runningTaskCount} run` : null,
+    unreadTaskCount > 0 ? `${unreadTaskCount} unread` : null,
+    failedTaskCount > 0 ? `${failedTaskCount} fail` : null
+  ].filter((value): value is string => value !== null).join(",");
   const promptDisabledReason =
     hasDialog
       ? `${
@@ -476,12 +489,15 @@ export function AgentScreen(props: { controller: SessionController }) {
     ) : null;
 
   const todoPanel = todos.length > 0 ? <TodoPanel todos={todos} /> : null;
+  const taskPanel = backgroundTasks.length > 0 ? <TaskPanel tasks={backgroundTasks} /> : null;
 
   const pill =
-    todoPanel || unseenMessagePill ? (
+    todoPanel || taskPanel || unseenMessagePill ? (
       <Box flexDirection="column" width="100%">
         {todoPanel}
-        {todoPanel && unseenMessagePill ? <Text color={terminalUiTheme.colors.subtle}> </Text> : null}
+        {todoPanel && taskPanel ? <Text color={terminalUiTheme.colors.subtle}> </Text> : null}
+        {taskPanel}
+        {(todoPanel || taskPanel) && unseenMessagePill ? <Text color={terminalUiTheme.colors.subtle}> </Text> : null}
         {unseenMessagePill}
       </Box>
     ) : null;
@@ -490,12 +506,14 @@ export function AgentScreen(props: { controller: SessionController }) {
     <FullscreenLayout
       header={
         <StatusBar
-          connection={connection}
+          connectionState={connectionState}
           sessionApprovalMode={sessionApprovalMode}
           sessionFullApprovalEnabled={sessionFullApprovalEnabled}
           sessionAllowedKinds={sessionAllowedKinds}
           requestPatchCount={requestPatchCount}
+          planModeEnabled={planModeEnabled}
           todoSummary={todoSummary}
+          taskSummary={taskSummary}
           statusText={displayedStatusText}
           contextBudget={contextBudget}
         />
@@ -521,7 +539,7 @@ export function AgentScreen(props: { controller: SessionController }) {
           viewportWidth={terminalWidth}
           disabled={isLoading || hasDialog}
           disabledReason={promptDisabledReason}
-          sublineText={`${connection.model} | ${workspaceRoot} | ${currentModeLabel}`}
+          sublineText={`${formatCompactModelDisplay(connection.model)} | ${workspaceRoot}`}
           onLayoutHeightChange={refreshPromptLayout}
           onChange={(value) => props.controller.setDraftInput(value)}
           onCtrlCCaptureChange={setCtrlCCapture}
@@ -533,4 +551,9 @@ export function AgentScreen(props: { controller: SessionController }) {
       }
     />
   );
+}
+
+function formatCompactModelDisplay(model: string) {
+  const display = formatCurrentModelDisplay(model);
+  return display.startsWith("openai/") ? display.slice("openai/".length) : display;
 }

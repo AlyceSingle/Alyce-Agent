@@ -111,6 +111,38 @@ export const SUBAGENT_DEFINITIONS: SubagentDefinition[] = [
       "Do not edit files. Use read-only tools and commands only.",
       "Lead with findings ordered by severity. Include file and line references when possible. Say clearly if no issues are found."
     ].join("\n")
+  },
+  {
+    type: "verify",
+    label: "Verify",
+    description:
+      "Read-only verification agent for running approved checks and producing a pass/fail/inconclusive verdict.",
+    allowedTools: [
+      "AskUserQuestion",
+      "Read",
+      "Glob",
+      "Grep",
+      "LSP",
+      "Bash",
+      "PowerShell"
+    ],
+    policy: {
+      allowWrite: false,
+      allowNetwork: false,
+      shell: "read-only",
+      allowBuildTest: true
+    },
+    maxSteps: 8,
+    systemPrompt: [
+      SHARED_SUBAGENT_RULES,
+      "",
+      "This is a verification task. Do not edit, create, delete, move, copy, or format project files.",
+      "Use read-only inspection tools first to understand what should be verified.",
+      "You may run existing build, test, lint, or typecheck commands after approval. Do not install dependencies, update lockfiles, start long-lived services, or run mutating git commands.",
+      "If a requested check requires setup that would mutate the project beyond normal build/test output, report that limitation instead of doing it.",
+      "Report each command you ran, its outcome, and the key evidence from stdout/stderr.",
+      "End the final response with exactly one verdict line: Verdict: pass, Verdict: fail, or Verdict: inconclusive."
+    ].join("\n")
   }
 ];
 
@@ -315,6 +347,7 @@ function normalizePolicy(value: unknown): ToolPermissionPolicy {
     allowWrite: asBoolean(record.allowWrite) ?? false,
     allowNetwork: asBoolean(record.allowNetwork) ?? false,
     shell: normalizeShellMode(record.shell),
+    ...(asBoolean(record.allowBuildTest) === true ? { allowBuildTest: true } : {}),
     ...(normalizeStringList(record.allowedRoots).length > 0
       ? { allowedRoots: normalizeStringList(record.allowedRoots) }
       : {})

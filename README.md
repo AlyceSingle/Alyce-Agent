@@ -29,6 +29,7 @@ Alyce is a local coding assistant framework with:
 - resumable project session history, session memory, persistent memory, auto-summary, and conversation compaction
 - approval-aware command, file, and web tooling
 - `/doctor` local diagnostics and read-only `/plan` mode
+- built-in subagents for implementation, exploration, review, and verification checks
 - local `SkillTool` loading from project/user `SKILL.md` files
 - MCP server integration for stdio, streamable HTTP, and SSE tools/resources
 
@@ -68,6 +69,8 @@ copy .env.example .env
 - `OPENAI_API_KEY`
 - `OPENAI_BASE_URL`
 - `OPENAI_MODEL`
+
+You can also configure provider profiles in `.alyce/config.json` or `~/.alyce/config.json` and switch with `/model provider/model`; run `/model` in Alyce to inspect configured providers and examples.
 
 Optional tuning includes `ALYCE_WEB_FETCH_CACHE_MAX_BYTES` (WebFetch cache budget), `AGENT_MARKDOWN_TOOL_RENDERING_ENABLED`, `AGENT_MARKDOWN_RENDER_MAX_CHARS`, `AGENT_SCROLL_SPEED`, and `AGENT_HISTORY_PAGING_ENABLED`; see [Configuration](https://github.com/AlyceSingle/Alyce-Agent/blob/master/docs/configuration.md) for the full list.
 
@@ -109,6 +112,23 @@ For analysis before edits, enter:
 ```
 
 Plan Mode keeps exploration read-only. Use `/plan exit` or `/build` to leave it when you are ready for implementation work. In Alyce, `/build` is only a Plan Mode exit alias; it does not run `npm run build`.
+
+### VS Code terminal context
+
+You can launch Alyce from a VS Code integrated terminal with explicit editor context:
+
+```bash
+alyce --cwd "C:\path\to\workspace" --context-file "src/index.ts" --initial-prompt "Review this file"
+```
+
+For selected text, write it to a file first, then pass it with `--selection-file`:
+
+```bash
+alyce-vscode-selection --out ".alyce/vscode-selection.txt" --selection "selected text"
+alyce --cwd . --selection-file ".alyce/vscode-selection.txt" --initial-prompt "Review this selection"
+```
+
+These flags inject context for the next turn only; they do not read the whole workspace or grant write approval. See [Getting Started](https://github.com/AlyceSingle/Alyce-Agent/blob/master/docs/getting-started.md) for VS Code task/keybinding snippets.
 
 ## Documentation
 

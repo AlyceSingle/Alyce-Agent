@@ -84,6 +84,7 @@ function createSettingsState(): SessionSettingsState {
 
 function runTests() {
   testInitialStateDisablesPlanMode();
+  testInitialStateUsesConnectionReadyOverride();
   testSetPlanModeEnabled();
   testInitialStateDisablesFullApproval();
   testSetSessionFullApprovalEnabled();
@@ -105,6 +106,7 @@ function createInitialState() {
         baseURL: "default",
         model: "default"
       },
+      providerProfiles: {},
       saveTarget: "user",
       saveTargetPath: "C:\\tmp\\config.json",
       userPath: "C:\\tmp\\user-config.json",
@@ -120,6 +122,32 @@ function testInitialStateDisablesPlanMode() {
   const initial = createInitialState();
 
   assert.equal(initial.planModeEnabled, false);
+}
+
+function testInitialStateUsesConnectionReadyOverride() {
+  const ready = createInitialTerminalUiState({
+    connectionState: {
+      ...createInitialState().connectionState,
+      effective: { apiKey: "", model: "local/local-model" }
+    },
+    settingsState: createSettingsState(),
+    workspaceRoot: "C:\\workspace",
+    requestPatchCount: 0,
+    connectionReady: true
+  });
+  const unavailable = createInitialTerminalUiState({
+    connectionState: {
+      ...createInitialState().connectionState,
+      effective: { apiKey: "key", model: "local/local-model" }
+    },
+    settingsState: createSettingsState(),
+    workspaceRoot: "C:\\workspace",
+    requestPatchCount: 0,
+    connectionReady: false
+  });
+
+  assert.equal(ready.statusText, "Idle");
+  assert.equal(unavailable.statusText, "Setup required");
 }
 
 function testSetPlanModeEnabled() {

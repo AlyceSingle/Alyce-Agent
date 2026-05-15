@@ -219,7 +219,7 @@ function ConfirmView(props: {
       </Box>
       {props.point.hasUnsafeToolActivity ? (
         <Text color={terminalUiTheme.colors.warning} wrap="truncate-end">
-          Some later tools are not safely reversible, so tracked code rewind is disabled.
+          Tracked code rewind is disabled because some later side effects cannot be reversed or file snapshots are no longer restorable.
         </Text>
       ) : null}
       <Box flexDirection="column" width="100%">

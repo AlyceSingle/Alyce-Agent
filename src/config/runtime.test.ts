@@ -13,6 +13,7 @@ async function runTests() {
   testSessionSettingsDefaultsIncludeScrollPerformanceSettings();
   testSessionSettingsClampsScrollSpeed();
   await testRuntimeConfigReadsScrollPerformanceEnv();
+  await testRuntimeConfigIgnoresRetiredStatusUsageSetting();
   await testSessionSettingsSerializationIncludesScrollPerformanceSettings();
   console.log("runtime config tests passed");
 }
@@ -74,6 +75,35 @@ async function testRuntimeConfigReadsScrollPerformanceEnv() {
   assert.equal(config.settings.diagnosticsPendingTimeoutMs, 64_000);
   assert.equal(config.settings.diagnosticsFailureThreshold, 5);
   assert.equal(config.settings.diagnosticsFailureCooldownMs, 90_000);
+}
+
+async function testRuntimeConfigIgnoresRetiredStatusUsageSetting() {
+  const workspaceRoot = await fs.mkdtemp(path.join(os.tmpdir(), "alyce-runtime-config-retired-"));
+  const alyceDirectory = path.join(workspaceRoot, ".alyce");
+  await fs.mkdir(alyceDirectory, { recursive: true });
+  await fs.writeFile(
+    path.join(alyceDirectory, "settings.json"),
+    JSON.stringify({
+      statusUsageDisplayEnabled: true,
+      scrollSpeed: 4
+    }),
+    "utf8"
+  );
+
+  const config = await loadRuntimeConfig([], {
+    ...process.env,
+    AGENT_WORKSPACE: workspaceRoot
+  });
+
+  assert.equal(config.settings.scrollSpeed, 4);
+  assert.equal(
+    Object.prototype.hasOwnProperty.call(config.settings, "statusUsageDisplayEnabled"),
+    false
+  );
+  assert.equal(
+    Object.prototype.hasOwnProperty.call(config.settingsState.project, "statusUsageDisplayEnabled"),
+    false
+  );
 }
 
 async function testSessionSettingsSerializationIncludesScrollPerformanceSettings() {

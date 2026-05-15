@@ -67,6 +67,19 @@ export interface TerminalUiRewindPoint {
   turnsRemoved: number;
 }
 
+export interface TerminalUiTaskSummary {
+  taskId: string;
+  agentType: string;
+  description: string;
+  status: "running" | "completed" | "failed" | "stopped";
+  updatedAt: string;
+  unread: boolean;
+  worktreePath?: string;
+  hasChanges?: boolean;
+  error?: string;
+  latestProgress?: string;
+}
+
 export type PermissionDecision =
   | "allow-once"
   | "reject-once"
@@ -104,6 +117,7 @@ export interface TerminalUiState {
   activeOverlays: TerminalUiOverlayId[];
   messages: TerminalUiMessage[];
   todos: TodoItem[];
+  backgroundTasks: TerminalUiTaskSummary[];
   selectedMessageId: string | null;
   transcriptSticky: boolean;
   unseenDividerMessageId: string | null;
