@@ -8,6 +8,7 @@ export function prepareSessionResume(history: LoadedSessionHistory): SessionResu
     uiMessages: history.uiMessages,
     messageCount: history.messageCount,
     sessionMemory: history.sessionMemory,
+    fileSnapshots: history.fileSnapshots,
     subagentTaskIndex: history.subagentTaskIndex
   };
 }

@@ -2,6 +2,10 @@ import { randomUUID } from "node:crypto";
 import { promises as fs } from "node:fs";
 import path from "node:path";
 import { isGeneratedContextMessage } from "../api/generatedMessages.js";
+import {
+  isPersistedFileHistorySnapshot,
+  type PersistedFileHistorySnapshot
+} from "../file-history/fileBackupStore.js";
 import { cloneJson } from "../json/clone.js";
 import {
   SESSION_HISTORY_SCHEMA_VERSION,
@@ -293,6 +297,7 @@ export class SessionHistoryStore {
     let lastSequence = 0;
     let lastApiRole: string | undefined;
     let sessionMemory: SessionMemoryFileState | null = null;
+    const fileSnapshots = new Map<string, PersistedFileHistorySnapshot>();
     const rewindCheckpoints: SessionHistoryRewindCheckpoint[] = [];
     let subagentEvents: SessionHistorySubagentEventWithSequence[] = [];
 
@@ -375,6 +380,13 @@ export class SessionHistoryStore {
         continue;
       }
 
+      if (entry.type === "file-snapshot") {
+        if (isPersistedFileHistorySnapshot(entry.snapshot, sessionId)) {
+          fileSnapshots.set(entry.snapshot.turnId, cloneJson(entry.snapshot));
+        }
+        continue;
+      }
+
       if (entry.type === "session-rewind") {
         const apiMessageCount = asNumber(entry.apiMessageCount);
         const uiMessageCount = asNumber(entry.uiMessageCount);
@@ -442,6 +454,9 @@ export class SessionHistoryStore {
       apiMessages,
       uiMessages,
       sessionMemory,
+      fileSnapshots: [...fileSnapshots.values()].sort((left, right) =>
+        left.createdAt.localeCompare(right.createdAt)
+      ),
       subagentTaskIndex: buildSubagentTaskIndex(subagentEvents),
       subagentEvents: subagentEvents.map((item) => item.event)
     };
@@ -517,6 +532,37 @@ export class SessionHistoryStore {
       sequence: this.nextSequence(),
       timestamp,
       sessionMemory: cloneSessionMemory(sessionMemory)
+    });
+
+    await this.appendEntries(sessionId, entries);
+    if (wroteMetaEntry) {
+      this.materializedSessions.add(sessionId);
+    }
+  }
+
+  async recordFileSnapshot(snapshot: PersistedFileHistorySnapshot): Promise<void> {
+    const sessionId = this.currentSessionId;
+    const timestamp = new Date().toISOString();
+    const entries: SessionHistoryEntry[] = [];
+    let wroteMetaEntry = false;
+
+    if (!this.materializedSessions.has(sessionId)) {
+      entries.push({
+        type: "session-meta",
+        schemaVersion: SESSION_HISTORY_SCHEMA_VERSION,
+        sessionId,
+        workspaceRoot: this.options.workspaceRoot,
+        createdAt: timestamp
+      });
+      wroteMetaEntry = true;
+    }
+
+    entries.push({
+      type: "file-snapshot",
+      sessionId,
+      sequence: this.nextSequence(),
+      timestamp,
+      snapshot: cloneJson(snapshot)
     });
 
     await this.appendEntries(sessionId, entries);

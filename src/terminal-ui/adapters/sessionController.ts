@@ -5,7 +5,7 @@ import path from "node:path";
 import process from "node:process";
 import { runAgentTurn } from "../../agent.js";
 import { createBackgroundDiagnosticsMessage } from "../../core/api/generatedMessages.js";
-import { isTurnInterruptedError, throwIfAborted } from "../../core/abort.js";
+import { isTurnInterruptedError, throwIfAborted, TurnInterruptedError } from "../../core/abort.js";
 import { formatDoctorReport, runDoctorDiagnostics } from "../../core/doctor/doctor.js";
 import {
   formatDiffDetails,
@@ -122,7 +122,9 @@ const RESTORABLE_TOOL_NAMES = new Set([
   "Edit",
   "MultiEdit",
   "Write",
-  "apply_patch"
+  "apply_patch",
+  "Bash",
+  "PowerShell"
 ]);
 const MAX_REWIND_POINTS = 100;
 const PAGED_HISTORY_INITIAL_WINDOW = 240;
@@ -172,6 +174,24 @@ function getErrorMessage(error: unknown): string {
 
 function formatPostResponseFailure(step: string, error: unknown): string {
   return `${step}: ${getErrorMessage(error)}`;
+}
+
+function formatTurnInterruptedMessage(error: unknown, checkpoint: TurnCheckpoint): string {
+  const lines = [
+    checkpoint.userCancelled || isUserCancelInterrupt(error)
+      ? "Request interrupted by user."
+      : getErrorMessage(error),
+    checkpoint.hasNonRestorableToolActivity
+      ? "Some non-rewindable tool side effects may remain on disk."
+      : null
+  ];
+
+  return lines.filter((line): line is string => line !== null).join("\n");
+}
+
+function isUserCancelInterrupt(error: unknown): boolean {
+  return error instanceof TurnInterruptedError &&
+    (error.reason === "user-cancel" || error.reason === "user-exit");
 }
 
 function formatContextCompactionMessage(options: {
@@ -709,11 +729,12 @@ export function createSessionController(
     checkpoint: TurnCheckpoint,
     postResponseFailures?: string[]
   ): Promise<TurnDiffReport | null> => {
-    if (!runtime.hasTrackedFileChanges(checkpoint.turnId)) {
-      return null;
-    }
-
     try {
+      await runtime.finalizeTurnFileChanges(checkpoint.turnId);
+      if (!runtime.hasTrackedFileChanges(checkpoint.turnId)) {
+        return null;
+      }
+
       return await runtime.getTurnDiff(checkpoint.turnId);
     } catch (error) {
       const message = formatPostResponseFailure("File diff snapshot failed", error);
@@ -849,21 +870,34 @@ export function createSessionController(
     const fileTotals = options.fileRestoreResults.reduce(
       (totals, entry) => ({
         restored: totals.restored + entry.result.restored.length,
-        removed: totals.removed + entry.result.removed.length
+        removed: totals.removed + entry.result.removed.length,
+        conflicts: totals.conflicts + entry.result.conflicts.length
       }),
-      { restored: 0, removed: 0 }
+      { restored: 0, removed: 0, conflicts: 0 }
+    );
+    const conflictLines = options.fileRestoreResults.flatMap((entry) =>
+      formatRestoreConflictLines(entry.result.conflicts, undefined, 5)
+        .map((line) => `${line} (turn ${entry.turnId})`)
     );
 
-    return [
+    const lines = [
       options.mode === "code-and-conversation"
-        ? "Reverted tracked files and rewound the conversation."
+        ? fileTotals.conflicts > 0
+          ? "Reverted safe tracked files and rewound the conversation. Conflicting files were skipped."
+          : "Reverted tracked files and rewound the conversation."
         : "Rewound the conversation only. Files on disk were left unchanged.",
       `Turn: ${options.target.turnId}`,
       `Conversation turns removed: ${options.affectedTurnCount}`,
       options.mode === "code-and-conversation"
-        ? `Files restored: ${fileTotals.restored}; created files removed: ${fileTotals.removed}`
+        ? `Files restored: ${fileTotals.restored}; created files removed: ${fileTotals.removed}; conflicts skipped: ${fileTotals.conflicts}`
         : "Files restored: 0; created files removed: 0"
-    ].join("\n");
+    ];
+
+    if (conflictLines.length > 0) {
+      lines.push("", "Conflicts skipped:", ...conflictLines);
+    }
+
+    return lines.join("\n");
   };
 
   const rebuildRewindPointsFromCurrentConversation = (uiMessages: TerminalUiMessage[]) => {
@@ -1031,7 +1065,7 @@ export function createSessionController(
         pendingApprovalResolver = null;
         cleanup();
         setDialogClosed();
-        reject(new Error("Request interrupted by user"));
+        reject(new TurnInterruptedError("user-cancel", "Request interrupted by user"));
       };
 
       if (options.signal?.aborted) {
@@ -1274,7 +1308,11 @@ export function createSessionController(
         setDialogClosed();
 
         if (!response) {
-          reject(new Error("User declined to answer questions"));
+          if (activeTurn && !activeTurn.controller.signal.aborted) {
+            activeTurn.userCancelled = true;
+            activeTurn.controller.abort("user-cancel");
+          }
+          reject(new TurnInterruptedError("user-cancel", "Request interrupted by user"));
           return;
         }
 
@@ -1290,7 +1328,7 @@ export function createSessionController(
         pendingQuestionResolver = null;
         cleanup();
         setDialogClosed();
-        reject(new Error("Request interrupted by user"));
+        reject(new TurnInterruptedError("user-cancel", "Request interrupted by user"));
       };
 
       if (options.signal?.aborted) {
@@ -1639,6 +1677,7 @@ export function createSessionController(
 
     if (parsedCommand.type === "doctor") {
       store.updateState((state) => setStatusText(state, "Running doctor..."));
+      const snapshotDiagnostics = await runtime.getSnapshotDiagnostics();
       const report = await runDoctorDiagnostics({
         workspaceRoot: runtime.workspaceRoot,
         paths: runtime.config.paths,
@@ -1648,7 +1687,8 @@ export function createSessionController(
         currentModel: runtime.getCurrentModel(),
         hasConnectionConfig: runtime.hasConnectionConfig(),
         allowedRoots: runtime.getAllowedRoots(),
-        requestPatchCount: runtime.requestPatches.length
+        requestPatchCount: runtime.requestPatches.length,
+        snapshotDiagnostics
       }, {
         env: process.env,
         stdinIsTTY: process.stdin.isTTY === true,
@@ -1981,7 +2021,7 @@ export function createSessionController(
               ? "Connection: ready"
               : "Connection: provider/model unavailable, open /settings or /setup"
           ].join("\n"),
-          "Session"
+          "Startup"
         )
       );
       if (options.startupContextSummary) {
@@ -2038,7 +2078,7 @@ export function createSessionController(
         userCancelled: false
       };
 
-      runtime.beginTurn(turnId);
+      await runtime.beginTurn(turnId);
       activeTurn = checkpoint;
       resetTurnEphemeralMessages();
 
@@ -2313,64 +2353,36 @@ export function createSessionController(
         if (isTurnInterruptedError(error, controller.signal)) {
           activeTurn = null;
 
-          if (checkpoint.userCancelled) {
-            const interruptedUiMessages = store.getState().messages.slice(checkpoint.uiMessageCount);
-            try {
-              if (conversationWasCompacted) {
-                await runtime.recordSessionConversationSnapshot({
-                  apiMessages: runtime.messages.slice(1),
-                  uiMessages: interruptedUiMessages,
-                  uiBaseMessageCount: checkpoint.uiMessageCount
-                });
-              } else {
-                await runtime.recordSessionTurn({
-                  apiMessages: getApiMessagesSinceCheckpoint(checkpoint, runtime),
-                  uiMessages: interruptedUiMessages
-                });
-              }
-              turnRecorded = true;
-            } catch (historyError) {
-              const historyMessage = getErrorMessage(historyError);
-              appendUiMessage(createErrorMessage(`Interrupted turn was not saved: ${historyMessage}`));
+          const interruptedUiMessages = store.getState().messages.slice(checkpoint.uiMessageCount);
+          try {
+            if (conversationWasCompacted) {
+              await runtime.recordSessionConversationSnapshot({
+                apiMessages: runtime.messages.slice(1),
+                uiMessages: interruptedUiMessages,
+                uiBaseMessageCount: checkpoint.uiMessageCount
+              });
+            } else {
+              await runtime.recordSessionTurn({
+                apiMessages: getApiMessagesSinceCheckpoint(checkpoint, runtime),
+                uiMessages: interruptedUiMessages
+              });
             }
-
-            const turnDiffReport = await finalizeTurnFileChangesForRewind(checkpoint);
-            appendPostEditSummaryOnce(turnDiffReport);
-            rememberRewindPoint(checkpoint);
-            appendUiMessage(
-              createSystemMessage(
-                [
-                  "Request interrupted by user.",
-                  checkpoint.hasNonRestorableToolActivity
-                    ? "Some non-rewindable tool side effects may remain on disk."
-                    : null
-                ]
-                  .filter((line): line is string => line !== null)
-                  .join("\n"),
-                "Session"
-              )
-            );
-            store.updateState((state) => setStatusText(state, "Interrupted"));
-          } else {
-            // 兜底处理中断但未进入“用户主动取消”路径的情况，避免半截 turn 残留在真实会话上下文里。
-            await rollbackRuntimeConversationToCheckpoint(checkpoint);
-            runtime.discardTurn(turnId);
-            appendUiMessage(
-              createSystemMessage(
-                [
-                  "Request was interrupted before the assistant finished.",
-                  "Partial model/tool activity was discarded from the conversation state.",
-                  checkpoint.hasNonRestorableToolActivity
-                    ? "Some non-rewindable tool side effects may remain on disk."
-                    : null
-                ]
-                  .filter((line): line is string => line !== null)
-                  .join("\n"),
-                "Session"
-              )
-            );
-            store.updateState((state) => setStatusText(state, "Interrupted"));
+            turnRecorded = true;
+          } catch (historyError) {
+            const historyMessage = getErrorMessage(historyError);
+            appendUiMessage(createErrorMessage(`Interrupted turn was not saved: ${historyMessage}`));
           }
+
+          const turnDiffReport = await finalizeTurnFileChangesForRewind(checkpoint);
+          appendPostEditSummaryOnce(turnDiffReport);
+          rememberRewindPoint(checkpoint);
+          appendUiMessage(
+            createSystemMessage(
+              formatTurnInterruptedMessage(error, checkpoint),
+              "Session"
+            )
+          );
+          store.updateState((state) => setStatusText(state, "Interrupted"));
         } else {
           activeTurn = null;
           await rollbackRuntimeConversationToCheckpoint(checkpoint);
@@ -2587,10 +2599,66 @@ function formatFilesOnlyRevertResult(
     "Conversation: unchanged.",
     `Restored existing files: ${result.restored.length}`,
     `Removed files created by the turn: ${result.removed.length}`,
+    `Conflicts skipped: ${result.conflicts.length}`,
+    ...(result.conflicts.length > 0
+      ? [
+          "",
+          "Conflicts skipped:",
+          ...formatRestoreConflictLines(result.conflicts, report)
+        ]
+      : []),
     "",
     "Files:",
     ...formatRevertFileLines(report.files)
   ].join("\n");
+}
+
+function formatRestoreConflictLines(
+  conflicts: FileHistoryRestoreResult["conflicts"],
+  report?: TurnDiffReport,
+  limit = 20
+): string[] {
+  const visibleConflicts = conflicts.slice(0, limit);
+  const lines = visibleConflicts.map((conflict) =>
+    `- ${formatRestoreConflictPath(conflict.absolutePath, report)}: ${formatRestoreConflictReason(conflict.reason)}`
+  );
+  const hiddenCount = conflicts.length - visibleConflicts.length;
+  if (hiddenCount > 0) {
+    lines.push(`- ... ${hiddenCount} more conflict(s)`);
+  }
+
+  return lines;
+}
+
+function formatRestoreConflictPath(absolutePath: string, report?: TurnDiffReport) {
+  const normalized = normalizeRestorePath(absolutePath);
+  const file = report?.files.find((entry) =>
+    entry.absolutePath && normalizeRestorePath(entry.absolutePath) === normalized
+  );
+  if (file) {
+    return file.path;
+  }
+
+  const relative = path.relative(process.cwd(), absolutePath);
+  return relative && !relative.startsWith("..") && !path.isAbsolute(relative)
+    ? relative.replace(/\\/g, "/")
+    : absolutePath;
+}
+
+function formatRestoreConflictReason(reason: FileHistoryRestoreResult["conflicts"][number]["reason"]) {
+  switch (reason) {
+    case "current-file-missing":
+      return "current file is missing";
+    case "current-file-recreated":
+      return "path was recreated after the turn";
+    case "current-content-changed":
+      return "current content changed after the turn";
+  }
+}
+
+function normalizeRestorePath(absolutePath: string) {
+  const resolved = path.resolve(absolutePath);
+  return process.platform === "win32" ? resolved.toLowerCase() : resolved;
 }
 
 function extractMessageText(value: unknown): string {

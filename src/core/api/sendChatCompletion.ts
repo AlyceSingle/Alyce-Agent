@@ -10,11 +10,12 @@ import {
   isChatCompletionAdapter,
   type ChatCompletionTransport
 } from "./modelAdapters.js";
+import { TurnInterruptedError } from "../abort.js";
 import type { ResolvedModelProfile } from "../providers/types.js";
 import type { ModelUsageEvent } from "../usage/types.js";
 
 const RECONNECT_DELAY_MS = 10_000;
-const MAX_RECONNECT_RETRIES = 5;
+const MAX_RECONNECT_RETRIES = 7;
 const EMPTY_MODEL_RESPONSE_ERROR_CODE = "EMPTY_MODEL_RESPONSE";
 const NO_TEXT_OUTPUT_ERROR_CODE = "NO_TEXT_OUTPUT";
 
@@ -100,7 +101,7 @@ export async function sendChatCompletion(
       }
 
       if (retriesUsed >= MAX_RECONNECT_RETRIES) {
-        throw error;
+        throw createReconnectExhaustedError(error, retriesUsed);
       }
 
       retriesUsed += 1;
@@ -236,6 +237,13 @@ function shouldRetryChatCompletionError(error: unknown): boolean {
 
   return /(timed?\s*out|timeout|network|fetch failed|socket hang up|connection (?:error|reset|closed|lost))/i.test(
     error.message
+  );
+}
+
+function createReconnectExhaustedError(error: unknown, retriesUsed: number): TurnInterruptedError {
+  return new TurnInterruptedError(
+    "reconnect-exhausted",
+    `Model request interrupted after ${retriesUsed} reconnect attempts failed. Last error: ${getErrorMessage(error)}`
   );
 }
 

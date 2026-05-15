@@ -11,6 +11,7 @@ async function runTests() {
   await testGeneratedContextMessagesAreNotPersisted();
   await testGeneratedContextMessagesAreIgnoredWhenLoading();
   await testSessionMemoryEntryPersistsInSessionHistory();
+  await testFileSnapshotEntryPersistsInSessionHistory();
   await testConversationSnapshotPreservesSessionMemory();
   await testRewindRestoresSessionMemoryFromEntry();
   await testRestoredInputRewindRestoresCheckpointSessionMemory();
@@ -84,6 +85,37 @@ async function testSessionMemoryEntryPersistsInSessionHistory() {
     markdown: "## Session\nremember this session only",
     updatedAt: "2026-05-07T00:00:00.000Z"
   });
+}
+
+async function testFileSnapshotEntryPersistsInSessionHistory() {
+  const directory = await fs.mkdtemp(path.join(os.tmpdir(), "alyce-session-history-file-snapshot-"));
+  const store = new SessionHistoryStore({
+    sessionsDirectory: directory,
+    workspaceRoot: process.cwd(),
+    sessionId: SESSION_ID
+  });
+
+  await store.recordFileSnapshot({
+    version: 1,
+    sessionId: SESSION_ID,
+    turnId: "turn-1",
+    createdAt: "2026-05-07T00:00:00.000Z",
+    finalizedAt: "2026-05-07T00:00:01.000Z",
+    files: [
+      {
+        absolutePath: path.join(process.cwd(), "ignored.log"),
+        existed: false,
+        afterExisted: true,
+        afterBackupPath: `${SESSION_ID}/turn-1/files/ignored-after.bin`
+      }
+    ]
+  });
+
+  const loaded = await store.loadSession(SESSION_ID);
+  assert.equal(loaded.fileSnapshots.length, 1);
+  assert.equal(loaded.fileSnapshots[0]?.turnId, "turn-1");
+  assert.equal(loaded.fileSnapshots[0]?.files[0]?.existed, false);
+  assert.equal(loaded.fileSnapshots[0]?.files[0]?.afterExisted, true);
 }
 
 async function testConversationSnapshotPreservesSessionMemory() {

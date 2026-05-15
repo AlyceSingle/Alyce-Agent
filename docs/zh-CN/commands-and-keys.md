@@ -15,7 +15,7 @@
 | 命令 | 说明 |
 |---|---|
 | `/help` | 列出所有可用命令。 |
-| `/doctor` | 运行本地健康检查，包括 Node、TTY、工作区、连接配置、审批风险、MCP、技能、`rg`、`git`、`.alyce` 存储和请求 patch。 |
+| `/doctor` | 运行本地健康检查，包括 Node、TTY、工作区、连接配置、审批风险、MCP、技能、`rg`、`git`、`.alyce` 存储、snapshot 存储和请求 patch。 |
 | `/settings` | 打开设置面板。 |
 | `/setup` | 启动首次配置引导。 |
 | `/clear` | 清空当前对话上下文。 |

@@ -12,11 +12,14 @@ import { createRenderPolicy } from "../utils/renderPolicy.js";
 type TestMessageEntry = {
   sections: Array<{
     lines: Array<{ content: string }>;
+    style: TerminalUiMessageBlockStyle;
   }>;
   markdownPlan?: {
     rowCount: number;
   };
   metadataLine?: string;
+  isExpandable: boolean;
+  rowCount: number;
 };
 
 const testing = __MESSAGE_LIST_TESTING__ as unknown as {
@@ -98,6 +101,11 @@ function runTests() {
   testToolOutputLinesUseBodyColor();
   testSystemLinesUseSystemColor();
   testSystemPaletteUsesSystemHeaderAndRailColor();
+  testPostEditDiffSystemMessageDefaultsToCollapsed(renderPolicy);
+  testSelectedSystemMessagesDefaultToCollapsed(renderPolicy);
+  testStartupSystemMessageStaysExpanded(renderPolicy);
+  testCollapsibleSystemPreviewStaysOnOneRenderedLine(renderPolicy);
+  testCollapsibleSystemPreviewPreservesSourceBlockStyle(renderPolicy);
   testWriteToolMessagesDefaultToCollapsedAndCanExpand(renderPolicy);
   testMarkdownFriendlyToolUsesMarkdownWhenExpanded(renderPolicy);
   testMarkdownFriendlyToolStillUsesMarkdownWhenMessageContentOverBudget();
@@ -334,6 +342,222 @@ function testSystemPaletteUsesSystemHeaderAndRailColor() {
   assert.equal(systemPalette.headerColor, terminalUiTheme.colors.system);
   assert.equal(systemPalette.railColor, terminalUiTheme.colors.system);
   assert.equal(systemPalette.bodyColor, terminalUiTheme.colors.chrome);
+}
+
+function testPostEditDiffSystemMessageDefaultsToCollapsed(
+  renderPolicy: ReturnType<typeof createRenderPolicy>
+) {
+  const content = [
+    "File changes captured for this turn.",
+    "Turn 8c02bee7-c64e-4568-96f2-97f300da940d: 1 file(s) changed, 2 addition(s), 2 deletion(s), 0 added, 1 modified, 0 deleted",
+    "",
+    "Files:",
+    "- User_Info/Archive/Daily_Progress_0511_0515.md: modified, +2 -2",
+    "",
+    "Run /diff last for the full patch."
+  ].join("\n");
+  const message = createMessage({
+    id: "system-diff-summary-1",
+    kind: "system",
+    title: "Diff",
+    content,
+    blocks: [
+      {
+        content
+      }
+    ]
+  });
+
+  const collapsedEntry = testing.buildRenderedMessageEntries(
+    [message],
+    null,
+    200,
+    renderPolicy,
+    new Set<string>(),
+    "ALYCE",
+    null,
+    null
+  )[0];
+  const expandedEntry = testing.buildRenderedMessageEntries(
+    [message],
+    null,
+    200,
+    renderPolicy,
+    new Set<string>([message.id]),
+    "ALYCE",
+    null,
+    null
+  )[0];
+
+  assert.ok(collapsedEntry);
+  assert.ok(expandedEntry);
+  assert.equal(collapsedEntry.isExpandable, true);
+  assert.equal(expandedEntry.isExpandable, true);
+  assert.deepEqual(flattenSections(collapsedEntry), ["File changes captured for this turn."]);
+  assert.match(collapsedEntry.metadataLine ?? "", /Click to expand/);
+  assert.match(expandedEntry.metadataLine ?? "", /Click to collapse/);
+
+  const expandedLines = flattenSections(expandedEntry);
+  assert.ok(expandedLines.some((line) => line.includes("1 file(s) changed")));
+  assert.ok(expandedLines.includes("Files:"));
+  assert.ok(expandedLines.includes("- User_Info/Archive/Daily_Progress_0511_0515.md: modified, +2 -2"));
+  assert.ok(expandedLines.includes("Run /diff last for the full patch."));
+}
+
+function testSelectedSystemMessagesDefaultToCollapsed(
+  renderPolicy: ReturnType<typeof createRenderPolicy>
+) {
+  for (const title of ["Session", "Rewind", "Permissions", "Revert"]) {
+    const message = createMessage({
+      id: `system-${title.toLowerCase()}`,
+      kind: "system",
+      title,
+      content: `${title} summary line.\n${title} detail line.`,
+      blocks: [
+        {
+          content: `${title} summary line.\n${title} detail line.`
+        }
+      ]
+    });
+
+    const collapsedEntry = testing.buildRenderedMessageEntries(
+      [message],
+      null,
+      200,
+      renderPolicy,
+      new Set<string>(),
+      "ALYCE",
+      null,
+      null
+    )[0];
+    const expandedEntry = testing.buildRenderedMessageEntries(
+      [message],
+      null,
+      200,
+      renderPolicy,
+      new Set<string>([message.id]),
+      "ALYCE",
+      null,
+      null
+    )[0];
+
+    assert.ok(collapsedEntry, title);
+    assert.ok(expandedEntry, title);
+    assert.equal(collapsedEntry.isExpandable, true, title);
+    assert.deepEqual(flattenSections(collapsedEntry), [`${title} summary line.`], title);
+    assert.match(collapsedEntry.metadataLine ?? "", /Click to expand/, title);
+    assert.deepEqual(
+      flattenSections(expandedEntry),
+      [`${title} summary line.`, `${title} detail line.`],
+      title
+    );
+    assert.match(expandedEntry.metadataLine ?? "", /Click to collapse/, title);
+  }
+}
+
+function testStartupSystemMessageStaysExpanded(
+  renderPolicy: ReturnType<typeof createRenderPolicy>
+) {
+  const message = createMessage({
+    id: "system-startup",
+    kind: "system",
+    title: "Startup",
+    content: "Workspace: D:\\Code\\AlyceAgent\nModel: openai/gemini-3-flash-preview",
+    blocks: [
+      {
+        content: "Workspace: D:\\Code\\AlyceAgent\nModel: openai/gemini-3-flash-preview"
+      }
+    ]
+  });
+
+  const entry = testing.buildRenderedMessageEntries(
+    [message],
+    null,
+    200,
+    renderPolicy,
+    new Set<string>(),
+    "ALYCE",
+    null,
+    null
+  )[0];
+
+  assert.ok(entry);
+  assert.equal(entry.isExpandable, false);
+  assert.equal(entry.metadataLine, undefined);
+  assert.deepEqual(flattenSections(entry), [
+    "Workspace: D:\\Code\\AlyceAgent",
+    "Model: openai/gemini-3-flash-preview"
+  ]);
+}
+
+function testCollapsibleSystemPreviewStaysOnOneRenderedLine(
+  renderPolicy: ReturnType<typeof createRenderPolicy>
+) {
+  const longLine = "Allowed and saved directory: D:\\Very\\Long\\External\\Workspace\\Path\\For\\Testing";
+  const message = createMessage({
+    id: "system-permissions-long",
+    kind: "system",
+    title: "Permissions",
+    content: `${longLine}\nScope: session`,
+    blocks: [
+      {
+        content: `${longLine}\nScope: session`
+      }
+    ]
+  });
+
+  const collapsedEntry = testing.buildRenderedMessageEntries(
+    [message],
+    null,
+    24,
+    renderPolicy,
+    new Set<string>(),
+    "ALYCE",
+    null,
+    null
+  )[0];
+
+  assert.ok(collapsedEntry);
+  assert.equal(collapsedEntry.isExpandable, true);
+  assert.equal(flattenSections(collapsedEntry).length, 1);
+  assert.match(flattenSections(collapsedEntry)[0] ?? "", /\.\.\.$/);
+}
+
+function testCollapsibleSystemPreviewPreservesSourceBlockStyle(
+  renderPolicy: ReturnType<typeof createRenderPolicy>
+) {
+  const message = createMessage({
+    id: "system-session-block-style",
+    kind: "system",
+    title: "Session",
+    content: "Command\n$ alyce --resume",
+    blocks: [
+      {
+        content: "\n"
+      },
+      {
+        label: "Command",
+        content: "$ alyce --resume",
+        style: "code"
+      }
+    ]
+  });
+
+  const collapsedEntry = testing.buildRenderedMessageEntries(
+    [message],
+    null,
+    80,
+    renderPolicy,
+    new Set<string>(),
+    "ALYCE",
+    null,
+    null
+  )[0];
+
+  assert.ok(collapsedEntry);
+  assert.equal(collapsedEntry.sections[0]?.style, "code");
+  assert.equal(collapsedEntry.rowCount, 3);
+  assert.deepEqual(flattenSections(collapsedEntry), ["$ alyce --resume"]);
 }
 
 function testWriteToolMessagesDefaultToCollapsedAndCanExpand(

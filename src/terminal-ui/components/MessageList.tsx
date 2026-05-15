@@ -37,7 +37,7 @@ import {
   resolveMessageRenderDecision,
   type RenderPolicy
 } from "../utils/renderPolicy.js";
-import { wrapText, wrapTextClamped } from "../utils/text.js";
+import { measureCharWidth, wrapText, wrapTextClamped } from "../utils/text.js";
 import { logForDebugging } from "../runtime/utils/debug.js";
 import { logLayoutTrace } from "../runtime/utils/layoutTrace.js";
 import { isEnvTruthy } from "../runtime/utils/envUtils.js";
@@ -61,6 +61,13 @@ const SCROLL_PERF_FLUSH_INTERVAL_MS = 1500;
 const SCROLL_PERF_SLOW_SYNC_THRESHOLD_MS = 8;
 const MIN_NON_VIRTUALIZED_MESSAGE_CAP = 20;
 const WINDOW_ANCHOR_HEADROOM_RATIO = 0.75;
+const COLLAPSIBLE_SYSTEM_TITLES = new Set([
+  "Diff",
+  "Session",
+  "Rewind",
+  "Permissions",
+  "Revert"
+]);
 
 function isHandleAtBottom(handle: ScrollBoxHandle) {
   const scrollTop = handle.getScrollTop();
@@ -419,6 +426,12 @@ function shouldDisplaySectionLabel(section: RenderedSection) {
   return Boolean(section.label) && !section.isDiff;
 }
 
+function countRenderedSectionRows(sections: RenderedSection[]) {
+  return sections.reduce((sum, section) => {
+    return sum + section.lines.length + (shouldDisplaySectionLabel(section) ? 1 : 0);
+  }, 0);
+}
+
 function isDefaultExpandedToolMessage(_message: TerminalUiMessage) {
   return false;
 }
@@ -429,6 +442,107 @@ function isMessageExpanded(message: TerminalUiMessage, expandedMessageIds: Reado
   }
 
   return expandedMessageIds.has(message.id);
+}
+
+function isCollapsibleSystemMessage(message: TerminalUiMessage) {
+  return message.kind === "system" && COLLAPSIBLE_SYSTEM_TITLES.has(message.title);
+}
+
+function findFirstNonEmptyLineBlock(blocks: TerminalUiMessageBlock[]): TerminalUiMessageBlock | null {
+  for (const block of blocks) {
+    const firstLine = block.content
+      .split(/\r?\n/)
+      .find((line) => line.trim().length > 0);
+
+    if (firstLine) {
+      return {
+        content: firstLine,
+        tone: block.tone,
+        style: block.style
+      };
+    }
+  }
+
+  return null;
+}
+
+function buildCollapsibleSystemPreviewBlock(message: TerminalUiMessage): TerminalUiMessageBlock {
+  const blockPreview = findFirstNonEmptyLineBlock(message.blocks);
+  if (blockPreview) {
+    return blockPreview;
+  }
+
+  const contentPreview = message.content
+    .split(/\r?\n/)
+    .find((line) => line.trim().length > 0);
+  return {
+    content: contentPreview ?? "(empty)"
+  };
+}
+
+function clampBlockToSingleRenderedLine(
+  block: TerminalUiMessageBlock,
+  width: number
+): { block: TerminalUiMessageBlock; truncated: boolean } {
+  const safeWidth = Math.max(8, width);
+  let contentWidth = 0;
+  for (const character of block.content) {
+    contentWidth += measureCharWidth(character);
+  }
+
+  if (contentWidth <= safeWidth) {
+    return { block, truncated: false };
+  }
+
+  const suffix = "...";
+  const contentBudget = Math.max(0, safeWidth - suffix.length);
+  let visibleContent = "";
+  let visibleWidth = 0;
+  for (const character of block.content) {
+    const characterWidth = measureCharWidth(character);
+    if (visibleWidth + characterWidth > contentBudget) {
+      break;
+    }
+
+    visibleContent += character;
+    visibleWidth += characterWidth;
+  }
+
+  return {
+    block: {
+      ...block,
+      content: visibleContent.length > 0 ? `${visibleContent}${suffix}` : suffix
+    },
+    truncated: true
+  };
+}
+
+function renderCollapsibleSystemMessageState(
+  message: TerminalUiMessage,
+  width: number,
+  expanded: boolean
+): ExpandableRenderState {
+  const baseMetadata = message.metadata;
+  const collapsedPreview = clampBlockToSingleRenderedLine(
+    buildCollapsibleSystemPreviewBlock(message),
+    width
+  );
+  const collapsedSections = renderSections([collapsedPreview.block], width);
+  const expandedSections = renderSections(message.blocks, width);
+  const expandable =
+    collapsedPreview.truncated ||
+    countRenderedSectionRows(expandedSections) > countRenderedSectionRows(collapsedSections);
+  const toggleHint = expandable
+    ? expanded
+      ? "Click to collapse"
+      : "Click to expand"
+    : undefined;
+
+  return {
+    sections: expanded ? expandedSections : collapsedSections,
+    metadataLine: buildExpandableMetadataLine(baseMetadata, toggleHint),
+    expandable
+  };
 }
 
 function renderToolMessageState(
@@ -753,7 +867,9 @@ function buildRenderedMessageEntries(
         ? renderToolMessageState(message, contentWidth, isExpanded)
         : isContextPreviewMessage(message)
           ? renderContextPreviewMessageState(message, contentWidth, isExpanded)
-          : null;
+          : isCollapsibleSystemMessage(message)
+            ? renderCollapsibleSystemMessageState(message, contentWidth, isExpanded)
+            : null;
     const resolveRenderDecision = (markdownSource: string) => resolveMessageRenderDecision({
       policy: renderPolicy,
       message,
@@ -805,9 +921,7 @@ function buildRenderedMessageEntries(
     const unseenDividerRows = message.id === unseenDividerMessageId ? 1 : 0;
     const sectionRowCount = markdownPlan
         ? markdownPlan.rowCount
-        : sections.reduce((sum, section) => {
-          return sum + section.lines.length + (shouldDisplaySectionLabel(section) ? 1 : 0);
-        }, 0);
+        : countRenderedSectionRows(sections);
 
     return {
       message,
@@ -1599,7 +1713,11 @@ const MessageListImpl = forwardRef<MessageListHandle, {
 
       const validIds = new Set(
         sourceMessages
-          .filter((message) => message.kind === "tool" || isContextPreviewMessage(message))
+          .filter((message) =>
+            message.kind === "tool" ||
+            isContextPreviewMessage(message) ||
+            isCollapsibleSystemMessage(message)
+          )
           .map((message) => message.id)
       );
       const next = new Set<string>();

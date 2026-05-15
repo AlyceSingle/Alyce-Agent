@@ -10,6 +10,7 @@ import {
   buildSessionSettingsState,
   loadRuntimeConfig,
   normalizeAdditionalDirectories,
+  normalizeSnapshotSettings,
   resolveDirectoryInput,
   saveConnectionConfig,
   saveUserSessionSettings,
@@ -47,6 +48,16 @@ import {
   type SessionMemoryTriggerState
 } from "../core/memory/sessionMemoryTrigger.js";
 import { FileHistoryManager, type FileHistoryRestoreResult } from "../core/file-history/fileHistoryManager.js";
+import {
+  FileBackupStore,
+  type PersistedFileHistorySnapshot
+} from "../core/file-history/fileBackupStore.js";
+import { cleanupSnapshotStorage } from "../core/snapshot/snapshotCleanup.js";
+import {
+  createTurnSnapshotService,
+  type SnapshotDiagnostics
+} from "../core/snapshot/turnSnapshotService.js";
+import type { SnapshotRestoreResult } from "../core/snapshot/snapshotTypes.js";
 import {
   DiffService,
   type DiffReport,
@@ -292,7 +303,7 @@ export interface SessionRuntime {
   }) => void;
   createVolatileConversationSnapshot: () => VolatileConversationSnapshot;
   restoreVolatileConversationSnapshot: (snapshot: VolatileConversationSnapshot) => Promise<void>;
-  beginTurn: (turnId: string) => void;
+  beginTurn: (turnId: string) => Promise<void>;
   finalizeTurnFileChanges: (turnId: string) => Promise<void>;
   hasTrackedFileChanges: (turnId: string) => boolean;
   canRestoreFilesForTurn: (turnId: string) => boolean;
@@ -301,6 +312,7 @@ export interface SessionRuntime {
   getTurnDiff: (turnId: string) => Promise<TurnDiffReport>;
   getLastAlyceTurnDiff: () => Promise<TurnDiffReport | undefined>;
   getWorkingTreeDiff: () => Promise<WorkingTreeDiffReport>;
+  getSnapshotDiagnostics: () => Promise<SnapshotDiagnostics>;
   formatDiffSummary: (report: DiffReport) => string;
   createToolContext: (options: {
     turnId: string;
@@ -395,9 +407,15 @@ export async function createSessionRuntime(
   let connectionSaveTarget = connectionState.saveTarget;
   const promptResolver = new PromptSectionResolver();
   const fileHistoryManager = new FileHistoryManager();
+  const turnSnapshotService = createTurnSnapshotService({
+    workspaceRoot: config.paths.workspaceRoot,
+    alyceDirectory: config.paths.alyceDirectory,
+    config: settings.snapshot
+  });
   const diffService = new DiffService({
     workspaceRoot: config.paths.workspaceRoot,
-    fileHistoryManager
+    fileHistoryManager,
+    turnSnapshotService
   });
   const conversationCompactor = new ConversationCompactor(
     createConversationCompactionConfig(settings)
@@ -419,6 +437,15 @@ export async function createSessionRuntime(
   const getSessionMemorySourcePath = () =>
     "session history: " +
     path.relative(config.paths.workspaceRoot, sessionHistory.getCurrentSessionFilePath());
+  let latestSnapshotCleanupError: string | undefined;
+  await cleanupSnapshotStorage({
+    alyceDirectory: config.paths.alyceDirectory,
+    retentionDays: settings.snapshot.retentionDays,
+    apply: true,
+    excludePaths: [turnSnapshotService.getGitDirectory()]
+  }).catch((error: unknown) => {
+    latestSnapshotCleanupError = error instanceof Error ? error.message : String(error);
+  });
   const memoryService = new MemoryService({
     workspaceRoot: config.paths.workspaceRoot,
     ...config.memory
@@ -574,6 +601,7 @@ export async function createSessionRuntime(
     conversationCompactor.clear();
     promptResolver.clearSessionCache();
     fileHistoryManager.clearAll();
+    turnSnapshotService.clearAll();
     fileReadState.clear();
     sessionAdditionalDirectories = [];
     sessionMemoryTrigger.clear();
@@ -693,6 +721,73 @@ export async function createSessionRuntime(
     }
   };
 
+  const getFileBackupStore = (sessionId = sessionHistory.getCurrentSessionId()) =>
+    new FileBackupStore({
+      rootDirectory: path.join(config.paths.alyceDirectory, "file-history"),
+      sessionId
+    });
+
+  async function persistFileHistorySnapshot(
+    turnId: string,
+    options: { recordSessionHistory?: boolean } = {}
+  ): Promise<PersistedFileHistorySnapshot | undefined> {
+    if (!isFileBackupSnapshotEnabled(settings)) {
+      return undefined;
+    }
+
+    const snapshot = fileHistoryManager.getSnapshot(turnId);
+    if (!snapshot || snapshot.trackedFiles.size === 0) {
+      return undefined;
+    }
+
+    const persisted = await getFileBackupStore().writeSnapshot(snapshot);
+    if (options.recordSessionHistory) {
+      await sessionHistory.recordFileSnapshot(persisted);
+    }
+
+    return persisted;
+  }
+
+  async function captureFileBeforeWrite(turnId: string, absolutePath: string) {
+    if (!isFileBackupSnapshotEnabled(settings)) {
+      return;
+    }
+
+    await fileHistoryManager.captureBeforeWrite(turnId, absolutePath);
+    await persistFileHistorySnapshot(turnId);
+  }
+
+  async function hydrateFileHistoryForSession(
+    sessionId: SessionId,
+    snapshots: readonly PersistedFileHistorySnapshot[]
+  ) {
+    const hydrated = await getFileBackupStore(sessionId).loadSessionSnapshots(snapshots);
+    fileHistoryManager.hydrateSnapshots(hydrated);
+  }
+
+  async function restoreFilesForTurn(turnId: string): Promise<FileHistoryRestoreResult> {
+    const results: SnapshotRestoreResult[] = [];
+    let snapshotCoveredPaths: string[] = [];
+    if (turnSnapshotService.hasTurn(turnId)) {
+      const result = await turnSnapshotService.restoreTurn(turnId);
+      results.push(result);
+      if (!result.missingSnapshot) {
+        snapshotCoveredPaths = turnSnapshotService
+          .getFileSnapshotsForTurn(turnId)
+          .filter((file) => file.changeKind !== "unchanged")
+          .map((file) => file.absolutePath);
+      }
+    }
+    if (fileHistoryManager.getSnapshot(turnId)) {
+      results.push(await fileHistoryManager.restoreTurn(turnId, {
+        excludePaths: snapshotCoveredPaths
+      }));
+      await persistFileHistorySnapshot(turnId, { recordSessionHistory: true });
+    }
+
+    return mergeFileRestoreResults(results);
+  }
+
   return {
     config,
     memoryService,
@@ -705,7 +800,7 @@ export async function createSessionRuntime(
     hasConnectionConfig: () => hasUsableModelAdapter(),
     getConnectionConfig: () => ({ ...connection }),
     getConnectionConfigState: () => cloneConnectionConfigState(connectionState),
-    getSettings: () => ({ ...settings }),
+    getSettings: () => cloneJson(settings),
     getSettingsState: () => cloneSessionSettingsState(settingsState),
     getPlanModeState: () => ({ ...planModeState }),
     setPlanModeEnabled: async (enabled) => {
@@ -754,6 +849,7 @@ export async function createSessionRuntime(
       conversationCompactor.updateConfig(createConversationCompactionConfig(settings));
       sessionMemoryTrigger.updateConfig(createSessionMemoryTriggerConfig(config, settings));
       sessionMemoryExtractor.updateConfig(createSessionMemoryExtractorConfig(config, settings));
+      turnSnapshotService.updateConfig(settings.snapshot);
       for (const session of subagentSessions.values()) {
         session.contextBudgetService.setModelContextWindowOverrides(settings.modelContextWindowOverrides);
         session.conversationCompactor.updateConfig(createConversationCompactionConfig(settings));
@@ -817,6 +913,7 @@ export async function createSessionRuntime(
       const resume = prepareSessionResume(loaded);
       sessionHistory.adoptExistingSession(resume.sessionId, loaded.lastSequence);
       await resetVolatileConversationState();
+      await hydrateFileHistoryForSession(resume.sessionId, resume.fileSnapshots);
       applySubagentTaskIndex(resume.sessionId, resume.subagentTaskIndex);
       memoryService.setSessionMemory(resume.sessionMemory);
       memoryService.setSessionMemorySourcePath(getSessionMemorySourcePath());
@@ -1002,21 +1099,39 @@ export async function createSessionRuntime(
     },
     createVolatileConversationSnapshot,
     restoreVolatileConversationSnapshot,
-    beginTurn: (turnId) => {
-      fileHistoryManager.beginTurn(turnId);
+    beginTurn: async (turnId) => {
+      if (isFileBackupSnapshotEnabled(settings)) {
+        fileHistoryManager.beginTurn(turnId);
+      }
+      await turnSnapshotService.beginTurn(turnId);
     },
     finalizeTurnFileChanges: async (turnId) => {
-      await fileHistoryManager.finalizeTurn(turnId);
+      await Promise.all([
+        isFileBackupSnapshotEnabled(settings)
+          ? fileHistoryManager.finalizeTurn(turnId)
+          : Promise.resolve([]),
+        turnSnapshotService.finalizeTurn(turnId)
+      ]);
+      await persistFileHistorySnapshot(turnId, { recordSessionHistory: true });
     },
-    hasTrackedFileChanges: (turnId) => fileHistoryManager.hasTrackedFiles(turnId),
-    canRestoreFilesForTurn: (turnId) => fileHistoryManager.canRestoreTurn(turnId),
-    restoreFilesForTurn: (turnId) => fileHistoryManager.restoreTurn(turnId),
+    hasTrackedFileChanges: (turnId) =>
+      (isFileBackupSnapshotEnabled(settings) && fileHistoryManager.hasTrackedFiles(turnId)) ||
+      turnSnapshotService.hasRestorableChanges(turnId),
+    canRestoreFilesForTurn: (turnId) =>
+      (isFileBackupSnapshotEnabled(settings) && fileHistoryManager.canRestoreTurn(turnId)) ||
+      turnSnapshotService.canRestoreTurn(turnId),
+    restoreFilesForTurn: (turnId) => restoreFilesForTurn(turnId),
     discardTurn: (turnId) => {
       fileHistoryManager.removeTurn(turnId);
+      turnSnapshotService.removeTurn(turnId);
     },
     getTurnDiff: (turnId) => diffService.getTurnDiff(turnId),
     getLastAlyceTurnDiff: () => diffService.getLastAlyceTurnDiff(),
     getWorkingTreeDiff: () => diffService.getWorkingTreeDiff(),
+    getSnapshotDiagnostics: () =>
+      turnSnapshotService.getDiagnostics({
+        cleanupError: latestSnapshotCleanupError
+      }),
     formatDiffSummary: (report) => diffService.formatDiffSummary(report),
     createToolContext: ({
       turnId,
@@ -1046,7 +1161,7 @@ export async function createSessionRuntime(
       setTodos,
       recordToolActivity,
       mcpRuntime,
-      captureFileBeforeWrite: (absolutePath) => fileHistoryManager.captureBeforeWrite(turnId, absolutePath),
+      captureFileBeforeWrite: (absolutePath) => captureFileBeforeWrite(turnId, absolutePath),
       recordFileRead: (absolutePath, state) => {
         fileReadState.set(path.resolve(absolutePath), { ...state });
       },
@@ -1711,7 +1826,7 @@ export async function createSessionRuntime(
       captureFileBeforeWrite: (absolutePath) =>
         session.activeWorktreePath && isPathInsideDirectory(session.activeWorktreePath, absolutePath)
           ? Promise.resolve()
-          : fileHistoryManager.captureBeforeWrite(parentContextOptions.turnId, absolutePath),
+          : captureFileBeforeWrite(parentContextOptions.turnId, absolutePath),
       recordFileRead: (absolutePath, state) => {
         fileReadState.set(path.resolve(absolutePath), { ...state });
       },
@@ -2319,6 +2434,74 @@ function runProcess(
   });
 }
 
+function mergeFileRestoreResults(results: readonly SnapshotRestoreResult[]): FileHistoryRestoreResult {
+  const available = results.filter((result) => !result.missingSnapshot);
+  if (available.length === 0) {
+    return {
+      restored: [],
+      removed: [],
+      conflicts: [],
+      alreadyRestored: false,
+      missingSnapshot: true
+    };
+  }
+
+  const restored = uniquePaths(available.flatMap((result) => result.restored));
+  const removed = uniquePaths(available.flatMap((result) => result.removed));
+  const conflicts = uniqueRestoreConflicts(available.flatMap((result) => result.conflicts));
+  const restoredAt = [...available]
+    .reverse()
+    .find((result) => result.restoredAt)?.restoredAt;
+  return {
+    restored,
+    removed,
+    conflicts,
+    alreadyRestored: available.every((result) => result.alreadyRestored),
+    missingSnapshot: false,
+    ...(restoredAt ? { restoredAt } : {})
+  };
+}
+
+function uniqueRestoreConflicts(
+  values: readonly FileHistoryRestoreResult["conflicts"][number][]
+) {
+  const seen = new Set<string>();
+  const unique: FileHistoryRestoreResult["conflicts"] = [];
+  for (const value of values) {
+    const key = [
+      process.platform === "win32"
+        ? path.resolve(value.absolutePath).toLowerCase()
+        : path.resolve(value.absolutePath),
+      value.changeKind,
+      value.reason
+    ].join("\0");
+    if (seen.has(key)) {
+      continue;
+    }
+
+    seen.add(key);
+    unique.push(value);
+  }
+
+  return unique;
+}
+
+function uniquePaths(values: readonly string[]) {
+  const seen = new Set<string>();
+  const unique: string[] = [];
+  for (const value of values) {
+    const key = process.platform === "win32" ? path.resolve(value).toLowerCase() : path.resolve(value);
+    if (seen.has(key)) {
+      continue;
+    }
+
+    seen.add(key);
+    unique.push(value);
+  }
+
+  return unique;
+}
+
 function mergePersistedSource<T extends object>(base: Partial<T>, patch: Partial<T>): Partial<T> {
   const next = { ...base } as Partial<T>;
 
@@ -2353,11 +2536,11 @@ function cloneConnectionConfigState(state: ConnectionConfigState): ConnectionCon
 
 function cloneSessionSettingsState(state: SessionSettingsState): SessionSettingsState {
   return {
-    effective: { ...state.effective },
-    project: { ...state.project },
-    user: { ...state.user },
-    env: { ...state.env },
-    cli: { ...state.cli },
+    effective: cloneJson(state.effective),
+    project: cloneJson(state.project),
+    user: cloneJson(state.user),
+    env: cloneJson(state.env),
+    cli: cloneJson(state.cli),
     sources: { ...state.sources },
     saveTargetPath: state.saveTargetPath,
     projectPath: state.projectPath
@@ -2497,6 +2680,10 @@ function normalizeSettingsPatch(
     normalized.markdownRenderMaxChars = Math.max(1, Math.trunc(patch.markdownRenderMaxChars));
   }
 
+  if ("snapshot" in patch) {
+    normalized.snapshot = normalizeSnapshotSettings(patch.snapshot);
+  }
+
   if ("conversationCompactionEnabled" in patch) {
     normalized.conversationCompactionEnabled = patch.conversationCompactionEnabled;
   }
@@ -2553,6 +2740,19 @@ function normalizeOptionalSessionTextPatch(value: string | undefined): string {
 
   const normalized = value.trim();
   return normalized.length > 0 ? normalized : "";
+}
+
+export function isFileBackupSnapshotEnabled(settings: SessionSettings): boolean {
+  if (!settings.snapshot.enabled) {
+    return false;
+  }
+
+  if (settings.snapshot.engine === "file-backup") {
+    return true;
+  }
+
+  return settings.snapshot.engine === "hybrid" &&
+    settings.snapshot.includeIgnoredExplicitPaths;
 }
 
 function resolveAllowedRoots(

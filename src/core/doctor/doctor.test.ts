@@ -24,9 +24,58 @@ async function runTests() {
   await testLocalProviderWithoutBaseUrlFailsProviderCheck();
   await testInvalidMcpConfigFails();
   await testRipgrepUnavailableFails();
+  await testSnapshotDiagnosticsWarnsWhenGitTreeUnavailable();
+  await testSnapshotDiagnosticsFailsWhenGitTreeAndOverlayUnavailable();
   await testOldNodeVersionFails();
   testFormatDoctorReportIncludesFixes();
   console.log("doctor tests passed");
+}
+
+async function testSnapshotDiagnosticsWarnsWhenGitTreeUnavailable() {
+  const workspaceRoot = await createWorkspace({ includeDist: true });
+  const input = createDoctorInput(workspaceRoot, {
+    connection: createConnectionState(workspaceRoot, { apiKey: "test-key" }),
+    snapshotDiagnostics: {
+      ...createSnapshotDiagnostics(workspaceRoot),
+      gitAvailable: false
+    }
+  });
+
+  const report = await runDoctorDiagnostics(input, {
+    env: { OPENAI_API_KEY: "test-key" },
+    nodeVersion: "20.10.0",
+    stdinIsTTY: true,
+    stdoutIsTTY: true,
+    runCommand: fakeCommandRunner
+  });
+
+  const check = findCheck(report.checks, "snapshot.store");
+  assert.equal(check.status, "warn");
+  assert.match(check.summary, /Git-tree snapshots are unavailable/);
+}
+
+async function testSnapshotDiagnosticsFailsWhenGitTreeAndOverlayUnavailable() {
+  const workspaceRoot = await createWorkspace({ includeDist: true });
+  const input = createDoctorInput(workspaceRoot, {
+    connection: createConnectionState(workspaceRoot, { apiKey: "test-key" }),
+    snapshotDiagnostics: {
+      ...createSnapshotDiagnostics(workspaceRoot),
+      gitAvailable: false,
+      includeIgnoredExplicitPaths: false
+    }
+  });
+
+  const report = await runDoctorDiagnostics(input, {
+    env: { OPENAI_API_KEY: "test-key" },
+    nodeVersion: "20.10.0",
+    stdinIsTTY: true,
+    stdoutIsTTY: true,
+    runCommand: fakeCommandRunner
+  });
+
+  const check = findCheck(report.checks, "snapshot.store");
+  assert.equal(check.status, "fail");
+  assert.match(check.summary, /file-history overlays are disabled/);
 }
 
 async function testLocalProviderWithoutBaseUrlFailsProviderCheck() {
@@ -245,6 +294,7 @@ function createDoctorInput(
   overrides: {
     connection?: ConnectionConfigState;
     settings?: SessionSettingsState;
+    snapshotDiagnostics?: DoctorRuntimeInput["snapshotDiagnostics"];
   } = {}
 ): DoctorRuntimeInput {
   const paths = getRuntimePaths(workspaceRoot);
@@ -260,7 +310,27 @@ function createDoctorInput(
     currentModel: connectionState.effective.model,
     hasConnectionConfig: connectionState.effective.apiKey.trim().length > 0,
     allowedRoots: [workspaceRoot],
-    requestPatchCount: 0
+    requestPatchCount: 0,
+    snapshotDiagnostics: overrides.snapshotDiagnostics ?? createSnapshotDiagnostics(workspaceRoot)
+  };
+}
+
+function createSnapshotDiagnostics(workspaceRoot: string): DoctorRuntimeInput["snapshotDiagnostics"] {
+  return {
+    enabled: true,
+    configuredEngine: "hybrid",
+    activeEngine: "hybrid",
+    gitTreeEnabled: true,
+    gitAvailable: true,
+    workspaceRoot,
+    snapshotRoot: path.join(workspaceRoot, ".alyce", "snapshots", "git"),
+    gitDirectory: path.join(workspaceRoot, ".alyce", "snapshots", "git", "workspace"),
+    retentionDays: 7,
+    maxTextDiffBytes: 524_288,
+    maxFileBytes: 2_097_152,
+    includeIgnoredExplicitPaths: true,
+    manifestScan: true,
+    records: 0
   };
 }
 

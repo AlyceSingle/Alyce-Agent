@@ -42,6 +42,26 @@ export interface DoctorRuntimeInput {
   hasConnectionConfig: boolean;
   allowedRoots: string[];
   requestPatchCount: number;
+  snapshotDiagnostics: DoctorSnapshotDiagnostics;
+}
+
+export interface DoctorSnapshotDiagnostics {
+  enabled: boolean;
+  configuredEngine: "hybrid" | "git-tree" | "file-backup";
+  activeEngine: "git-tree" | "file-backup" | "hybrid" | "disabled";
+  gitTreeEnabled: boolean;
+  gitAvailable: boolean;
+  workspaceRoot: string;
+  snapshotRoot: string;
+  gitDirectory: string;
+  retentionDays: number;
+  maxTextDiffBytes: number;
+  maxFileBytes: number;
+  includeIgnoredExplicitPaths: boolean;
+  manifestScan: boolean;
+  records: number;
+  latestError?: string;
+  cleanupError?: string;
 }
 
 export interface DoctorCommandResult {
@@ -87,6 +107,7 @@ export async function runDoctorDiagnostics(
   checks.push(await checkExecutable("rg", ["--version"], "ripgrep", "Install ripgrep and ensure rg is on PATH.", runCommand, "fail"));
   checks.push(await checkExecutable("git", ["--version"], "git", "Install Git and ensure git is on PATH.", runCommand, "warn"));
   checks.push(await checkAlyceDirectoryWritable(input.paths.alyceDirectory));
+  checks.push(checkSnapshotStore(input.snapshotDiagnostics));
   checks.push(checkRequestPatches(input.requestPatchCount));
 
   return {
@@ -637,6 +658,109 @@ async function checkAlyceDirectoryWritable(alyceDirectory: string): Promise<Doct
       suggestion: "Fix directory permissions or start Alyce in a writable workspace."
     };
   }
+}
+
+function checkSnapshotStore(snapshot: DoctorSnapshotDiagnostics): DoctorCheck {
+  const details = [
+    `Configured engine: ${snapshot.configuredEngine}`,
+    `Active engine: ${snapshot.activeEngine}`,
+    `Git-tree enabled: ${formatBoolean(snapshot.gitTreeEnabled)}`,
+    `Git available: ${formatBoolean(snapshot.gitAvailable)}`,
+    `Snapshot root: ${snapshot.snapshotRoot}`,
+    `Git directory: ${snapshot.gitDirectory}`,
+    `Retention days: ${snapshot.retentionDays}`,
+    `maxTextDiffBytes: ${snapshot.maxTextDiffBytes}`,
+    `maxFileBytes: ${snapshot.maxFileBytes}`,
+    `includeIgnoredExplicitPaths: ${formatBoolean(snapshot.includeIgnoredExplicitPaths)}`,
+    `manifestScan: ${formatBoolean(snapshot.manifestScan)}`,
+    `In-memory turn records: ${snapshot.records}`
+  ];
+  if (snapshot.latestError) {
+    details.push(`Latest snapshot error: ${snapshot.latestError}`);
+  }
+  if (snapshot.cleanupError) {
+    details.push(`Cleanup error: ${snapshot.cleanupError}`);
+  }
+
+  if (!snapshot.enabled) {
+    return {
+      id: "snapshot.store",
+      title: "Snapshot store",
+      status: "warn",
+      summary: "File snapshot capture is disabled.",
+      details,
+      suggestion: "Enable snapshot.enabled if you need /diff, /revert, or code rewind."
+    };
+  }
+
+  if (snapshot.configuredEngine === "git-tree" && !snapshot.gitAvailable) {
+    return {
+      id: "snapshot.store",
+      title: "Snapshot store",
+      status: "fail",
+      summary: "Snapshot engine is git-tree, but git is not available.",
+      details,
+      suggestion: "Install Git or set snapshot.engine to hybrid or file-backup."
+    };
+  }
+
+  if (snapshot.gitTreeEnabled && !snapshot.gitAvailable) {
+    if (!isFileHistoryOverlayEnabled(snapshot)) {
+      return {
+        id: "snapshot.store",
+        title: "Snapshot store",
+        status: "fail",
+        summary: "Git-tree snapshots are unavailable and file-history overlays are disabled.",
+        details,
+        suggestion: "Install Git or enable snapshot.includeIgnoredExplicitPaths for hybrid fallback coverage."
+      };
+    }
+
+    return {
+      id: "snapshot.store",
+      title: "Snapshot store",
+      status: "warn",
+      summary: "Git-tree snapshots are unavailable; Alyce will rely on file-history overlays.",
+      details,
+      suggestion: "Install Git for workspace-level shell/MCP file rewind coverage."
+    };
+  }
+
+  if (snapshot.latestError) {
+    return {
+      id: "snapshot.store",
+      title: "Snapshot store",
+      status: snapshot.configuredEngine === "git-tree" ? "fail" : "warn",
+      summary: "The latest snapshot operation reported an error.",
+      details,
+      suggestion: "Check the snapshot directory and git availability."
+    };
+  }
+
+  if (snapshot.cleanupError) {
+    return {
+      id: "snapshot.store",
+      title: "Snapshot store",
+      status: "warn",
+      summary: "Snapshot cleanup reported an error.",
+      details,
+      suggestion: "Check .alyce snapshot directory permissions."
+    };
+  }
+
+  return {
+    id: "snapshot.store",
+    title: "Snapshot store",
+    status: "ok",
+    summary: `Snapshot engine ${snapshot.configuredEngine} is configured.`,
+    details
+  };
+}
+
+function isFileHistoryOverlayEnabled(snapshot: DoctorSnapshotDiagnostics) {
+  return snapshot.enabled &&
+    (snapshot.configuredEngine === "file-backup" ||
+      (snapshot.configuredEngine === "hybrid" && snapshot.includeIgnoredExplicitPaths));
 }
 
 function checkRequestPatches(requestPatchCount: number): DoctorCheck {

@@ -1,7 +1,13 @@
 import { execFile } from "node:child_process";
 import path from "node:path";
 import { promisify } from "node:util";
-import type { FileHistoryManager, TrackedFileChangeKind } from "../file-history/fileHistoryManager.js";
+import type {
+  FileHistoryManager,
+  TrackedFileChangeKind,
+  TurnFileSnapshot
+} from "../file-history/fileHistoryManager.js";
+import type { TurnSnapshotService } from "../snapshot/turnSnapshotService.js";
+import type { TurnSnapshotFileSnapshot } from "../snapshot/snapshotTypes.js";
 import { buildUnifiedDiffForFile, type UnifiedDiffStatus } from "./unifiedDiff.js";
 
 const execFileAsync = promisify(execFile);
@@ -58,44 +64,33 @@ export class DiffService {
     private readonly options: {
       workspaceRoot: string;
       fileHistoryManager: FileHistoryManager;
+      turnSnapshotService?: TurnSnapshotService;
     }
   ) {}
 
   async getTurnDiff(turnId: string): Promise<TurnDiffReport> {
-    await this.options.fileHistoryManager.finalizeTurn(turnId);
-    const metadata = this.options.fileHistoryManager.getSnapshot(turnId);
-    const files = this.options.fileHistoryManager
-      .getFileSnapshotsForTurn(turnId)
-      .map((snapshot) => {
-        const relativePath = formatDiffPath(this.options.workspaceRoot, snapshot.absolutePath);
-        const diff = buildUnifiedDiffForFile({
-          path: relativePath,
-          status: snapshot.changeKind as UnifiedDiffStatus,
-          before: snapshot.before,
-          after: snapshot.after
-        });
-
-        return {
-          path: relativePath,
-          absolutePath: snapshot.absolutePath,
-          status: snapshot.changeKind,
-          additions: diff.additions,
-          deletions: diff.deletions,
-          beforeBytes: diff.beforeBytes,
-          afterBytes: diff.afterBytes,
-          binary: diff.binary,
-          truncated: diff.truncated,
-          unifiedDiff: diff.text
-        };
-      })
+    await Promise.all([
+      this.options.fileHistoryManager.finalizeTurn(turnId),
+      this.options.turnSnapshotService?.finalizeTurn(turnId) ?? Promise.resolve([])
+    ]);
+    const fileHistoryMetadata = this.options.fileHistoryManager.getSnapshot(turnId);
+    const snapshotMetadata = this.options.turnSnapshotService?.getSnapshot(turnId);
+    const files = mergeSnapshotFiles([
+      ...(this.options.turnSnapshotService?.getFileSnapshotsForTurn(turnId) ?? []),
+      ...this.options.fileHistoryManager.getFileSnapshotsForTurn(turnId)
+    ], this.options.workspaceRoot)
       .sort((left, right) => left.path.localeCompare(right.path));
     const changedFiles = files.filter((file) => file.status !== "unchanged");
 
     return {
       kind: "turn",
       turnId,
-      ...(metadata?.createdAt ? { createdAt: metadata.createdAt } : {}),
-      ...(metadata?.finalizedAt ? { finalizedAt: metadata.finalizedAt } : {}),
+      ...(snapshotMetadata?.createdAt || fileHistoryMetadata?.createdAt
+        ? { createdAt: snapshotMetadata?.createdAt ?? fileHistoryMetadata?.createdAt }
+        : {}),
+      ...(snapshotMetadata?.finalizedAt || fileHistoryMetadata?.finalizedAt
+        ? { finalizedAt: snapshotMetadata?.finalizedAt ?? fileHistoryMetadata?.finalizedAt }
+        : {}),
       files: changedFiles,
       summary: summarizeFiles(changedFiles),
       unifiedDiff: joinUnifiedDiff(changedFiles.map((file) => file.unifiedDiff))
@@ -103,7 +98,7 @@ export class DiffService {
   }
 
   async getLastAlyceTurnDiff(): Promise<TurnDiffReport | undefined> {
-    const turnId = this.options.fileHistoryManager.getLatestTurnIdWithTrackedFiles();
+    const turnId = this.getLatestTurnIdWithTrackedFiles();
     return turnId ? this.getTurnDiff(turnId) : undefined;
   }
 
@@ -140,6 +135,21 @@ export class DiffService {
 
   formatDiffSummary(report: DiffReport): string {
     return formatDiffSummary(report);
+  }
+
+  private getLatestTurnIdWithTrackedFiles(): string | undefined {
+    const fileHistoryTurnId = this.options.fileHistoryManager.getLatestTurnIdWithTrackedFiles();
+    const snapshotTurnId = this.options.turnSnapshotService?.getLatestTurnIdWithTrackedFiles();
+    if (!fileHistoryTurnId) {
+      return snapshotTurnId;
+    }
+    if (!snapshotTurnId) {
+      return fileHistoryTurnId;
+    }
+
+    const fileHistoryCreatedAt = this.options.fileHistoryManager.getSnapshot(fileHistoryTurnId)?.createdAt ?? "";
+    const snapshotCreatedAt = this.options.turnSnapshotService?.getSnapshot(snapshotTurnId)?.createdAt ?? "";
+    return snapshotCreatedAt >= fileHistoryCreatedAt ? snapshotTurnId : fileHistoryTurnId;
   }
 }
 
@@ -262,6 +272,43 @@ function formatDiffFileLine(file: DiffFileReport): string {
   const suffix = flags.length > 0 ? ` (${flags.join(", ")})` : "";
 
   return `- ${file.path}: ${file.status}, +${file.additions} -${file.deletions}${suffix}`;
+}
+
+function mergeSnapshotFiles(
+  snapshots: Array<TurnSnapshotFileSnapshot | TurnFileSnapshot>,
+  workspaceRoot: string
+): DiffFileReport[] {
+  const filesByPath = new Map<string, DiffFileReport>();
+  for (const snapshot of snapshots) {
+    const relativePath = "relativePath" in snapshot
+      ? snapshot.relativePath
+      : formatDiffPath(workspaceRoot, snapshot.absolutePath);
+    const displayPath = relativePath.replace(/\\/g, "/");
+    if (filesByPath.has(displayPath)) {
+      continue;
+    }
+
+    const diff = buildUnifiedDiffForFile({
+      path: displayPath,
+      status: snapshot.changeKind as UnifiedDiffStatus,
+      before: snapshot.before,
+      after: snapshot.after
+    });
+    filesByPath.set(displayPath, {
+      path: displayPath,
+      absolutePath: snapshot.absolutePath,
+      status: snapshot.changeKind,
+      additions: diff.additions,
+      deletions: diff.deletions,
+      beforeBytes: diff.beforeBytes,
+      afterBytes: diff.afterBytes,
+      binary: diff.binary,
+      truncated: diff.truncated,
+      unifiedDiff: diff.text
+    });
+  }
+
+  return [...filesByPath.values()];
 }
 
 function summarizeFiles(files: DiffFileReport[]): DiffSummary {

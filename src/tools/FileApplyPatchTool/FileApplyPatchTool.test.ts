@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { promises as fs } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
+import { FileHistoryManager } from "../../core/file-history/fileHistoryManager.js";
 import { executeFileApplyPatch } from "./FileApplyPatchTool.js";
 import type { FileReadState, ToolApprovalRequest, ToolExecutionContext } from "../types.js";
 
@@ -13,6 +14,7 @@ type TestContext = ToolExecutionContext & {
 
 async function createTestContext(options: {
   recordFileRead?: ToolExecutionContext["recordFileRead"];
+  captureFileBeforeWrite?: ToolExecutionContext["captureFileBeforeWrite"];
 } = {}): Promise<TestContext & { cleanup: () => Promise<void> }> {
   const workspaceRoot = await fs.mkdtemp(path.join(tmpdir(), "alyce-apply-patch-test-"));
   const abortController = new AbortController();
@@ -36,7 +38,7 @@ async function createTestContext(options: {
     commandTimeoutMs: 30_000,
     turnId: "test-turn",
     abortSignal: abortController.signal,
-    captureFileBeforeWrite: async () => undefined,
+    captureFileBeforeWrite: options.captureFileBeforeWrite ?? (async () => undefined),
     recordFileRead: (absolutePath, state) => activeRecordFileRead(absolutePath, state),
     getFileReadState: (absolutePath) => readStates.get(pathKey(absolutePath)),
     approvalRequests,
@@ -76,6 +78,8 @@ async function runTests() {
   await testUpdateRollbackOnPostWriteFailure();
   await testRenameOnlyMoveWithMatchingTarget();
   await testMoveOverwriteCountsTargetReplacement();
+  await testDeletePatchIsRestorableByFileHistory();
+  await testMovePatchIsRestorableByFileHistory();
   await testPatchApprovalCarriesFilePatchPermission();
   console.log("FileApplyPatchTool tests passed");
 }
@@ -204,6 +208,78 @@ async function testMoveOverwriteCountsTargetReplacement() {
     assert.equal(await fs.readFile(path.join(context.workspaceRoot, "target.txt"), "utf8"), "source\n");
   } finally {
     await context.cleanup();
+  }
+}
+
+async function testDeletePatchIsRestorableByFileHistory() {
+  const history = new FileHistoryManager();
+  let context: Awaited<ReturnType<typeof createTestContext>> | undefined;
+
+  context = await createTestContext({
+    captureFileBeforeWrite: (absolutePath) => history.captureBeforeWrite("test-turn", absolutePath)
+  });
+
+  try {
+    const filePath = path.join(context.workspaceRoot, "delete-me.txt");
+    await fs.writeFile(filePath, "keep me\n");
+    await context.markRead("delete-me.txt");
+
+    history.beginTurn(context.turnId);
+    await executeFileApplyPatch({
+      patchText: [
+        "*** Begin Patch",
+        "*** Delete File: delete-me.txt",
+        "*** End Patch"
+      ].join("\n")
+    }, context);
+    await history.finalizeTurn(context.turnId);
+
+    await assert.rejects(fs.readFile(filePath), { code: "ENOENT" });
+
+    const result = await history.restoreTurn(context.turnId);
+    assert.deepEqual(result.restored, [filePath]);
+    assert.deepEqual(result.removed, []);
+    assert.equal(await fs.readFile(filePath, "utf8"), "keep me\n");
+  } finally {
+    await context?.cleanup();
+  }
+}
+
+async function testMovePatchIsRestorableByFileHistory() {
+  const history = new FileHistoryManager();
+  let context: Awaited<ReturnType<typeof createTestContext>> | undefined;
+
+  context = await createTestContext({
+    captureFileBeforeWrite: (absolutePath) => history.captureBeforeWrite("test-turn", absolutePath)
+  });
+
+  try {
+    const sourcePath = path.join(context.workspaceRoot, "move-source.txt");
+    const targetPath = path.join(context.workspaceRoot, "move-target.txt");
+    await fs.writeFile(sourcePath, "move me\n");
+    await context.markRead("move-source.txt");
+
+    history.beginTurn(context.turnId);
+    await executeFileApplyPatch({
+      patchText: [
+        "*** Begin Patch",
+        "*** Update File: move-source.txt",
+        "*** Move to: move-target.txt",
+        "*** End Patch"
+      ].join("\n")
+    }, context);
+    await history.finalizeTurn(context.turnId);
+
+    await assert.rejects(fs.readFile(sourcePath), { code: "ENOENT" });
+    assert.equal(await fs.readFile(targetPath, "utf8"), "move me\n");
+
+    const result = await history.restoreTurn(context.turnId);
+    assert.deepEqual(result.restored, [sourcePath]);
+    assert.deepEqual(result.removed, [targetPath]);
+    assert.equal(await fs.readFile(sourcePath, "utf8"), "move me\n");
+    await assert.rejects(fs.readFile(targetPath), { code: "ENOENT" });
+  } finally {
+    await context?.cleanup();
   }
 }
 

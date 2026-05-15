@@ -13,6 +13,7 @@ async function runTests() {
   testSessionSettingsDefaultsIncludeScrollPerformanceSettings();
   testSessionSettingsClampsScrollSpeed();
   await testRuntimeConfigReadsScrollPerformanceEnv();
+  await testRuntimeConfigReadsSnapshotSettingsFromEnv();
   await testRuntimeConfigIgnoresRetiredStatusUsageSetting();
   await testSessionSettingsSerializationIncludesScrollPerformanceSettings();
   console.log("runtime config tests passed");
@@ -39,6 +40,15 @@ function testSessionSettingsDefaultsIncludeScrollPerformanceSettings() {
   assert.equal(state.effective.diagnosticsPendingTimeoutMs, 120_000);
   assert.equal(state.effective.diagnosticsFailureThreshold, 3);
   assert.equal(state.effective.diagnosticsFailureCooldownMs, 300_000);
+  assert.deepEqual(state.effective.snapshot, {
+    enabled: true,
+    engine: "hybrid",
+    maxTextDiffBytes: 524_288,
+    maxFileBytes: 2_097_152,
+    retentionDays: 7,
+    includeIgnoredExplicitPaths: true,
+    manifestScan: true
+  });
   assert.deepEqual(state.effective.permissionRules, []);
 }
 
@@ -75,6 +85,31 @@ async function testRuntimeConfigReadsScrollPerformanceEnv() {
   assert.equal(config.settings.diagnosticsPendingTimeoutMs, 64_000);
   assert.equal(config.settings.diagnosticsFailureThreshold, 5);
   assert.equal(config.settings.diagnosticsFailureCooldownMs, 90_000);
+}
+
+async function testRuntimeConfigReadsSnapshotSettingsFromEnv() {
+  const workspaceRoot = await fs.mkdtemp(path.join(os.tmpdir(), "alyce-runtime-config-snapshot-"));
+  const config = await loadRuntimeConfig([], {
+    ...process.env,
+    AGENT_WORKSPACE: workspaceRoot,
+    AGENT_SNAPSHOT_ENABLED: "false",
+    AGENT_SNAPSHOT_ENGINE: "file-backup",
+    AGENT_SNAPSHOT_MAX_TEXT_DIFF_BYTES: "1000",
+    AGENT_SNAPSHOT_MAX_FILE_BYTES: "2000",
+    AGENT_SNAPSHOT_RETENTION_DAYS: "14",
+    AGENT_SNAPSHOT_INCLUDE_IGNORED_EXPLICIT_PATHS: "false",
+    AGENT_SNAPSHOT_MANIFEST_SCAN: "true"
+  });
+
+  assert.deepEqual(config.settings.snapshot, {
+    enabled: false,
+    engine: "file-backup",
+    maxTextDiffBytes: 1000,
+    maxFileBytes: 2000,
+    retentionDays: 14,
+    includeIgnoredExplicitPaths: false,
+    manifestScan: true
+  });
 }
 
 async function testRuntimeConfigIgnoresRetiredStatusUsageSetting() {
@@ -126,6 +161,15 @@ async function testSessionSettingsSerializationIncludesScrollPerformanceSettings
     diagnosticsPendingTimeoutMs: 50_000,
     diagnosticsFailureThreshold: 4,
     diagnosticsFailureCooldownMs: 70_000,
+    snapshot: {
+      enabled: true,
+      engine: "git-tree",
+      maxTextDiffBytes: 100_000,
+      maxFileBytes: 300_000,
+      retentionDays: 9,
+      includeIgnoredExplicitPaths: false,
+      manifestScan: true
+    },
     permissionRules: [
       {
         permission: "shell",
@@ -145,6 +189,15 @@ async function testSessionSettingsSerializationIncludesScrollPerformanceSettings
   assert.equal(raw.diagnosticsPendingTimeoutMs, 50_000);
   assert.equal(raw.diagnosticsFailureThreshold, 4);
   assert.equal(raw.diagnosticsFailureCooldownMs, 70_000);
+  assert.deepEqual(raw.snapshot, {
+    enabled: true,
+    engine: "git-tree",
+    maxTextDiffBytes: 100_000,
+    maxFileBytes: 300_000,
+    retentionDays: 9,
+    includeIgnoredExplicitPaths: false,
+    manifestScan: true
+  });
   assert.deepEqual(raw.permissionRules, [
     {
       permission: "shell",

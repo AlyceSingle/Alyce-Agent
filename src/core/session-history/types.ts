@@ -1,5 +1,6 @@
 import OpenAI from "openai";
 import type { SessionMemoryFileState } from "../memory/types.js";
+import type { PersistedFileHistorySnapshot } from "../file-history/fileBackupStore.js";
 import type { SubagentTaskStatus } from "../../tools/types.js";
 import type {
   UiMessageBlock,
@@ -119,6 +120,13 @@ export type SessionHistoryEntry =
       sessionMemory: SessionMemoryFileState | null;
     }
   | {
+      type: "file-snapshot";
+      sessionId: SessionId;
+      sequence: number;
+      timestamp: string;
+      snapshot: PersistedFileHistorySnapshot;
+    }
+  | {
       type: "session-rewind";
       sessionId: SessionId;
       sequence: number;
@@ -170,6 +178,7 @@ export interface LoadedSessionHistory {
   apiMessages: SessionHistoryApiMessage[];
   uiMessages: SessionHistoryUiMessage[];
   sessionMemory: SessionMemoryFileState | null;
+  fileSnapshots: PersistedFileHistorySnapshot[];
   subagentTaskIndex: SessionHistorySubagentTaskIndexItem[];
   subagentEvents: SessionHistorySubagentEvent[];
 }
@@ -191,5 +200,6 @@ export interface SessionResumePayload {
   uiMessages: SessionHistoryUiMessage[];
   messageCount: number;
   sessionMemory: SessionMemoryFileState | null;
+  fileSnapshots: PersistedFileHistorySnapshot[];
   subagentTaskIndex: SessionHistorySubagentTaskIndexItem[];
 }

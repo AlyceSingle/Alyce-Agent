@@ -7,7 +7,7 @@ import type OpenAI from "openai";
 import { randomUUID } from "node:crypto";
 import { promises as fs } from "node:fs";
 import path from "node:path";
-import { isTurnInterruptedError, throwIfAborted } from "../core/abort.js";
+import { getAbortReason, isTurnInterruptedError, throwIfAborted, TurnInterruptedError } from "../core/abort.js";
 import type { JsonRecord, ToolApprovalRequest } from "../tools/types.js";
 import { loadProjectMcpConfig } from "./config.js";
 import { encodeMcpToolName } from "./toolNames.js";
@@ -970,9 +970,7 @@ function withTimeout<T>(
     candidates.push(new Promise<never>((_resolve, reject) => {
       abortHandler = () => {
         options.onTimeoutOrAbort?.();
-        reject(abortSignal.reason instanceof Error
-          ? abortSignal.reason
-          : new Error("Request interrupted by user"));
+        reject(createAbortRaceError(abortSignal));
       };
       abortSignal.addEventListener("abort", abortHandler, { once: true });
     }));
@@ -997,9 +995,7 @@ function withAbort<T>(promise: Promise<T>, abortSignal?: AbortSignal): Promise<T
   let abortHandler: (() => void) | undefined;
   const aborted = new Promise<never>((_resolve, reject) => {
     abortHandler = () => {
-      reject(abortSignal.reason instanceof Error
-        ? abortSignal.reason
-        : new Error("Request interrupted by user"));
+      reject(createAbortRaceError(abortSignal));
     };
     abortSignal.addEventListener("abort", abortHandler, { once: true });
   });
@@ -1009,6 +1005,14 @@ function withAbort<T>(promise: Promise<T>, abortSignal?: AbortSignal): Promise<T
       abortSignal.removeEventListener("abort", abortHandler);
     }
   });
+}
+
+function createAbortRaceError(abortSignal: AbortSignal): Error {
+  if (abortSignal.reason instanceof Error) {
+    return abortSignal.reason;
+  }
+
+  return new TurnInterruptedError(getAbortReason(abortSignal) ?? "aborted");
 }
 
 function truncate(value: string, maxChars: number) {

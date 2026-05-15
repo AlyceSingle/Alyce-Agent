@@ -17,7 +17,7 @@ Type these into the main input. They start with `/` and execute immediately.
 | Command | What it does |
 |---|---|
 | `/help` | Shows all available commands. *Start here if you're lost.* |
-| `/doctor` | Runs local health checks for Node, TTY, workspace files, connection config, approval risk, MCP config, skills, `rg`, `git`, `.alyce` storage, and request patches. |
+| `/doctor` | Runs local health checks for Node, TTY, workspace files, connection config, approval risk, MCP config, skills, `rg`, `git`, `.alyce` storage, snapshot storage, and request patches. |
 | `/settings` | Jumps straight to the settings dialog. |
 | `/setup` | First-run configuration wizard. |
 | `/clear` | Wipes the current conversation and starts fresh. |

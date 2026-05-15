@@ -23,6 +23,7 @@ function testPrepareSessionResumeKeepsLightweightTaskIndex() {
     ],
     uiMessages: [],
     sessionMemory: null,
+    fileSnapshots: [],
     subagentTaskIndex: [
       {
         taskId: "task-1",

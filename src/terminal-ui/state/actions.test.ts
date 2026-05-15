@@ -39,6 +39,15 @@ function createSettingsState(): SessionSettingsState {
       diagnosticsPendingTimeoutMs: 120_000,
       diagnosticsFailureThreshold: 3,
       diagnosticsFailureCooldownMs: 300_000,
+      snapshot: {
+        enabled: true,
+        engine: "hybrid",
+        maxTextDiffBytes: 524_288,
+        maxFileBytes: 2_097_152,
+        retentionDays: 7,
+        includeIgnoredExplicitPaths: true,
+        manifestScan: true
+      },
       conversationCompactionEnabled: true,
       autoCompactTimeoutMs: 180_000,
       autoCompactMaxFailures: 3,
@@ -66,6 +75,7 @@ function createSettingsState(): SessionSettingsState {
       diagnosticsPendingTimeoutMs: "default",
       diagnosticsFailureThreshold: "default",
       diagnosticsFailureCooldownMs: "default",
+      snapshot: "default",
       conversationCompactionEnabled: "default",
       autoCompactTimeoutMs: "default",
       autoCompactMaxFailures: "default",

@@ -1,5 +1,10 @@
-import { promises as fs } from "node:fs";
-import path from "node:path";
+import {
+  applyRestoreAction,
+  buildRestorePlan,
+  contentSnapshotsEqual,
+  readCurrentPathSnapshot,
+  type RestoreConflict
+} from "../snapshot/snapshotRestore.js";
 
 const MAX_FILE_HISTORY_SNAPSHOTS = 100;
 
@@ -8,8 +13,14 @@ export interface TrackedFileSnapshot {
   absolutePath: string;
   existed: boolean;
   originalContent: Buffer;
+  originalMode?: number;
+  originalKind?: PathSnapshotKind;
+  originalEntries?: DirectorySnapshotEntry[];
   afterExisted?: boolean;
   afterContent?: Buffer;
+  afterMode?: number;
+  afterKind?: PathSnapshotKind;
+  afterEntries?: DirectorySnapshotEntry[];
 }
 
 export interface TurnFileHistorySnapshot {
@@ -23,16 +34,32 @@ export interface TurnFileHistorySnapshot {
 export interface FileHistoryRestoreResult {
   restored: string[];
   removed: string[];
+  conflicts: RestoreConflict[];
   alreadyRestored: boolean;
   missingSnapshot: boolean;
   restoredAt?: string;
 }
 
+export interface FileHistoryRestoreOptions {
+  excludePaths?: readonly string[];
+}
+
 export type TrackedFileChangeKind = "added" | "modified" | "deleted" | "unchanged";
+export type PathSnapshotKind = "missing" | "file" | "directory";
+
+export interface DirectorySnapshotEntry {
+  relativePath: string;
+  kind: "file" | "directory" | "symlink";
+  content: Buffer;
+  mode?: number;
+}
 
 export interface FileContentSnapshot {
   existed: boolean;
   content: Buffer;
+  mode?: number;
+  kind?: PathSnapshotKind;
+  entries?: DirectorySnapshotEntry[];
 }
 
 export interface TurnFileSnapshot {
@@ -75,18 +102,22 @@ export class FileHistoryManager {
 
     // 同一轮里每个文件只抓一次写前内容，后续重复写入直接复用首份快照。
     try {
-      const originalContent = await fs.readFile(absolutePath);
+      const original = await readCurrentPathSnapshot(absolutePath);
       snapshot.trackedFiles.set(absolutePath, {
         absolutePath,
-        existed: true,
-        originalContent
+        existed: original.existed,
+        originalContent: original.content,
+        originalMode: original.mode,
+        originalKind: original.kind,
+        originalEntries: cloneDirectoryEntries(original.entries)
       });
     } catch (error) {
       if (isMissingFileError(error)) {
         snapshot.trackedFiles.set(absolutePath, {
           absolutePath,
           existed: false,
-          originalContent: Buffer.alloc(0)
+          originalContent: Buffer.alloc(0),
+          originalKind: "missing"
         });
         return;
       }
@@ -96,7 +127,7 @@ export class FileHistoryManager {
   }
 
   hasTrackedFiles(turnId: string) {
-    return (this.snapshots.get(turnId)?.trackedFiles.size ?? 0) > 0;
+    return this.getFileSnapshotsForTurn(turnId).some((file) => file.changeKind !== "unchanged");
   }
 
   canRestoreTurn(turnId: string) {
@@ -125,9 +156,12 @@ export class FileHistoryManager {
 
     if (!snapshot.finalizedAt) {
       for (const entry of snapshot.trackedFiles.values()) {
-        const after = await readFileContentSnapshot(entry.absolutePath);
+        const after = await readCurrentPathSnapshot(entry.absolutePath);
         entry.afterExisted = after.existed;
         entry.afterContent = after.content;
+        entry.afterMode = after.mode;
+        entry.afterKind = after.kind;
+        entry.afterEntries = cloneDirectoryEntries(after.entries);
       }
       snapshot.finalizedAt = new Date().toISOString();
     }
@@ -136,12 +170,14 @@ export class FileHistoryManager {
   }
 
   getChangedFilesForTurn(turnId: string): TurnFileChangeSummary[] {
-    return this.getFileSnapshotsForTurn(turnId).map((snapshot) => ({
-      absolutePath: snapshot.absolutePath,
-      changeKind: snapshot.changeKind,
-      beforeBytes: snapshot.before.existed ? snapshot.before.content.byteLength : 0,
-      afterBytes: snapshot.after.existed ? snapshot.after.content.byteLength : 0
-    }));
+    return this.getFileSnapshotsForTurn(turnId)
+      .filter((snapshot) => snapshot.changeKind !== "unchanged")
+      .map((snapshot) => ({
+        absolutePath: snapshot.absolutePath,
+        changeKind: snapshot.changeKind,
+        beforeBytes: snapshot.before.existed ? snapshot.before.content.byteLength : 0,
+        afterBytes: snapshot.after.existed ? snapshot.after.content.byteLength : 0
+      }));
   }
 
   getFileSnapshotsForTurn(turnId: string): TurnFileSnapshot[] {
@@ -153,11 +189,17 @@ export class FileHistoryManager {
     return Array.from(snapshot.trackedFiles.values()).map((entry) => {
       const before = {
         existed: entry.existed,
-        content: Buffer.from(entry.originalContent)
+        content: Buffer.from(entry.originalContent),
+        mode: entry.originalMode,
+        kind: entry.originalKind,
+        entries: cloneDirectoryEntries(entry.originalEntries)
       };
       const after = {
         existed: entry.afterExisted ?? entry.existed,
-        content: Buffer.from(entry.afterContent ?? entry.originalContent)
+        content: Buffer.from(entry.afterContent ?? entry.originalContent),
+        mode: entry.afterMode ?? entry.originalMode,
+        kind: entry.afterKind ?? entry.originalKind,
+        entries: cloneDirectoryEntries(entry.afterEntries ?? entry.originalEntries)
       };
 
       return {
@@ -180,12 +222,16 @@ export class FileHistoryManager {
     return undefined;
   }
 
-  async restoreTurn(turnId: string): Promise<FileHistoryRestoreResult> {
+  async restoreTurn(
+    turnId: string,
+    options: FileHistoryRestoreOptions = {}
+  ): Promise<FileHistoryRestoreResult> {
     const snapshot = this.snapshots.get(turnId);
     if (!snapshot || snapshot.trackedFiles.size === 0) {
       return {
         restored: [],
         removed: [],
+        conflicts: [],
         alreadyRestored: false,
         missingSnapshot: true
       };
@@ -195,6 +241,7 @@ export class FileHistoryManager {
       return {
         restored: [],
         removed: [],
+        conflicts: [],
         alreadyRestored: true,
         missingSnapshot: false,
         restoredAt: snapshot.restoredAt
@@ -206,45 +253,31 @@ export class FileHistoryManager {
     const restored: string[] = [];
     const removed: string[] = [];
     // 逆序恢复更接近“撤销”语义，避免目录和文件状态互相覆盖。
-    const entries = Array.from(snapshot.trackedFiles.values()).reverse();
+    const plan = await buildRestorePlan(
+      this.getFileSnapshotsForTurn(turnId).reverse(),
+      { excludePaths: options.excludePaths }
+    );
 
-    for (const entry of entries) {
-      const before = {
-        existed: entry.existed,
-        content: entry.originalContent
-      };
-      const after = {
-        existed: entry.afterExisted ?? entry.existed,
-        content: entry.afterContent ?? entry.originalContent
-      };
-      if (getChangeKind(before, after) === "unchanged") {
-        continue;
-      }
-
-      if (entry.existed) {
-        await fs.mkdir(path.dirname(entry.absolutePath), { recursive: true });
-        await fs.writeFile(entry.absolutePath, entry.originalContent);
-        restored.push(entry.absolutePath);
-        continue;
-      }
-
-      try {
-        await fs.unlink(entry.absolutePath);
-        removed.push(entry.absolutePath);
-      } catch (error) {
-        if (!isMissingFileError(error)) {
-          throw error;
-        }
+    for (const action of plan.actions) {
+      await applyRestoreAction(action);
+      if (action.action === "remove") {
+        removed.push(action.absolutePath);
+      } else {
+        restored.push(action.absolutePath);
       }
     }
 
-    snapshot.restoredAt = new Date().toISOString();
+    if (plan.conflicts.length === 0) {
+      snapshot.restoredAt = new Date().toISOString();
+    }
+
     return {
       restored,
       removed,
+      conflicts: plan.conflicts,
       alreadyRestored: false,
       missingSnapshot: false,
-      restoredAt: snapshot.restoredAt
+      ...(snapshot.restoredAt ? { restoredAt: snapshot.restoredAt } : {})
     };
   }
 
@@ -259,6 +292,39 @@ export class FileHistoryManager {
   clearAll() {
     this.snapshots.clear();
     this.snapshotOrder = [];
+  }
+
+  hydrateSnapshots(snapshots: TurnFileHistorySnapshot[]) {
+    for (const snapshot of snapshots) {
+      const trackedFiles = new Map<string, TrackedFileSnapshot>();
+      for (const [absolutePath, entry] of snapshot.trackedFiles.entries()) {
+        trackedFiles.set(absolutePath, {
+          absolutePath: entry.absolutePath,
+          existed: entry.existed,
+          originalContent: Buffer.from(entry.originalContent),
+          ...(entry.originalMode !== undefined ? { originalMode: entry.originalMode } : {}),
+          ...(entry.originalKind ? { originalKind: entry.originalKind } : {}),
+          ...(entry.originalEntries ? { originalEntries: cloneDirectoryEntries(entry.originalEntries) } : {}),
+          ...(entry.afterExisted !== undefined ? { afterExisted: entry.afterExisted } : {}),
+          ...(entry.afterContent !== undefined ? { afterContent: Buffer.from(entry.afterContent) } : {}),
+          ...(entry.afterMode !== undefined ? { afterMode: entry.afterMode } : {}),
+          ...(entry.afterKind ? { afterKind: entry.afterKind } : {}),
+          ...(entry.afterEntries ? { afterEntries: cloneDirectoryEntries(entry.afterEntries) } : {})
+        });
+      }
+
+      this.snapshots.set(snapshot.turnId, {
+        turnId: snapshot.turnId,
+        createdAt: snapshot.createdAt,
+        ...(snapshot.finalizedAt ? { finalizedAt: snapshot.finalizedAt } : {}),
+        ...(snapshot.restoredAt ? { restoredAt: snapshot.restoredAt } : {}),
+        trackedFiles
+      });
+      this.snapshotOrder = this.snapshotOrder.filter((turnId) => turnId !== snapshot.turnId);
+      this.snapshotOrder.push(snapshot.turnId);
+    }
+
+    this.trimSnapshots();
   }
 
   private getOrCreateSnapshot(turnId: string) {
@@ -300,24 +366,6 @@ function isMissingFileError(error: unknown) {
   );
 }
 
-async function readFileContentSnapshot(absolutePath: string): Promise<FileContentSnapshot> {
-  try {
-    return {
-      existed: true,
-      content: await fs.readFile(absolutePath)
-    };
-  } catch (error) {
-    if (isMissingFileError(error)) {
-      return {
-        existed: false,
-        content: Buffer.alloc(0)
-      };
-    }
-
-    throw error;
-  }
-}
-
 function getChangeKind(
   before: FileContentSnapshot,
   after: FileContentSnapshot
@@ -330,9 +378,20 @@ function getChangeKind(
     return "deleted";
   }
 
-  if (before.existed && after.existed && !before.content.equals(after.content)) {
+  if (before.existed && after.existed && !contentSnapshotsEqual(before, after)) {
     return "modified";
   }
 
   return "unchanged";
+}
+
+function cloneDirectoryEntries(
+  entries: readonly DirectorySnapshotEntry[] | undefined
+): DirectorySnapshotEntry[] | undefined {
+  return entries?.map((entry) => ({
+    relativePath: entry.relativePath,
+    kind: entry.kind,
+    content: Buffer.from(entry.content),
+    ...(entry.mode !== undefined ? { mode: entry.mode } : {})
+  }));
 }

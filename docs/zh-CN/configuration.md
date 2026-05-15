@@ -316,6 +316,7 @@ Plan Mode 会尽量从模型可见工具列表里移除修改型工具，同时�
 - 项目/用户技能发现。
 - `rg` 和 `git` 是否可用。
 - `.alyce` 存储是否可写。
+- snapshot 引擎状态、snapshot 目录、保留期、git-tree 可用性，以及最近的 snapshot/cleanup 错误。
 - 是否存在 request patch 覆盖。
 
 当启动成功但工具、配置或本地环境表现不对时，优先跑 `/doctor`。
@@ -347,6 +348,31 @@ Plan Mode 会尽量从模型可见工具列表里移除修改型工具，同时�
 ```
 
 Alyce 会先使用这些覆盖项，再读取模型名里的 `128k`、`1m` 等显式后缀，然后匹配内置模型表。完全未知的模型会回退到 `128000` tokens。
+
+### Diff/Rewind 快照
+
+`./.alyce/settings.json` 或 `~/.alyce/settings.json` 里的 `snapshot` 控制 `/diff`、`/revert` 和代码 rewind 使用的文件快照基础：
+
+```json
+{
+  "snapshot": {
+    "enabled": true,
+    "engine": "hybrid",
+    "maxTextDiffBytes": 524288,
+    "maxFileBytes": 2097152,
+    "retentionDays": 7,
+    "includeIgnoredExplicitPaths": true,
+    "manifestScan": true
+  }
+}
+```
+
+- `engine: "hybrid"` 同时使用 turn 级 git-tree 快照和显式 ignored/external 路径的 file-history overlay。
+- `engine: "git-tree"` 只使用工作区级 git-tree 快照。
+- `engine: "file-backup"` 只使用显式 file-history overlay。
+- `manifestScan` 控制是否采集目录 manifest，用于恢复只创建空目录的 turn。
+- `retentionDays` 会在启动时清理 `.alyce/snapshots/git/` 和 `.alyce/file-history/` 中过期的快照目录；当前工作区的 git-tree 存储不会在启动清理中被删除。
+- `/doctor` 会报告当前引擎、git 可用性、snapshot 存储路径、保留期，以及最近的 snapshot/cleanup 错误。
 
 ### Markdown 渲染规则
 

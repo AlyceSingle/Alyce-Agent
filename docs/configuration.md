@@ -138,6 +138,13 @@ Optional model price metadata can be added per model with `inputCostPerMillionTo
 - `AGENT_AUTO_COMPACT_TIMEOUT_MS` — timeout for automatic compaction model calls, default `180000`
 - `AGENT_AUTO_COMPACT_MAX_FAILURES` — consecutive automatic compaction failures before circuit breaking, default `3`
 - `AGENT_MODEL_CONTEXT_WINDOW_OVERRIDES` — comma-separated model context overrides, for example `custom fast=512000,my alias=1000000`
+- `AGENT_SNAPSHOT_ENABLED` — enable/disable Alyce file snapshots, default `true`
+- `AGENT_SNAPSHOT_ENGINE` — `hybrid`, `git-tree`, or `file-backup`, default `hybrid`
+- `AGENT_SNAPSHOT_MAX_TEXT_DIFF_BYTES` — configured text diff budget for snapshot diagnostics, default `524288`
+- `AGENT_SNAPSHOT_MAX_FILE_BYTES` — configured per-file snapshot budget, default `2097152`
+- `AGENT_SNAPSHOT_RETENTION_DAYS` — days to retain snapshot/file-history storage before startup cleanup, default `7`
+- `AGENT_SNAPSHOT_INCLUDE_IGNORED_EXPLICIT_PATHS` — keep explicit ignored-path file-history overlays enabled, default `true`
+- `AGENT_SNAPSHOT_MANIFEST_SCAN` — capture directory manifests for empty-directory rewind, default `true`
 
 Compatibility note: `AGENT_MEMORY_AUTO_SUMMARY` is still accepted as an alias for `AGENT_SESSION_MEMORY_ENABLED`, but the old message-count summary variables are retired.
 
@@ -363,6 +370,7 @@ Plan Mode also removes mutating tool schemas from the model-facing tool list whe
 - project and user skill discovery.
 - `rg` and `git` availability.
 - `.alyce` storage writability.
+- snapshot engine status, snapshot directory paths, retention, git-tree availability, and recent snapshot/cleanup errors.
 - active request patch overrides.
 
 Use `/doctor` when startup succeeds but tool behavior, config, or local environment state feels wrong.
@@ -397,6 +405,31 @@ Use `/doctor` when startup succeeds but tool behavior, config, or local environm
 ```
 
 Alyce first checks these overrides, then explicit suffixes in the model name such as `128k` or `1m`, then its built-in provider table. Unknown models fall back to `128000` tokens.
+
+### Diff/Rewind Snapshots
+
+`snapshot` in `./.alyce/settings.json` or `~/.alyce/settings.json` controls the file snapshot foundation used by `/diff`, `/revert`, and code rewind:
+
+```json
+{
+  "snapshot": {
+    "enabled": true,
+    "engine": "hybrid",
+    "maxTextDiffBytes": 524288,
+    "maxFileBytes": 2097152,
+    "retentionDays": 7,
+    "includeIgnoredExplicitPaths": true,
+    "manifestScan": true
+  }
+}
+```
+
+- `engine: "hybrid"` uses git-tree turn snapshots plus file-history overlays for explicit ignored/external paths.
+- `engine: "git-tree"` uses workspace-level git-tree snapshots only.
+- `engine: "file-backup"` uses explicit file-history overlays only.
+- `manifestScan` controls directory manifest capture for empty-directory rewind.
+- `retentionDays` is applied at startup to stale `.alyce/snapshots/git/` and `.alyce/file-history/` directories; the current workspace git-tree store is not removed during startup cleanup.
+- `/doctor` reports the active engine, git availability, snapshot storage paths, retention, and the latest snapshot or cleanup error.
 
 ### Markdown Rendering Rules
 

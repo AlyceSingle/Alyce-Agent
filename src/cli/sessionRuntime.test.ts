@@ -1,5 +1,7 @@
 import assert from "node:assert/strict";
 import path from "node:path";
+import { buildSessionSettingsState, type SessionSettings } from "../config/runtime.js";
+import { isFileBackupSnapshotEnabled } from "./sessionRuntime.js";
 import { resolveSubagentAllowedRoots } from "./subagentAllowedRoots.js";
 import { normalizePersistedSubagentProgress } from "./subagentProgress.js";
 
@@ -11,6 +13,7 @@ function runTests() {
   testSubagentAllowedRootsInheritDefaultWhenUnset();
   testSubagentAllowedRootsRestrictWhenSet();
   testSubagentAllowedRootsDeduplicateConfiguredValues();
+  testFileBackupSnapshotEnabledHonorsSnapshotEngineAndOverlayFlag();
   testPersistedSubagentProgressIsSanitized();
   testPersistedSubagentProgressIsLimited();
   console.log("sessionRuntime tests passed");
@@ -21,6 +24,16 @@ function createSettings(patch: Partial<TestSettings> = {}): TestSettings {
     additionalDirectories: [],
     ...patch
   };
+}
+
+function createFullSettings(patch: Partial<SessionSettings> = {}): SessionSettings {
+  return buildSessionSettingsState({
+    workspaceRoot: path.resolve("workspace"),
+    settingsConfigPath: path.resolve("workspace", ".alyce", "settings.json"),
+    userSettingsConfigPath: path.resolve("user", "settings.json")
+  }, {
+    user: patch
+  }).effective;
 }
 
 function testSubagentAllowedRootsInheritDefaultWhenUnset() {
@@ -82,6 +95,41 @@ function testSubagentAllowedRootsDeduplicateConfiguredValues() {
   );
 
   assert.deepEqual(roots, [path.resolve(workspaceRoot, "src")]);
+}
+
+function testFileBackupSnapshotEnabledHonorsSnapshotEngineAndOverlayFlag() {
+  const base = createFullSettings();
+
+  assert.equal(isFileBackupSnapshotEnabled(base), true);
+  assert.equal(isFileBackupSnapshotEnabled({
+    ...base,
+    snapshot: {
+      ...base.snapshot,
+      includeIgnoredExplicitPaths: false
+    }
+  }), false);
+  assert.equal(isFileBackupSnapshotEnabled({
+    ...base,
+    snapshot: {
+      ...base.snapshot,
+      engine: "file-backup",
+      includeIgnoredExplicitPaths: false
+    }
+  }), true);
+  assert.equal(isFileBackupSnapshotEnabled({
+    ...base,
+    snapshot: {
+      ...base.snapshot,
+      engine: "git-tree"
+    }
+  }), false);
+  assert.equal(isFileBackupSnapshotEnabled({
+    ...base,
+    snapshot: {
+      ...base.snapshot,
+      enabled: false
+    }
+  }), false);
 }
 
 function testPersistedSubagentProgressIsSanitized() {

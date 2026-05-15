@@ -2,6 +2,9 @@ import assert from "node:assert/strict";
 import { promises as fs } from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { DiffService } from "../core/diff/diffService.js";
+import { FileHistoryManager } from "../core/file-history/fileHistoryManager.js";
+import { TurnSnapshotService } from "../core/snapshot/turnSnapshotService.js";
 import { executeToolCall } from "./executeToolCall.js";
 import { getToolPolicyViolation, isToolSchemaAllowedByPolicy } from "./toolPolicy.js";
 import type { ToolApprovalRequest, ToolExecutionContext } from "./types.js";
@@ -59,6 +62,18 @@ async function runTests() {
   await testBashCwdOutsideWorkspaceRequestsExternalDirectoryApproval();
   await testBashCwdOutsideWorkspaceStopsWhenExternalDirectoryRejected();
   await testPowerShellCwdOutsideWorkspaceRequestsExternalDirectoryApproval();
+  await testBashFileMutationsDoNotPopulateFileHistory();
+  await testPowerShellVariableFileMutationsPopulateFileHistory();
+  await testBashDirectoryMutationDoesNotPopulateFileHistoryAsFile();
+  await testPowerShellDirectoryMutationDoesNotPopulateFileHistoryAsFile();
+  await testBashRedirectionCapturesIgnoredPathInFileHistory();
+  await testBashOnWindowsPowerShellCommandCapturesExplicitPath();
+  await testPowerShellExplicitPathMutationsPopulateFileHistory();
+  await testPowerShellExternalStaticPathMutationPopulatesFileHistory();
+  await testPowerShellExternalHomeEnvMutationPopulatesFileHistory();
+  await testPowerShellExternalVariableDesktopMutationPopulatesFileHistory();
+  await testBashFileMutationsAreCapturedByTurnSnapshot();
+  await testPowerShellFileMutationsAreCapturedByTurnSnapshot();
   await testBashTimeoutReturnsStructuredTimeout();
   await testPowerShellTimeoutReturnsStructuredTimeout();
   console.log("executeToolCall tests passed");
@@ -775,6 +790,550 @@ async function testPowerShellCwdOutsideWorkspaceRequestsExternalDirectoryApprova
   });
 }
 
+async function testBashFileMutationsDoNotPopulateFileHistory() {
+  await withTempWorkspace(async (workspaceRoot) => {
+    const turnId = "test-turn";
+    const history = new FileHistoryManager();
+    const context = createTestContext({
+      workspaceRoot,
+      allowedRoots: [workspaceRoot],
+      turnId,
+      captureFileBeforeWrite: (absolutePath) => history.captureBeforeWrite(turnId, absolutePath)
+    });
+    const createdPath = path.join(workspaceRoot, "bash-created.txt");
+    const deletedPath = path.join(workspaceRoot, "bash-deleted.txt");
+    await fs.writeFile(deletedPath, "before\n");
+
+    history.beginTurn(turnId);
+    assertSuccessfulShellResult(await executeToolCall(
+      "Bash",
+      JSON.stringify({
+        command: "node -e \"require('fs').writeFileSync('bash-created.txt', 'created\\n')\"",
+        timeout_ms: 5_000
+      }),
+      context
+    ));
+    assertSuccessfulShellResult(await executeToolCall(
+      "Bash",
+      JSON.stringify({
+        command: "node -e \"require('fs').unlinkSync('bash-deleted.txt')\"",
+        timeout_ms: 5_000
+      }),
+      context
+    ));
+    await history.finalizeTurn(turnId);
+
+    assert.equal(await fs.readFile(createdPath, "utf8"), "created\n");
+    await assert.rejects(fs.stat(deletedPath), { code: "ENOENT" });
+    assert.equal(history.hasTrackedFiles(turnId), false);
+    assert.equal(history.canRestoreTurn(turnId), false);
+    assert.equal((await history.restoreTurn(turnId)).missingSnapshot, true);
+  });
+}
+
+async function testPowerShellVariableFileMutationsPopulateFileHistory() {
+  if (process.platform !== "win32") {
+    return;
+  }
+
+  await withTempWorkspace(async (workspaceRoot) => {
+    const turnId = "test-turn";
+    const history = new FileHistoryManager();
+    const context = createTestContext({
+      workspaceRoot,
+      allowedRoots: [workspaceRoot],
+      turnId,
+      captureFileBeforeWrite: (absolutePath) => history.captureBeforeWrite(turnId, absolutePath)
+    });
+    const createdPath = path.join(workspaceRoot, "powershell-created.txt");
+    const deletedPath = path.join(workspaceRoot, "powershell-deleted.txt");
+    await fs.writeFile(deletedPath, "before\n");
+
+    history.beginTurn(turnId);
+    assertSuccessfulShellResult(await executeToolCall(
+      "PowerShell",
+      JSON.stringify({
+        command: "$target = 'powershell-created.txt'; Set-Content -LiteralPath $target -Value 'created'",
+        timeout_ms: 5_000
+      }),
+      context
+    ));
+    assertSuccessfulShellResult(await executeToolCall(
+      "PowerShell",
+      JSON.stringify({
+        command: "$target = 'powershell-deleted.txt'; Remove-Item -LiteralPath $target",
+        timeout_ms: 5_000
+      }),
+      context
+    ));
+    await history.finalizeTurn(turnId);
+
+    assert.equal((await fs.readFile(createdPath, "utf8")).trim(), "created");
+    await assert.rejects(fs.stat(deletedPath), { code: "ENOENT" });
+    assert.equal(history.hasTrackedFiles(turnId), true);
+    assert.equal(history.canRestoreTurn(turnId), true);
+
+    const result = await history.restoreTurn(turnId);
+    assert.deepEqual(result.restored, [deletedPath]);
+    assert.deepEqual(result.removed, [createdPath]);
+    assert.equal(await fs.readFile(deletedPath, "utf8"), "before\n");
+    await assert.rejects(fs.stat(createdPath), { code: "ENOENT" });
+  });
+}
+
+async function testBashDirectoryMutationDoesNotPopulateFileHistoryAsFile() {
+  await withTempWorkspace(async (workspaceRoot) => {
+    const turnId = "test-turn";
+    const history = new FileHistoryManager();
+    const context = createTestContext({
+      workspaceRoot,
+      allowedRoots: [workspaceRoot],
+      turnId,
+      captureFileBeforeWrite: (absolutePath) => history.captureBeforeWrite(turnId, absolutePath)
+    });
+    const createdDirectory = path.join(workspaceRoot, "bash-created-dir");
+
+    history.beginTurn(turnId);
+    assertSuccessfulShellResult(await executeToolCall(
+      "Bash",
+      JSON.stringify({
+        command: "mkdir bash-created-dir",
+        timeout_ms: 5_000
+      }),
+      context
+    ));
+    await history.finalizeTurn(turnId);
+
+    assert.equal((await fs.stat(createdDirectory)).isDirectory(), true);
+    assert.equal(history.hasTrackedFiles(turnId), true);
+    assert.equal(history.canRestoreTurn(turnId), true);
+    const result = await history.restoreTurn(turnId);
+    assert.deepEqual(result.restored, []);
+    assert.deepEqual(result.removed, [createdDirectory]);
+    await assert.rejects(fs.stat(createdDirectory), { code: "ENOENT" });
+  });
+}
+
+async function testPowerShellDirectoryMutationDoesNotPopulateFileHistoryAsFile() {
+  if (process.platform !== "win32") {
+    return;
+  }
+
+  await withTempWorkspace(async (workspaceRoot) => {
+    const turnId = "test-turn";
+    const history = new FileHistoryManager();
+    const context = createTestContext({
+      workspaceRoot,
+      allowedRoots: [workspaceRoot],
+      turnId,
+      captureFileBeforeWrite: (absolutePath) => history.captureBeforeWrite(turnId, absolutePath)
+    });
+    const createdDirectory = path.join(workspaceRoot, "powershell-created-dir");
+
+    history.beginTurn(turnId);
+    assertSuccessfulShellResult(await executeToolCall(
+      "PowerShell",
+      JSON.stringify({
+        command: "New-Item -Path 'powershell-created-dir' -ItemType Directory",
+        timeout_ms: 5_000
+      }),
+      context
+    ));
+    await history.finalizeTurn(turnId);
+
+    assert.equal((await fs.stat(createdDirectory)).isDirectory(), true);
+    assert.equal(history.hasTrackedFiles(turnId), true);
+    assert.equal(history.canRestoreTurn(turnId), true);
+    const result = await history.restoreTurn(turnId);
+    assert.deepEqual(result.restored, []);
+    assert.deepEqual(result.removed, [createdDirectory]);
+    await assert.rejects(fs.stat(createdDirectory), { code: "ENOENT" });
+  });
+}
+
+async function testBashRedirectionCapturesIgnoredPathInFileHistory() {
+  await withTempWorkspace(async (workspaceRoot) => {
+    const turnId = "test-turn";
+    const history = new FileHistoryManager();
+    const context = createTestContext({
+      workspaceRoot,
+      allowedRoots: [workspaceRoot],
+      turnId,
+      captureFileBeforeWrite: (absolutePath) => history.captureBeforeWrite(turnId, absolutePath)
+    });
+    const ignoredPath = path.join(workspaceRoot, "ignored.log");
+    await fs.writeFile(path.join(workspaceRoot, ".gitignore"), "ignored.log\n");
+
+    history.beginTurn(turnId);
+    assertSuccessfulShellResult(await executeToolCall(
+      "Bash",
+      JSON.stringify({
+        command: "echo created > ignored.log",
+        timeout_ms: 5_000
+      }),
+      context
+    ));
+    await history.finalizeTurn(turnId);
+
+    assert.equal(history.hasTrackedFiles(turnId), true);
+    assert.equal(history.canRestoreTurn(turnId), true);
+    const result = await history.restoreTurn(turnId);
+    assert.deepEqual(result.restored, []);
+    assert.deepEqual(result.removed, [ignoredPath]);
+    await assert.rejects(fs.stat(ignoredPath), { code: "ENOENT" });
+  });
+}
+
+async function testBashOnWindowsPowerShellCommandCapturesExplicitPath() {
+  if (process.platform !== "win32") {
+    return;
+  }
+
+  await withTempWorkspace(async (workspaceRoot) => {
+    const turnId = "test-turn";
+    const history = new FileHistoryManager();
+    const context = createTestContext({
+      workspaceRoot,
+      allowedRoots: [workspaceRoot],
+      turnId,
+      captureFileBeforeWrite: (absolutePath) => history.captureBeforeWrite(turnId, absolutePath)
+    });
+    const createdPath = path.join(workspaceRoot, "bash-powershell-created.log");
+    await fs.writeFile(path.join(workspaceRoot, ".gitignore"), "*.log\n");
+
+    history.beginTurn(turnId);
+    assertSuccessfulShellResult(await executeToolCall(
+      "Bash",
+      JSON.stringify({
+        command: "Set-Content -LiteralPath 'bash-powershell-created.log' -Value 'created'",
+        timeout_ms: 5_000
+      }),
+      context
+    ));
+    await history.finalizeTurn(turnId);
+
+    assert.equal(history.hasTrackedFiles(turnId), true);
+    assert.equal(history.canRestoreTurn(turnId), true);
+    assert.equal((await fs.readFile(createdPath, "utf8")).trim(), "created");
+
+    const result = await history.restoreTurn(turnId);
+    assert.deepEqual(result.restored, []);
+    assert.deepEqual(result.removed, [createdPath]);
+    await assert.rejects(fs.stat(createdPath), { code: "ENOENT" });
+  });
+}
+
+async function testPowerShellExplicitPathMutationsPopulateFileHistory() {
+  if (process.platform !== "win32") {
+    return;
+  }
+
+  await withTempWorkspace(async (workspaceRoot) => {
+    const turnId = "test-turn";
+    const history = new FileHistoryManager();
+    const context = createTestContext({
+      workspaceRoot,
+      allowedRoots: [workspaceRoot],
+      turnId,
+      captureFileBeforeWrite: (absolutePath) => history.captureBeforeWrite(turnId, absolutePath)
+    });
+    const createdPath = path.join(workspaceRoot, "powershell-explicit-created.log");
+    const deletedPath = path.join(workspaceRoot, "powershell-explicit-deleted.log");
+    await fs.writeFile(path.join(workspaceRoot, ".gitignore"), "*.log\n");
+    await fs.writeFile(deletedPath, "before\n");
+
+    history.beginTurn(turnId);
+    assertSuccessfulShellResult(await executeToolCall(
+      "PowerShell",
+      JSON.stringify({
+        command: [
+          "New-Item -Path 'powershell-explicit-created.log' -ItemType File",
+          "Remove-Item -LiteralPath 'powershell-explicit-deleted.log'"
+        ].join("; "),
+        timeout_ms: 5_000
+      }),
+      context
+    ));
+    await history.finalizeTurn(turnId);
+
+    assert.equal(history.hasTrackedFiles(turnId), true);
+    assert.equal(history.canRestoreTurn(turnId), true);
+    const result = await history.restoreTurn(turnId);
+    assert.deepEqual(result.restored, [deletedPath]);
+    assert.deepEqual(result.removed, [createdPath]);
+    assert.equal(await fs.readFile(deletedPath, "utf8"), "before\n");
+    await assert.rejects(fs.stat(createdPath), { code: "ENOENT" });
+  });
+}
+
+async function testPowerShellExternalStaticPathMutationPopulatesFileHistory() {
+  if (process.platform !== "win32") {
+    return;
+  }
+
+  await withTempWorkspace(async (workspaceRoot) => {
+    await withExternalTempDirectory(async (externalDirectory) => {
+      const turnId = "test-turn";
+      const history = new FileHistoryManager();
+      const context = createTestContext({
+        workspaceRoot,
+        allowedRoots: [workspaceRoot],
+        turnId,
+        captureFileBeforeWrite: (absolutePath) => history.captureBeforeWrite(turnId, absolutePath)
+      });
+      const deletedPath = path.join(externalDirectory, "external-deleted.txt");
+      await fs.writeFile(deletedPath, "before\n");
+
+      history.beginTurn(turnId);
+      assertSuccessfulShellResult(await executeToolCall(
+        "PowerShell",
+        JSON.stringify({
+          command: `Remove-Item -Path "${deletedPath}"`,
+          timeout_ms: 5_000
+        }),
+        context
+      ));
+      await history.finalizeTurn(turnId);
+
+      assert.equal(history.hasTrackedFiles(turnId), true);
+      assert.equal(history.canRestoreTurn(turnId), true);
+      await assert.rejects(fs.stat(deletedPath), { code: "ENOENT" });
+
+      const result = await history.restoreTurn(turnId);
+      assert.deepEqual(result.restored, [deletedPath]);
+      assert.deepEqual(result.removed, []);
+      assert.equal(await fs.readFile(deletedPath, "utf8"), "before\n");
+    });
+  });
+}
+
+async function testPowerShellExternalHomeEnvMutationPopulatesFileHistory() {
+  if (process.platform !== "win32") {
+    return;
+  }
+
+  await withTempWorkspace(async (workspaceRoot) => {
+    await withExternalTempDirectory(async (externalDirectory) => {
+      const originalUserProfile = process.env.USERPROFILE;
+      process.env.USERPROFILE = externalDirectory;
+      try {
+        const turnId = "test-turn";
+        const history = new FileHistoryManager();
+        const context = createTestContext({
+          workspaceRoot,
+          allowedRoots: [workspaceRoot],
+          turnId,
+          captureFileBeforeWrite: (absolutePath) => history.captureBeforeWrite(turnId, absolutePath)
+        });
+        const createdDirectory = path.join(externalDirectory, "alyce-env-capture");
+
+        history.beginTurn(turnId);
+        assertSuccessfulShellResult(await executeToolCall(
+          "PowerShell",
+          JSON.stringify({
+            command: [
+              'New-Item -ItemType Directory -Path "$env:USERPROFILE\\alyce-env-capture"',
+              'Set-Content -Path "$env:USERPROFILE\\alyce-env-capture\\note.txt" -Value "created"',
+              'Remove-Item -Path "$env:USERPROFILE\\alyce-env-capture\\note.txt"'
+            ].join("; "),
+            timeout_ms: 15_000
+          }),
+          context
+        ));
+        await history.finalizeTurn(turnId);
+
+        assert.equal(history.hasTrackedFiles(turnId), true);
+        assert.equal(history.canRestoreTurn(turnId), true);
+        assert.equal((await fs.stat(createdDirectory)).isDirectory(), true);
+
+        const result = await history.restoreTurn(turnId);
+        assert.deepEqual(result.restored, []);
+        assert.deepEqual(result.removed, [createdDirectory]);
+        await assert.rejects(fs.stat(createdDirectory), { code: "ENOENT" });
+      } finally {
+        if (originalUserProfile === undefined) {
+          delete process.env.USERPROFILE;
+        } else {
+          process.env.USERPROFILE = originalUserProfile;
+        }
+      }
+    });
+  });
+}
+
+async function testPowerShellExternalVariableDesktopMutationPopulatesFileHistory() {
+  if (process.platform !== "win32") {
+    return;
+  }
+
+  await withTempWorkspace(async (workspaceRoot) => {
+    await withExternalTempDirectory(async (externalDirectory) => {
+      const originalUserProfile = process.env.USERPROFILE;
+      process.env.USERPROFILE = externalDirectory;
+      try {
+        const desktopDirectory = path.join(externalDirectory, "Desktop");
+        await fs.mkdir(desktopDirectory, { recursive: true });
+        const turnId = "test-turn";
+        const history = new FileHistoryManager();
+        const context = createTestContext({
+          workspaceRoot,
+          allowedRoots: [workspaceRoot],
+          turnId,
+          captureFileBeforeWrite: (absolutePath) => history.captureBeforeWrite(turnId, absolutePath)
+        });
+        const createdDirectory = path.join(desktopDirectory, "新文件夹");
+
+        history.beginTurn(turnId);
+        assertSuccessfulShellResult(await executeToolCall(
+          "PowerShell",
+          JSON.stringify({
+            command: [
+              '$desktopPath = [System.IO.Path]::Combine($env:USERPROFILE, "Desktop")',
+              'if (-not (Test-Path $desktopPath)) {',
+              '    # localized fallback',
+              '    $desktopPath = [System.IO.Path]::Combine($env:USERPROFILE, "OneDrive", "桌面")',
+              '    if (-not (Test-Path $desktopPath)) {',
+              '        $desktopPath = [System.IO.Path]::Combine($env:USERPROFILE, "OneDrive", "Desktop")',
+              '    }',
+              '}',
+              '$newFolderPath = [System.IO.Path]::Combine($desktopPath, "新文件夹")',
+              'New-Item -Path $newFolderPath -ItemType Directory -Force',
+              'Write-Output "文件夹已创建在: $newFolderPath"'
+            ].join("\n"),
+            timeout_ms: 15_000
+          }),
+          context
+        ));
+        await history.finalizeTurn(turnId);
+
+        assert.equal(history.hasTrackedFiles(turnId), true);
+        assert.equal(history.canRestoreTurn(turnId), true);
+        assert.equal((await fs.stat(createdDirectory)).isDirectory(), true);
+
+        const result = await history.restoreTurn(turnId);
+        assert.deepEqual(result.restored, []);
+        assert.deepEqual(result.removed, [createdDirectory]);
+        await assert.rejects(fs.stat(createdDirectory), { code: "ENOENT" });
+      } finally {
+        if (originalUserProfile === undefined) {
+          delete process.env.USERPROFILE;
+        } else {
+          process.env.USERPROFILE = originalUserProfile;
+        }
+      }
+    });
+  });
+}
+
+async function testBashFileMutationsAreCapturedByTurnSnapshot() {
+  await withTempWorkspace(async (workspaceRoot) => {
+    const turnId = "test-turn";
+    const snapshots = new TurnSnapshotService({
+      workspaceRoot,
+      snapshotRoot: path.join(workspaceRoot, ".alyce", "snapshots", "git")
+    });
+    const fileHistory = new FileHistoryManager();
+    const context = createTestContext({
+      workspaceRoot,
+      allowedRoots: [workspaceRoot],
+      turnId,
+      captureFileBeforeWrite: (absolutePath) => fileHistory.captureBeforeWrite(turnId, absolutePath)
+    });
+    const createdPath = path.join(workspaceRoot, "bash-snapshot-created.txt");
+    const deletedPath = path.join(workspaceRoot, "bash-snapshot-deleted.txt");
+    await fs.writeFile(deletedPath, "before\n");
+
+    fileHistory.beginTurn(turnId);
+    await snapshots.beginTurn(turnId);
+    assertSuccessfulShellResult(await executeToolCall(
+      "Bash",
+      JSON.stringify({
+        command: "node -e \"require('fs').writeFileSync('bash-snapshot-created.txt', 'created\\n'); require('fs').unlinkSync('bash-snapshot-deleted.txt')\"",
+        timeout_ms: 5_000
+      }),
+      context
+    ));
+    await snapshots.finalizeTurn(turnId);
+
+    const report = await new DiffService({
+      workspaceRoot,
+      fileHistoryManager: fileHistory,
+      turnSnapshotService: snapshots
+    }).getTurnDiff(turnId);
+    assert.deepEqual(
+      report.files.map((file) => [file.path, file.status]),
+      [
+        ["bash-snapshot-created.txt", "added"],
+        ["bash-snapshot-deleted.txt", "deleted"]
+      ]
+    );
+
+    const result = await snapshots.restoreTurn(turnId);
+    assert.deepEqual(result.restored, [deletedPath]);
+    assert.deepEqual(result.removed, [createdPath]);
+    assert.equal(await fs.readFile(deletedPath, "utf8"), "before\n");
+    await assert.rejects(fs.stat(createdPath), { code: "ENOENT" });
+  });
+}
+
+async function testPowerShellFileMutationsAreCapturedByTurnSnapshot() {
+  if (process.platform !== "win32") {
+    return;
+  }
+
+  await withTempWorkspace(async (workspaceRoot) => {
+    const turnId = "test-turn";
+    const snapshots = new TurnSnapshotService({
+      workspaceRoot,
+      snapshotRoot: path.join(workspaceRoot, ".alyce", "snapshots", "git")
+    });
+    const fileHistory = new FileHistoryManager();
+    const context = createTestContext({
+      workspaceRoot,
+      allowedRoots: [workspaceRoot],
+      turnId,
+      captureFileBeforeWrite: (absolutePath) => fileHistory.captureBeforeWrite(turnId, absolutePath)
+    });
+    const createdPath = path.join(workspaceRoot, "powershell-snapshot-created.txt");
+    const deletedPath = path.join(workspaceRoot, "powershell-snapshot-deleted.txt");
+    await fs.writeFile(deletedPath, "before\n");
+
+    fileHistory.beginTurn(turnId);
+    await snapshots.beginTurn(turnId);
+    assertSuccessfulShellResult(await executeToolCall(
+      "PowerShell",
+      JSON.stringify({
+        command: [
+          "Set-Content -LiteralPath 'powershell-snapshot-created.txt' -Value 'created'",
+          "Remove-Item -LiteralPath 'powershell-snapshot-deleted.txt'"
+        ].join("; "),
+        timeout_ms: 5_000
+      }),
+      context
+    ));
+    await snapshots.finalizeTurn(turnId);
+
+    const report = await new DiffService({
+      workspaceRoot,
+      fileHistoryManager: fileHistory,
+      turnSnapshotService: snapshots
+    }).getTurnDiff(turnId);
+    assert.deepEqual(
+      report.files.map((file) => [file.path, file.status]),
+      [
+        ["powershell-snapshot-created.txt", "added"],
+        ["powershell-snapshot-deleted.txt", "deleted"]
+      ]
+    );
+
+    const result = await snapshots.restoreTurn(turnId);
+    assert.deepEqual(result.restored, [deletedPath]);
+    assert.deepEqual(result.removed, [createdPath]);
+    assert.equal(await fs.readFile(deletedPath, "utf8"), "before\n");
+    await assert.rejects(fs.stat(createdPath), { code: "ENOENT" });
+  });
+}
+
 async function testPowerShellTimeoutReturnsStructuredTimeout() {
   if (process.platform !== "win32") {
     return;
@@ -825,6 +1384,30 @@ async function withExternalTempDirectory(callback: (directory: string) => Promis
   } finally {
     await fs.rm(externalDirectory, { recursive: true, force: true });
   }
+}
+
+async function withTempWorkspace(callback: (workspaceRoot: string) => Promise<void>) {
+  const workspaceRoot = await fs.mkdtemp(path.join(os.tmpdir(), "alyce-shell-history-"));
+  try {
+    await callback(workspaceRoot);
+  } finally {
+    await fs.rm(workspaceRoot, { recursive: true, force: true });
+  }
+}
+
+function assertSuccessfulShellResult(result: { displayResult: string }) {
+  const parsed = JSON.parse(result.displayResult) as {
+    ok: boolean;
+    result: {
+      exitCode: number | null;
+      timedOut: boolean;
+      stderr: string;
+    };
+  };
+
+  assert.equal(parsed.ok, true);
+  assert.equal(parsed.result.exitCode, 0);
+  assert.equal(parsed.result.timedOut, false);
 }
 
 function createMcpRuntime(patch: Partial<ToolExecutionContext["mcpRuntime"]>) {

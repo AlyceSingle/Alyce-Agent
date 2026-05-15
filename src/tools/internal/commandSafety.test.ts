@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import os from "node:os";
 import {
   analyzeCommandSafety,
   formatCommandSafetyDetails
@@ -14,9 +15,18 @@ function runTests() {
   testBashWindowsPackageManagerCmdInstallWarnsAboutScripts();
   testBashWindowsPackageManagerCmdBuildIsBuildTest();
   testBashGitResetIsDestructive();
+  testBashRedirectionExtractsStaticWritePath();
+  testBashWildcardWritePathIsNotStatic();
   testPowerShellReadOnlyCommand();
+  testPowerShellReadOnlyAliases();
   testPowerShellRemoveItemForcesAsk();
   testPowerShellSetContentIsMutation();
+  testPowerShellCmdletsExtractStaticWritePaths();
+  testPowerShellAliasesExtractStaticWritePaths();
+  testPowerShellHomeEnvironmentPathsAreStatic();
+  testPowerShellVariableCombinePathsAreStatic();
+  testPowerShellJoinPathDesktopPathsAreStatic();
+  testPowerShellDynamicWritePathIsNotStatic();
   testPowerShellDownloadPipeIexIsDenied();
   testPowerShellNestedCommandForcesExactRule();
   testPowerShellWindowsPackageManagerCmdInstallWarnsAboutScripts();
@@ -110,8 +120,34 @@ function testBashGitResetIsDestructive() {
   assert.ok(analysis.possibleWrites.includes("git working tree"));
 }
 
+function testBashRedirectionExtractsStaticWritePath() {
+  const analysis = analyzeCommandSafety("shell", "echo hi > ignored.log");
+
+  assert.equal(analysis.category, "file-mutation");
+  assert.deepEqual(analysis.possibleWritePaths, ["ignored.log"]);
+  assert.equal(analysis.usesWildcard, false);
+  assert.equal(analysis.usesDynamicExpression, false);
+}
+
+function testBashWildcardWritePathIsNotStatic() {
+  const analysis = analyzeCommandSafety("shell", "rm *.log");
+
+  assert.equal(analysis.category, "unknown");
+  assert.deepEqual(analysis.possibleWritePaths, []);
+  assert.equal(analysis.usesWildcard, true);
+  assert.match(analysis.unknownWriteReason ?? "", /wildcards/);
+}
+
 function testPowerShellReadOnlyCommand() {
   const analysis = analyzeCommandSafety("powershell", "Get-ChildItem -Force");
+
+  assert.equal(analysis.category, "safe-read-only");
+  assert.equal(analysis.level, "low");
+  assert.equal(analysis.forceAsk, false);
+}
+
+function testPowerShellReadOnlyAliases() {
+  const analysis = analyzeCommandSafety("powershell", "ls -Force | sls package");
 
   assert.equal(analysis.category, "safe-read-only");
   assert.equal(analysis.level, "low");
@@ -132,6 +168,99 @@ function testPowerShellSetContentIsMutation() {
   assert.equal(analysis.category, "file-mutation");
   assert.equal(analysis.level, "medium");
   assert.equal(analysis.action, "ask");
+  assert.deepEqual(analysis.possibleWritePaths, [".\\out.txt"]);
+}
+
+function testPowerShellCmdletsExtractStaticWritePaths() {
+  const newItem = analyzeCommandSafety("powershell", "New-Item -Path 'ignored.log' -ItemType File");
+  assert.deepEqual(newItem.possibleWritePaths, ["ignored.log"]);
+
+  const moveItem = analyzeCommandSafety("powershell", "Move-Item -LiteralPath old.log -Destination new.log");
+  assert.deepEqual(moveItem.possibleWritePaths, ["old.log", "new.log"]);
+
+  const removeItem = analyzeCommandSafety("powershell", "Remove-Item -Recurse target-dir");
+  assert.deepEqual(removeItem.possibleWritePaths, ["target-dir"]);
+}
+
+function testPowerShellAliasesExtractStaticWritePaths() {
+  const mkdir = analyzeCommandSafety("powershell", "mkdir ~/Desktop/NewFolder");
+  assert.equal(mkdir.category, "file-mutation");
+  assert.deepEqual(mkdir.possibleWritePaths, ["~/Desktop/NewFolder"]);
+
+  const rm = analyzeCommandSafety("powershell", "rm \"~/Desktop/NewFolder/note.txt\"");
+  assert.equal(rm.category, "file-mutation");
+  assert.deepEqual(rm.possibleWritePaths, ["~/Desktop/NewFolder/note.txt"]);
+}
+
+function testPowerShellHomeEnvironmentPathsAreStatic() {
+  const userProfile = process.env.USERPROFILE ?? os.homedir();
+  const profilePath = analyzeCommandSafety(
+    "powershell",
+    'New-Item -Path "$env:USERPROFILE\\Desktop\\AlyceReview" -ItemType Directory'
+  );
+  assert.equal(profilePath.category, "file-mutation");
+  assert.deepEqual(profilePath.possibleWritePaths, [`${userProfile}\\Desktop\\AlyceReview`]);
+  assert.equal(profilePath.usesDynamicExpression, false);
+
+  const homePath = analyzeCommandSafety(
+    "powershell",
+    'Remove-Item -LiteralPath "$HOME/Desktop/AlyceReview/note.txt"'
+  );
+  assert.deepEqual(homePath.possibleWritePaths, [`${os.homedir()}/Desktop/AlyceReview/note.txt`]);
+  assert.equal(homePath.usesDynamicExpression, false);
+}
+
+function testPowerShellVariableCombinePathsAreStatic() {
+  const userProfile = process.env.USERPROFILE ?? os.homedir();
+  const analysis = analyzeCommandSafety(
+    "powershell",
+    [
+      '$desktopPath = [System.IO.Path]::Combine($env:USERPROFILE, "Desktop")',
+      'if (-not (Test-Path $desktopPath)) {',
+      '    # localized fallback',
+      '    $desktopPath = [System.IO.Path]::Combine($env:USERPROFILE, "OneDrive", "桌面")',
+      '    if (-not (Test-Path $desktopPath)) {',
+      '        $desktopPath = [System.IO.Path]::Combine($env:USERPROFILE, "OneDrive", "Desktop")',
+      '    }',
+      '}',
+      '$newFolderPath = [System.IO.Path]::Combine($desktopPath, "新文件夹")',
+      'New-Item -Path $newFolderPath -ItemType Directory -Force',
+      'Write-Output "文件夹已创建在: $newFolderPath"'
+    ].join("\n")
+  );
+
+  assert.equal(analysis.category, "file-mutation");
+  assert.deepEqual(analysis.possibleWritePaths, [
+    `${userProfile}\\Desktop\\新文件夹`,
+    `${userProfile}\\OneDrive\\桌面\\新文件夹`,
+    `${userProfile}\\OneDrive\\Desktop\\新文件夹`
+  ]);
+  assert.equal(analysis.possibleWritePaths.includes("Write-Output"), false);
+  assert.equal(analysis.usesDynamicExpression, false);
+}
+
+function testPowerShellJoinPathDesktopPathsAreStatic() {
+  const userProfile = process.env.USERPROFILE ?? os.homedir();
+  const analysis = analyzeCommandSafety(
+    "powershell",
+    [
+      '$desktop = [Environment]::GetFolderPath("Desktop")',
+      '$target = Join-Path $desktop "AlyceFolder"',
+      'New-Item -ItemType Directory -Path $target'
+    ].join("\n")
+  );
+
+  assert.equal(analysis.category, "file-mutation");
+  assert.deepEqual(analysis.possibleWritePaths, [`${userProfile}\\Desktop\\AlyceFolder`]);
+  assert.equal(analysis.usesDynamicExpression, false);
+}
+
+function testPowerShellDynamicWritePathIsNotStatic() {
+  const analysis = analyzeCommandSafety("powershell", "Remove-Item -LiteralPath $target");
+
+  assert.deepEqual(analysis.possibleWritePaths, []);
+  assert.equal(analysis.usesDynamicExpression, true);
+  assert.match(analysis.unknownWriteReason ?? "", /dynamic/);
 }
 
 function testPowerShellDownloadPipeIexIsDenied() {

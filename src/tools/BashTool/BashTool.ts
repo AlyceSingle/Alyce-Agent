@@ -1,6 +1,7 @@
 import { spawn } from "node:child_process";
 import { z } from "zod";
 import { TurnInterruptedError, getAbortReason, throwIfAborted } from "../../core/abort.js";
+import { capturePossibleCommandWritePaths } from "../internal/commandFileCapture.js";
 import { resolveCommandWorkingDirectory } from "../internal/commandWorkingDirectory.js";
 import { toWorkspaceRelative } from "../internal/pathSandbox.js";
 import {
@@ -11,6 +12,7 @@ import {
 } from "../internal/commandOutput.js";
 import {
   analyzeCommandSafety,
+  type CommandDialect,
   formatCommandSafetyDetails
 } from "../internal/commandSafety.js";
 import {
@@ -78,7 +80,7 @@ export async function executeBashTool(
   throwIfAborted(context.abortSignal);
 
   const timeoutMs = normalizeTimeout(input.timeout_ms, context.commandTimeoutMs);
-  const safety = analyzeCommandSafety("shell", input.command);
+  const safety = analyzeCommandSafety(getBashExecutionDialect(), input.command);
 
   if (context.planMode && safety.category !== "safe-read-only") {
     throw new Error([
@@ -130,6 +132,11 @@ export async function executeBashTool(
   }
 
   throwIfAborted(context.abortSignal);
+  await capturePossibleCommandWritePaths({
+    analysis: safety,
+    context,
+    workingDirectory
+  });
   context.recordToolActivity?.(BASH_TOOL_NAME);
 
   const startedAt = Date.now();
@@ -164,6 +171,10 @@ function getShellCommand(command: string): ShellCommand {
     executable: process.env.SHELL || "/bin/bash",
     args: ["-lc", command]
   };
+}
+
+function getBashExecutionDialect(): CommandDialect {
+  return process.platform === "win32" ? "powershell" : "shell";
 }
 
 function summarizeCommand(command: string): string {

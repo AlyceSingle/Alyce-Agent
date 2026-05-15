@@ -1,6 +1,7 @@
 import { spawn } from "node:child_process";
 import { z } from "zod";
 import { TurnInterruptedError, getAbortReason, throwIfAborted } from "../../core/abort.js";
+import { capturePossibleCommandWritePaths } from "../internal/commandFileCapture.js";
 import { resolveCommandWorkingDirectory } from "../internal/commandWorkingDirectory.js";
 import { toWorkspaceRelative } from "../internal/pathSandbox.js";
 import {
@@ -129,6 +130,11 @@ export async function executePowerShellTool(
   }
 
   throwIfAborted(context.abortSignal);
+  await capturePossibleCommandWritePaths({
+    analysis: safety,
+    context,
+    workingDirectory
+  });
   context.recordToolActivity?.(POWERSHELL_TOOL_NAME);
 
   const startedAt = Date.now();

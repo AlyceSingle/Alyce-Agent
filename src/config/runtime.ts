@@ -50,6 +50,18 @@ export interface MemoryRuntimeConfig {
   };
 }
 
+export type SnapshotEngine = "hybrid" | "git-tree" | "file-backup";
+
+export interface SnapshotRuntimeConfig {
+  enabled: boolean;
+  engine: SnapshotEngine;
+  maxTextDiffBytes: number;
+  maxFileBytes: number;
+  retentionDays: number;
+  includeIgnoredExplicitPaths: boolean;
+  manifestScan: boolean;
+}
+
 export interface ConnectionConfig {
   apiKey: string;
   baseURL?: string;
@@ -80,6 +92,7 @@ export interface SessionSettings extends PromptOverrideConfig {
   diagnosticsPendingTimeoutMs: number;
   diagnosticsFailureThreshold: number;
   diagnosticsFailureCooldownMs: number;
+  snapshot: SnapshotRuntimeConfig;
   conversationCompactionEnabled: boolean;
   autoCompactTimeoutMs: number;
   autoCompactMaxFailures: number;
@@ -167,7 +180,8 @@ const ConnectionConfigFileSchema = z
   })
   .strict();
 
-type SessionSettingsFile = Partial<SessionSettings> & {
+type SessionSettingsFile = Omit<Partial<SessionSettings>, "snapshot"> & {
+  snapshot?: Partial<SnapshotRuntimeConfig>;
   autoSummaryEnabled?: boolean;
   statusUsageDisplayEnabled?: boolean;
   startupInstructionFiles?: string[];
@@ -194,6 +208,22 @@ const SessionSettingsFileSchema: z.ZodType<SessionSettingsFile> = z
     diagnosticsPendingTimeoutMs: z.number().int().positive().optional(),
     diagnosticsFailureThreshold: z.number().int().positive().optional(),
     diagnosticsFailureCooldownMs: z.number().int().positive().optional(),
+    snapshot: z
+      .object({
+        enabled: z.boolean().optional(),
+        engine: z.union([
+          z.literal("hybrid"),
+          z.literal("git-tree"),
+          z.literal("file-backup")
+        ]).optional(),
+        maxTextDiffBytes: z.number().int().positive().optional(),
+        maxFileBytes: z.number().int().positive().optional(),
+        retentionDays: z.number().int().positive().optional(),
+        includeIgnoredExplicitPaths: z.boolean().optional(),
+        manifestScan: z.boolean().optional()
+      })
+      .strict()
+      .optional(),
     conversationCompactionEnabled: z.boolean().optional(),
     autoCompactTimeoutMs: z.number().int().positive().optional(),
     autoCompactMaxFailures: z.number().int().positive().optional(),
@@ -642,9 +672,13 @@ function normalizeSessionSettingsFile(input: Partial<SessionSettingsFile>): Part
     autoSummaryEnabled,
     statusUsageDisplayEnabled: _removedStatusUsageDisplayEnabled,
     startupInstructionFiles: _removedStartupInstructionFiles,
+    snapshot,
     ...settings
   } = input;
   const normalized: Partial<SessionSettings> = { ...settings };
+  if (snapshot !== undefined) {
+    normalized.snapshot = normalizeSnapshotSettings(snapshot);
+  }
 
   if (normalized.sessionMemoryEnabled === undefined && autoSummaryEnabled !== undefined) {
     // autoSummaryEnabled is the retired name for session memory; accept it so
@@ -693,6 +727,7 @@ function normalizeSessionSettings(
     diagnosticsPendingTimeoutMs: clampPositiveInt(input.diagnosticsPendingTimeoutMs, 120_000),
     diagnosticsFailureThreshold: clampPositiveInt(input.diagnosticsFailureThreshold, 3),
     diagnosticsFailureCooldownMs: clampPositiveInt(input.diagnosticsFailureCooldownMs, 300_000),
+    snapshot: normalizeSnapshotSettings(input.snapshot),
     conversationCompactionEnabled: input.conversationCompactionEnabled ?? true,
     autoCompactTimeoutMs: clampPositiveInt(input.autoCompactTimeoutMs, 180_000),
     autoCompactMaxFailures: clampPositiveInt(input.autoCompactMaxFailures, 3),
@@ -749,6 +784,8 @@ function serializeSessionSettings(
       "diagnosticsFailureCooldownMs" in settings
         ? settings.diagnosticsFailureCooldownMs
         : undefined,
+    snapshot:
+      "snapshot" in settings ? normalizeSnapshotSettings(settings.snapshot) : undefined,
     conversationCompactionEnabled:
       "conversationCompactionEnabled" in settings
         ? settings.conversationCompactionEnabled
@@ -850,6 +887,7 @@ function resolveSettingsFromEnv(env: NodeJS.ProcessEnv): Partial<SessionSettings
     diagnosticsPendingTimeoutMs: parseOptionalPositiveInt(env.AGENT_DIAGNOSTICS_TIMEOUT_MS),
     diagnosticsFailureThreshold: parseOptionalPositiveInt(env.AGENT_DIAGNOSTICS_FAILURE_THRESHOLD),
     diagnosticsFailureCooldownMs: parseOptionalPositiveInt(env.AGENT_DIAGNOSTICS_FAILURE_COOLDOWN_MS),
+    snapshot: resolveSnapshotSettingsFromEnv(env),
     autoCompactTimeoutMs: parseOptionalPositiveInt(env.AGENT_AUTO_COMPACT_TIMEOUT_MS),
     autoCompactMaxFailures: parseOptionalPositiveInt(env.AGENT_AUTO_COMPACT_MAX_FAILURES),
     languagePreference: env.AGENT_LANGUAGE,
@@ -950,6 +988,53 @@ function clampPositiveInt(value: number | undefined, fallback: number): number {
   }
 
   return Math.max(1, Math.trunc(value!));
+}
+
+export function normalizeSnapshotSettings(
+  input: Partial<SnapshotRuntimeConfig> | undefined
+): SnapshotRuntimeConfig {
+  return {
+    enabled: input?.enabled ?? true,
+    engine: normalizeSnapshotEngine(input?.engine),
+    maxTextDiffBytes: clampPositiveInt(input?.maxTextDiffBytes, 524_288),
+    maxFileBytes: clampPositiveInt(input?.maxFileBytes, 2_097_152),
+    retentionDays: clampPositiveInt(input?.retentionDays, 7),
+    includeIgnoredExplicitPaths: input?.includeIgnoredExplicitPaths ?? true,
+    manifestScan: input?.manifestScan ?? true
+  };
+}
+
+function normalizeSnapshotEngine(value: SnapshotEngine | undefined): SnapshotEngine {
+  if (value === "git-tree" || value === "file-backup") {
+    return value;
+  }
+
+  return "hybrid";
+}
+
+function resolveSnapshotSettingsFromEnv(env: NodeJS.ProcessEnv): SnapshotRuntimeConfig | undefined {
+  const snapshot: Partial<SnapshotRuntimeConfig> = compactObject({
+    enabled: parseOptionalBoolean(env.AGENT_SNAPSHOT_ENABLED),
+    engine: parseSnapshotEngine(env.AGENT_SNAPSHOT_ENGINE),
+    maxTextDiffBytes: parseOptionalPositiveInt(env.AGENT_SNAPSHOT_MAX_TEXT_DIFF_BYTES),
+    maxFileBytes: parseOptionalPositiveInt(env.AGENT_SNAPSHOT_MAX_FILE_BYTES),
+    retentionDays: parseOptionalPositiveInt(env.AGENT_SNAPSHOT_RETENTION_DAYS),
+    includeIgnoredExplicitPaths: parseOptionalBoolean(
+      env.AGENT_SNAPSHOT_INCLUDE_IGNORED_EXPLICIT_PATHS
+    ),
+    manifestScan: parseOptionalBoolean(env.AGENT_SNAPSHOT_MANIFEST_SCAN)
+  });
+
+  return Object.keys(snapshot).length > 0 ? normalizeSnapshotSettings(snapshot) : undefined;
+}
+
+function parseSnapshotEngine(value: string | undefined): SnapshotEngine | undefined {
+  const normalized = value?.trim().toLowerCase();
+  if (normalized === "hybrid" || normalized === "git-tree" || normalized === "file-backup") {
+    return normalized;
+  }
+
+  return undefined;
 }
 
 function clampBoundedInt(
