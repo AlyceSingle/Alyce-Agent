@@ -1,5 +1,6 @@
 import { z } from "zod";
 import type { SubagentTaskInfo, ToolExecutionContext } from "../types.js";
+import { isInternalSubagentType } from "../AgentTool/agents.js";
 import { TASK_LIST_TOOL_DESCRIPTION, TASK_LIST_TOOL_NAME } from "./prompt.js";
 
 export const TaskListInputSchema = z
@@ -46,6 +47,7 @@ export async function executeTaskListTool(
   const includeCompleted = input.include_completed ?? true;
   const tasks = context
     .listSubagentTasks()
+    .filter((task) => !isInternalSubagentType(task.agentType))
     .filter((task) => includeCompleted || task.status !== "completed")
     .map(toTaskSummary);
 

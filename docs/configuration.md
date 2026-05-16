@@ -272,7 +272,7 @@ These appear in the **Session** tab of settings.
 
 ### Execution & Approval
 
-- `approvalMode` — how strict tool approval is. Options range from always-ask to smart-defaults.
+- `approvalMode` — access and approval mode. Supported values are `read-only`, `default`, `auto-review`, and `full-access`.
 - `maxSteps` — maximum tool-calling steps per turn before the agent must produce a final answer.
 - `commandTimeoutMs` — timeout for shell commands in milliseconds.
 - `scrollSpeed` — base number of rows used for line-by-line transcript scroll actions (`1-8`).
@@ -286,7 +286,7 @@ These appear in the **Session** tab of settings.
 
 ```json
 {
-  "approvalMode": "manual",
+  "approvalMode": "default",
   "permissionRules": [
     {
       "permission": "shell",
@@ -333,14 +333,23 @@ Supported `action` values are `allow`, `ask`, and `deny`. `pattern` defaults to 
 - exact shell/PowerShell command text such as `npm run build`.
 - URL or MCP patterns such as `https://docs.example.com/*` or `*`.
 
-Rule precedence is source-aware: built-in defaults are lowest, then project settings, then user settings, then approvals made during the current session, then the Plan Mode overlay. When multiple rules match, stricter actions win, so `deny` beats `allow`, and `allow` beats `ask` only when no stricter matching rule applies. Some requests set `forceAsk`; sensitive/generated file paths and high-risk commands still prompt even if a broad session allow rule exists.
+Rule precedence is source-aware: built-in defaults are lowest, then project settings, then user settings, then approvals made during the current session, then the Plan Mode overlay. When multiple rules match, stricter actions win, so `deny` beats `allow`, and `allow` beats `ask` only when no stricter matching rule applies. Some requests set `forceAsk`; sensitive/generated file paths and high-risk commands still prompt unless `approvalMode` is `full-access`.
+
+The built-in approval modes are:
+
+- `read-only` — workspace reads are allowed; writes, commands, network, and external directories ask.
+- `default` — workspace reads/writes and ordinary commands are allowed; network, external directories, and `forceAsk` requests ask.
+- `auto-review` — same baseline as `default`, but eligible ordinary prompts are reviewed by the internal `auto-reviewer` subagent before falling back to manual approval.
+- `full-access` — all permission requests are allowed without prompting, including `forceAsk` requests.
 
 The approval dialog can also create temporary session rules:
 
 - **Allow once** approves only the current request.
 - **Allow this kind for session** allows ordinary requests of the same permission kind until restart.
 - **Allow directory for session** allows the requested external directory until restart.
-- **Auto approve this session** allows ordinary requests until restart. High-risk `forceAsk` requests can still ask.
+- **Switch to Full Access** saves `approvalMode: "full-access"` and approves the current request.
+
+Use `/permissions` to switch among the four approval modes without opening the full settings panel.
 
 ### Plan Mode
 

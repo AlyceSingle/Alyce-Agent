@@ -12,19 +12,6 @@ type ApprovalOption = {
   description: string;
 };
 
-const SESSION_APPROVAL_OPTIONS: ApprovalOption[] = [
-  {
-    id: "auto-approve-session",
-    label: "Auto approve this session",
-    description: "Disable ordinary approval prompts for this run."
-  },
-  {
-    id: "full-approve-session",
-    label: "Fully approve this session",
-    description: "Skip all approval prompts for this run, including forced prompts."
-  }
-];
-
 const APPROVAL_OPTIONS: ApprovalOption[] = [
   {
     id: "allow-once",
@@ -41,7 +28,11 @@ const APPROVAL_OPTIONS: ApprovalOption[] = [
     label: "Allow this kind for session",
     description: "Skip ordinary prompts for this permission kind until restart."
   },
-  ...SESSION_APPROVAL_OPTIONS
+  {
+    id: "full-access-session",
+    label: "Switch to Full Access",
+    description: "Use Full Access mode and approve this request."
+  }
 ];
 
 const SCOPED_APPROVAL_OPTIONS: ApprovalOption[] = [
@@ -60,7 +51,11 @@ const SCOPED_APPROVAL_OPTIONS: ApprovalOption[] = [
     label: "Allow directory for session",
     description: "Skip ordinary prompts for this external directory until restart."
   },
-  ...SESSION_APPROVAL_OPTIONS
+  {
+    id: "full-access-session",
+    label: "Switch to Full Access",
+    description: "Use Full Access mode and approve this request."
+  }
 ];
 
 export function ApprovalDialog(props: {

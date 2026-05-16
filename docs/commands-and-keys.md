@@ -19,6 +19,7 @@ Type these into the main input. They start with `/` and execute immediately.
 | `/help` | Shows all available commands. *Start here if you're lost.* |
 | `/doctor` | Runs local health checks for Node, TTY, workspace files, connection config, approval risk, MCP config, skills, `rg`, `git`, `.alyce` storage, snapshot storage, and request patches. |
 | `/settings` | Jumps straight to the settings dialog. |
+| `/permissions` | Opens the four-mode approval and access switcher. |
 | `/setup` | First-run configuration wizard. |
 | `/clear` | Wipes the current conversation and starts fresh. |
 | `/rewind` | Opens the rewind selector so you can restore to an earlier prompt. |

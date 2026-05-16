@@ -10,6 +10,10 @@ import { terminalUiTheme } from "../theme/theme.js";
 import { createRenderPolicy } from "../utils/renderPolicy.js";
 
 type TestMessageEntry = {
+  headerSegments: Array<{
+    text: string;
+    color: string;
+  }>;
   sections: Array<{
     lines: Array<{ content: string }>;
     style: TerminalUiMessageBlockStyle;
@@ -25,7 +29,7 @@ type TestMessageEntry = {
 const testing = __MESSAGE_LIST_TESTING__ as unknown as {
   getMessagePalette: (kind: TerminalUiMessage["kind"], isSelected: boolean) => unknown;
   getRenderedLineColors: (
-    line: { content: string; diffKind?: string },
+    line: { content: string; diffKind?: string; lineNumberText?: string },
     section: {
       lines: Array<{ content: string; diffKind?: string }>;
       tone: TerminalUiMessageBlockTone;
@@ -34,13 +38,20 @@ const testing = __MESSAGE_LIST_TESTING__ as unknown as {
     messageKind: TerminalUiMessage["kind"],
     palette: unknown
   ) => { color: string; backgroundColor?: string };
-  renderBlockLines: (block: TerminalUiMessageBlock, width: number) => Array<{ content: string; diffKind?: string }>;
+  renderBlockLines: (
+    block: TerminalUiMessageBlock,
+    width: number
+  ) => Array<{ content: string; diffKind?: string; lineNumberText?: string }>;
   buildCollapsedMessageBlocks: (
     blocks: TerminalUiMessageBlock[],
     width: number,
     maxLines: number
   ) => { blocks: TerminalUiMessageBlock[]; truncated: boolean };
   combineShellOutput: (stdout: string, stderr: string) => { label: string; text: string; tone?: string } | null;
+  buildShellCommandHeaderSegments: (
+    command: string,
+    palette: { mutedColor: string }
+  ) => Array<{ text: string; color: string }>;
   buildCollapsedToolBlocks: (
     message: TerminalUiMessage,
     toolData: NonNullable<TerminalUiMessage["toolData"]>,
@@ -94,10 +105,17 @@ function runTests() {
   });
   testRenderBlockLinesDecodesDeepEscapedEntities();
   testRenderBlockLinesForPatchSkipsDiffMetaAndHunkHeaders();
+  testRenderBlockLinesForPatchAddsHunkLineNumbers();
+  testRenderBlockLinesForPatchUsesLegacyLineNumbersWithoutHunk();
+  testRenderBlockLinesForPatchLeavesWrappedContinuationLineNumberBlank();
   testBuildCollapsedMessageBlocksTruncatesWithEllipsis();
   testCombineShellOutputVariants();
   testReadToolCollapsedPreviewUsesThreeLines();
   testShellToolCollapsedPreviewUsesThreeLines();
+  testShellToolHeaderUsesCodexStyleSegments(renderPolicy);
+  testReadToolHeaderSplitsActionAndTarget(renderPolicy);
+  testShellCommandHeaderHighlightsCommandFlagsAndTargets();
+  testToolMessagesDefaultToHeaderAndMetadataOnly(renderPolicy);
   testToolOutputLinesUseBodyColor();
   testSystemLinesUseSystemColor();
   testSystemPaletteUsesSystemHeaderAndRailColor();
@@ -106,7 +124,7 @@ function runTests() {
   testStartupSystemMessageStaysExpanded(renderPolicy);
   testCollapsibleSystemPreviewStaysOnOneRenderedLine(renderPolicy);
   testCollapsibleSystemPreviewPreservesSourceBlockStyle(renderPolicy);
-  testWriteToolMessagesDefaultToCollapsedAndCanExpand(renderPolicy);
+  testWriteToolMessagesDefaultToExpandedAndCanCollapse(renderPolicy);
   testMarkdownFriendlyToolUsesMarkdownWhenExpanded(renderPolicy);
   testMarkdownFriendlyToolStillUsesMarkdownWhenMessageContentOverBudget();
   testShellToolStaysCodeFirst(renderPolicy);
@@ -151,6 +169,63 @@ function testRenderBlockLinesForPatchSkipsDiffMetaAndHunkHeaders() {
       [" context line", "context"]
     ]
   );
+}
+
+function testRenderBlockLinesForPatchAddsHunkLineNumbers() {
+  const lines = testing.renderBlockLines(
+    {
+      label: "Patch",
+      style: "code",
+      content: "@@ -18,2 +18,3 @@\n context\n-old line\n+new line\n+another line"
+    },
+    120
+  );
+
+  assert.deepEqual(
+    lines.map((line) => [line.lineNumberText, line.content, line.diffKind ?? "none"]),
+    [
+      ["18", " context", "context"],
+      ["19", "-old line", "remove"],
+      ["19", "+new line", "add"],
+      ["20", "+another line", "add"]
+    ]
+  );
+}
+
+function testRenderBlockLinesForPatchUsesLegacyLineNumbersWithoutHunk() {
+  const lines = testing.renderBlockLines(
+    {
+      label: "Patch",
+      style: "code",
+      content: "+line 1\n+line 2"
+    },
+    120
+  );
+
+  assert.deepEqual(
+    lines.map((line) => [line.lineNumberText, line.content, line.diffKind ?? "none"]),
+    [
+      ["1", "+line 1", "add"],
+      ["2", "+line 2", "add"]
+    ]
+  );
+}
+
+function testRenderBlockLinesForPatchLeavesWrappedContinuationLineNumberBlank() {
+  const lines = testing.renderBlockLines(
+    {
+      label: "Patch",
+      style: "code",
+      content: "@@ -100 +100 @@\n+abcdefghijklmnopqrstuvwxyz"
+    },
+    14
+  );
+
+  assert.equal(lines.length > 1, true);
+  assert.equal(lines[0]?.lineNumberText, "100");
+  assert.equal(lines[0]?.diffKind, "add");
+  assert.equal(lines[1]?.lineNumberText, "   ");
+  assert.equal(lines[1]?.diffKind, "add");
 }
 
 function testBuildCollapsedMessageBlocksTruncatesWithEllipsis() {
@@ -274,6 +349,209 @@ function testShellToolCollapsedPreviewUsesThreeLines() {
 
   assert.equal(collapsed.truncated, true);
   assert.equal(renderedLineCount <= 3, true);
+}
+
+function testShellToolHeaderUsesCodexStyleSegments(
+  renderPolicy: ReturnType<typeof createRenderPolicy>
+) {
+  const message = createMessage({
+    id: "tool-shell-header",
+    kind: "tool",
+    title: "PowerShell Get-Content -Raw src\\terminal-ui\\components\\Pane.tsx",
+    content: "Command\n$ Get-Content -Raw src\\terminal-ui\\components\\Pane.tsx",
+    blocks: [
+      {
+        label: "Command",
+        style: "code",
+        content: "$ Get-Content -Raw src\\terminal-ui\\components\\Pane.tsx"
+      }
+    ],
+    toolData: {
+      phase: "result",
+      toolName: "PowerShell",
+      summary: "PowerShell Get-Content -Raw src\\terminal-ui\\components\\Pane.tsx",
+      ok: true,
+      resultKind: "shell",
+      shell: {
+        command: "Get-Content -Raw src\\terminal-ui\\components\\Pane.tsx",
+        cwd: ".",
+        exitCode: 0,
+        signal: null,
+        timedOut: false,
+        stdout: "",
+        stderr: "",
+        durationMs: 10
+      }
+    }
+  });
+
+  const entry = testing.buildRenderedMessageEntries(
+    [message],
+    null,
+    120,
+    renderPolicy,
+    new Set<string>(),
+    "ALYCE",
+    null,
+    null
+  )[0];
+
+  assert.ok(entry);
+  assert.deepEqual(
+    entry.headerSegments.map((segment) => segment.text),
+    [
+      "TOOL",
+      " · ",
+      "Ran ",
+      "Get-Content",
+      " ",
+      "-Raw",
+      " ",
+      "src\\terminal-ui\\components\\Pane.tsx"
+    ]
+  );
+  assert.equal(entry.headerSegments[0]?.color, terminalUiTheme.colors.tool);
+  assert.equal(entry.headerSegments[2]?.color, terminalUiTheme.colors.chrome);
+  assert.equal(entry.headerSegments[3]?.color, terminalUiTheme.colors.tool);
+  assert.equal(entry.headerSegments[5]?.color, terminalUiTheme.colors.system);
+  assert.equal(entry.headerSegments[7]?.color, terminalUiTheme.colors.code);
+}
+
+function testReadToolHeaderSplitsActionAndTarget(
+  renderPolicy: ReturnType<typeof createRenderPolicy>
+) {
+  const message = createMessage({
+    id: "tool-read-header",
+    kind: "tool",
+    title: "Read ~/Desktop/personal-website/",
+    content: "Entries\n.vscode/\nnode_modules/",
+    blocks: [
+      {
+        label: "Entries",
+        style: "code",
+        content: ".vscode/\nnode_modules/"
+      }
+    ],
+    toolData: {
+      phase: "result",
+      toolName: "Read",
+      summary: "Read ~/Desktop/personal-website/",
+      ok: true,
+      resultKind: "read",
+      read: {
+        type: "directory",
+        directoryPath: "~/Desktop/personal-website/",
+        startEntry: 1,
+        numEntries: 2,
+        totalEntries: 2,
+        truncated: false
+      }
+    }
+  });
+
+  const entry = testing.buildRenderedMessageEntries(
+    [message],
+    null,
+    120,
+    renderPolicy,
+    new Set<string>(),
+    "ALYCE",
+    null,
+    null
+  )[0];
+
+  assert.ok(entry);
+  assert.deepEqual(
+    entry.headerSegments.map((segment) => segment.text),
+    ["TOOL", " · ", "Read", " ", "~/Desktop/personal-website/"]
+  );
+  assert.equal(entry.headerSegments[2]?.color, terminalUiTheme.colors.chrome);
+  assert.equal(entry.headerSegments[4]?.color, terminalUiTheme.colors.code);
+}
+
+function testShellCommandHeaderHighlightsCommandFlagsAndTargets() {
+  const segments = testing.buildShellCommandHeaderSegments(
+    "Get-Content -Raw src\\terminal-ui\\components\\Pane.tsx",
+    { mutedColor: terminalUiTheme.colors.muted }
+  );
+
+  assert.deepEqual(
+    segments.map((segment) => segment.text),
+    ["Get-Content", " ", "-Raw", " ", "src\\terminal-ui\\components\\Pane.tsx"]
+  );
+  assert.equal(segments[0]?.color, terminalUiTheme.colors.tool);
+  assert.equal(segments[2]?.color, terminalUiTheme.colors.system);
+  assert.equal(segments[4]?.color, terminalUiTheme.colors.code);
+}
+
+function testToolMessagesDefaultToHeaderAndMetadataOnly(
+  renderPolicy: ReturnType<typeof createRenderPolicy>
+) {
+  const message = createMessage({
+    id: "tool-shell-default-collapsed",
+    kind: "tool",
+    title: "PowerShell Get-ChildItem",
+    content: "Command\n$ Get-ChildItem\n\nStdout\nfile-a\nfile-b",
+    metadata: ["Tool result", "Exit: 0", "12 ms"],
+    blocks: [
+      {
+        label: "Command",
+        style: "code",
+        content: "$ Get-ChildItem"
+      },
+      {
+        label: "Stdout",
+        style: "code",
+        content: "file-a\nfile-b"
+      }
+    ],
+    toolData: {
+      phase: "result",
+      toolName: "PowerShell",
+      summary: "PowerShell Get-ChildItem",
+      ok: true,
+      resultKind: "shell",
+      shell: {
+        command: "Get-ChildItem",
+        cwd: ".",
+        exitCode: 0,
+        signal: null,
+        timedOut: false,
+        stdout: "file-a\nfile-b\n",
+        stderr: "",
+        durationMs: 12
+      }
+    }
+  });
+
+  const collapsedEntry = testing.buildRenderedMessageEntries(
+    [message],
+    null,
+    120,
+    renderPolicy,
+    new Set<string>(),
+    "ALYCE",
+    null,
+    null
+  )[0];
+  const expandedEntry = testing.buildRenderedMessageEntries(
+    [message],
+    null,
+    120,
+    renderPolicy,
+    new Set<string>([message.id]),
+    "ALYCE",
+    null,
+    null
+  )[0];
+
+  assert.ok(collapsedEntry);
+  assert.ok(expandedEntry);
+  assert.equal(collapsedEntry.isExpandable, true);
+  assert.deepEqual(flattenSections(collapsedEntry), []);
+  assert.equal(collapsedEntry.metadataLine, "Tool result | Exit: 0 | 12 ms | Click to expand");
+  assert.match(expandedEntry.metadataLine ?? "", /Click to collapse/);
+  assert.deepEqual(flattenSections(expandedEntry), ["$ Get-ChildItem", "file-a", "file-b"]);
 }
 
 function testToolOutputLinesUseBodyColor() {
@@ -407,9 +685,20 @@ function testPostEditDiffSystemMessageDefaultsToCollapsed(
 function testSelectedSystemMessagesDefaultToCollapsed(
   renderPolicy: ReturnType<typeof createRenderPolicy>
 ) {
-  for (const title of ["Session", "Rewind", "Permissions", "Revert"]) {
+  for (const title of [
+    "Diff",
+    "Session",
+    "Rewind",
+    "Permissions",
+    "Revert",
+    "Task",
+    "Tasks",
+    "Doctor",
+    "Settings",
+    "Startup Context"
+  ]) {
     const message = createMessage({
-      id: `system-${title.toLowerCase()}`,
+      id: `system-${title.toLowerCase().replace(/\s+/g, "-")}`,
       kind: "system",
       title,
       content: `${title} summary line.\n${title} detail line.`,
@@ -560,7 +849,7 @@ function testCollapsibleSystemPreviewPreservesSourceBlockStyle(
   assert.deepEqual(flattenSections(collapsedEntry), ["$ alyce --resume"]);
 }
 
-function testWriteToolMessagesDefaultToCollapsedAndCanExpand(
+function testWriteToolMessagesDefaultToExpandedAndCanCollapse(
   renderPolicy: ReturnType<typeof createRenderPolicy>
 ) {
   const message = createMessage({
@@ -591,7 +880,7 @@ function testWriteToolMessagesDefaultToCollapsedAndCanExpand(
     }
   });
 
-  const collapsedEntry = testing.buildRenderedMessageEntries(
+  const defaultExpandedEntry = testing.buildRenderedMessageEntries(
     [message],
     null,
     80,
@@ -601,7 +890,7 @@ function testWriteToolMessagesDefaultToCollapsedAndCanExpand(
     null,
     null
   )[0];
-  const expandedEntry = testing.buildRenderedMessageEntries(
+  const collapsedEntry = testing.buildRenderedMessageEntries(
     [message],
     null,
     80,
@@ -612,15 +901,15 @@ function testWriteToolMessagesDefaultToCollapsedAndCanExpand(
     null
   )[0];
 
-  assert.ok(expandedEntry);
+  assert.ok(defaultExpandedEntry);
   assert.ok(collapsedEntry);
+  assert.match(defaultExpandedEntry?.metadataLine ?? "", /Click to collapse/);
   assert.match(collapsedEntry?.metadataLine ?? "", /Click to expand/);
-  assert.match(expandedEntry?.metadataLine ?? "", /Click to collapse/);
 
-  const expandedLines = flattenSections(expandedEntry!);
+  const expandedLines = flattenSections(defaultExpandedEntry!);
   const collapsedLines = flattenSections(collapsedEntry!);
-  assert.ok(expandedLines.length > collapsedLines.length);
-  assert.deepEqual(collapsedLines, expandedLines.slice(0, collapsedLines.length));
+  assert.ok(expandedLines.length > 0);
+  assert.deepEqual(collapsedLines, []);
 }
 
 function testMarkdownFriendlyToolUsesMarkdownWhenExpanded(
@@ -673,6 +962,7 @@ function testMarkdownFriendlyToolUsesMarkdownWhenExpanded(
   assert.ok(collapsedEntry);
   assert.ok(expandedEntry);
   assert.equal(collapsedEntry?.markdownPlan, undefined);
+  assert.deepEqual(flattenSections(collapsedEntry), []);
   assert.match(collapsedEntry?.metadataLine ?? "", /Click to expand/);
   assert.ok(expandedEntry?.markdownPlan);
   assert.equal(expandedEntry?.sections.length ?? 0, 0);

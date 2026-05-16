@@ -36,7 +36,7 @@ const FIELD_DEFINITIONS: FieldDefinition[] = [
     label: "Approval Mode",
     type: "select",
     section: "session",
-    options: ["manual", "auto"]
+    options: ["read-only", "default", "auto-review", "full-access"]
   },
   { key: "maxSteps", label: "Max Steps", type: "number", section: "session" },
   { key: "commandTimeoutMs", label: "Command Timeout", type: "number", section: "session" },

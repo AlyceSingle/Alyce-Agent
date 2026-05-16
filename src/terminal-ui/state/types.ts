@@ -71,13 +71,6 @@ export interface TerminalUiTaskSummary {
   taskId: string;
   agentType: string;
   description: string;
-  status: "running" | "completed" | "failed" | "stopped";
-  updatedAt: string;
-  unread: boolean;
-  worktreePath?: string;
-  hasChanges?: boolean;
-  error?: string;
-  latestProgress?: string;
 }
 
 export type PermissionDecision =
@@ -85,18 +78,19 @@ export type PermissionDecision =
   | "reject-once"
   | "allow-kind-session"
   | "allow-scope-session"
-  | "auto-approve-session"
-  | "full-approve-session";
+  | "full-access-session";
 
 export type ActiveDialog =
   | { type: "permission"; layer: "overlay"; request: ToolApprovalRequest }
   | { type: "question"; layer: "overlay"; request: AskUserQuestionRequest }
   | { type: "settings"; layer: "overlay"; section: SettingsSection; reason?: string }
+  | { type: "permissions"; layer: "overlay" }
   | { type: "session-picker"; layer: "modal"; sessions: SessionHistoryListItem[] }
   | { type: "rewind-picker"; layer: "overlay"; points: TerminalUiRewindPoint[] };
 
 export type TerminalUiOverlayId =
   | "permission"
+  | "permissions"
   | "question"
   | "settings"
   | "rewind-picker";
@@ -124,6 +118,5 @@ export interface TerminalUiState {
   unseenDividerMessageId: string | null;
   unseenMessageCount: number;
   sessionApprovalMode: ApprovalMode;
-  sessionFullApprovalEnabled: boolean;
   sessionAllowedKinds: ToolPermissionKind[];
 }

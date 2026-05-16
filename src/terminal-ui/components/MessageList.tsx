@@ -61,13 +61,7 @@ const SCROLL_PERF_FLUSH_INTERVAL_MS = 1500;
 const SCROLL_PERF_SLOW_SYNC_THRESHOLD_MS = 8;
 const MIN_NON_VIRTUALIZED_MESSAGE_CAP = 20;
 const WINDOW_ANCHOR_HEADROOM_RATIO = 0.75;
-const COLLAPSIBLE_SYSTEM_TITLES = new Set([
-  "Diff",
-  "Session",
-  "Rewind",
-  "Permissions",
-  "Revert"
-]);
+const DIFF_LINE_NUMBER_LEFT_PADDING = "  ";
 
 function isHandleAtBottom(handle: ScrollBoxHandle) {
   const scrollTop = handle.getScrollTop();
@@ -91,13 +85,13 @@ type DiffLineKind = "meta" | "hunk" | "add" | "remove" | "context";
 type RenderedSectionLine = {
   content: string;
   diffKind?: DiffLineKind;
+  lineNumberText?: string;
 };
 
 type RenderedMessageEntry = {
   message: TerminalUiMessage;
   isSelected: boolean;
-  headerLabel: string;
-  headerTitle?: string;
+  headerSegments: HeaderSegment[];
   sections: RenderedSection[];
   markdownPlan?: MarkdownRenderPlan;
   metadataLine?: string;
@@ -106,6 +100,11 @@ type RenderedMessageEntry = {
   unseenDividerRows: number;
   palette: MessagePalette;
   rowCount: number;
+};
+
+type HeaderSegment = {
+  text: string;
+  color: ThemeColor;
 };
 
 type MessagePalette = {
@@ -234,6 +233,163 @@ function getMessagePalette(
   }
 }
 
+function buildHeaderSegments(
+  message: TerminalUiMessage,
+  badgeLabel: string,
+  palette: MessagePalette
+): HeaderSegment[] {
+  const segments: HeaderSegment[] = [
+    {
+      text: badgeLabel,
+      color: palette.headerColor
+    }
+  ];
+  const titleSegments = buildHeaderTitleSegments(message, palette);
+
+  if (titleSegments.length > 0) {
+    segments.push(
+      {
+        text: " · ",
+        color: palette.mutedColor
+      },
+      ...titleSegments
+    );
+  }
+
+  return segments;
+}
+
+function buildHeaderTitleSegments(
+  message: TerminalUiMessage,
+  palette: MessagePalette
+): HeaderSegment[] {
+  if (message.kind === "user" || message.kind === "assistant") {
+    return [];
+  }
+
+  if (message.kind === "tool") {
+    return buildToolHeaderTitleSegments(message, palette);
+  }
+
+  return [
+    {
+      text: message.title,
+      color: palette.headerColor
+    }
+  ];
+}
+
+function buildToolHeaderTitleSegments(
+  message: TerminalUiMessage,
+  palette: MessagePalette
+): HeaderSegment[] {
+  const shellCommand = message.toolData?.ok === true &&
+    message.toolData.resultKind === "shell"
+    ? message.toolData.shell?.command
+    : undefined;
+  if (shellCommand) {
+    return [
+      {
+        text: "Ran ",
+        color: terminalUiTheme.colors.chrome
+      },
+      ...buildShellCommandHeaderSegments(shellCommand, palette)
+    ];
+  }
+
+  const title = message.title.trim();
+  if (title.length === 0) {
+    return [];
+  }
+
+  const splitTitle = splitFirstWhitespace(title);
+  if (!splitTitle) {
+    return [
+      {
+        text: title,
+        color: terminalUiTheme.colors.chrome
+      }
+    ];
+  }
+
+  return [
+    {
+      text: splitTitle.head,
+      color: terminalUiTheme.colors.chrome
+    },
+    {
+      text: " ",
+      color: palette.mutedColor
+    },
+    {
+      text: splitTitle.tail,
+      color: terminalUiTheme.colors.code
+    }
+  ];
+}
+
+function buildShellCommandHeaderSegments(
+  command: string,
+  palette: MessagePalette
+): HeaderSegment[] {
+  const tokens = splitShellCommand(command);
+  if (tokens.length === 0) {
+    return [
+      {
+        text: command,
+        color: terminalUiTheme.colors.code
+      }
+    ];
+  }
+
+  return tokens.flatMap((token, index) => [
+    ...(index === 0
+      ? []
+      : [
+          {
+            text: " ",
+            color: palette.mutedColor
+          }
+        ]),
+    {
+      text: token,
+      color: getShellCommandTokenColor(token, index)
+    }
+  ]);
+}
+
+function getShellCommandTokenColor(token: string, index: number): ThemeColor {
+  if (index === 0) {
+    return terminalUiTheme.colors.tool;
+  }
+
+  if (/^-{1,2}\S+/.test(token)) {
+    return terminalUiTheme.colors.system;
+  }
+
+  if (/^["']/.test(token)) {
+    return terminalUiTheme.colors.markdownQuote;
+  }
+
+  return terminalUiTheme.colors.code;
+}
+
+function splitShellCommand(command: string): string[] {
+  return command.match(/"[^"]*"|'[^']*'|\S+/g) ?? [];
+}
+
+function splitFirstWhitespace(value: string): { head: string; tail: string } | null {
+  const match = /^(\S+)\s+([\s\S]+)$/.exec(value);
+  if (!match) {
+    return null;
+  }
+
+  return {
+    head: match[1]!,
+    tail: match[2]!
+  };
+}
+
 function getToneColor(
   tone: TerminalUiMessageBlockTone,
   kind: TerminalUiMessage["kind"],
@@ -284,21 +440,125 @@ function renderBlockLines(block: TerminalUiMessageBlock, width: number): Rendere
 }
 
 function wrapDiffPatchLines(content: string, width: number): RenderedSectionLine[] {
-  return content
-    .split(/\r?\n/)
-    .flatMap((rawLine) => {
-      const diffKind = classifyDiffLine(rawLine);
-      if (diffKind === "meta" || diffKind === "hunk") {
-        return [];
+  const parsedLines = parseDiffPatchLines(content);
+  const lineNumberColumnWidth = parsedLines.reduce((maxWidth, line) => {
+    return line.lineNumber === undefined
+      ? maxWidth
+      : Math.max(maxWidth, String(line.lineNumber).length);
+  }, 0);
+  const lineNumberGutterWidth = lineNumberColumnWidth > 0
+    ? DIFF_LINE_NUMBER_LEFT_PADDING.length + lineNumberColumnWidth + 1
+    : 0;
+  const contentWidth = Math.max(8, width - lineNumberGutterWidth);
+
+  return parsedLines.flatMap((parsedLine) => {
+    const wrappedLines = wrapText(parsedLine.rawLine, contentWidth);
+
+    return wrappedLines.map((line, index) => ({
+      content: line,
+      diffKind: parsedLine.diffKind,
+      ...(lineNumberColumnWidth > 0
+        ? {
+            lineNumberText:
+              index === 0 && parsedLine.lineNumber !== undefined
+                ? String(parsedLine.lineNumber).padStart(lineNumberColumnWidth)
+                : "".padStart(lineNumberColumnWidth)
+          }
+        : {})
+    }));
+  });
+}
+
+type ParsedDiffLine = {
+  rawLine: string;
+  diffKind?: DiffLineKind;
+  lineNumber?: number;
+};
+
+function parseDiffPatchLines(content: string): ParsedDiffLine[] {
+  const parsedLines: ParsedDiffLine[] = [];
+  let oldLine = 1;
+  let newLine = 1;
+  let hasHunk = false;
+
+  for (const rawLine of content.split(/\r?\n/)) {
+    const diffKind = classifyDiffLine(rawLine);
+    if (diffKind === "meta") {
+      continue;
+    }
+
+    if (diffKind === "hunk") {
+      const hunk = parseDiffHunkHeader(rawLine);
+      if (hunk) {
+        oldLine = hunk.oldStart;
+        newLine = hunk.newStart;
+        hasHunk = true;
       }
+      continue;
+    }
 
-      const wrappedLines = wrapText(rawLine, width);
+    if (!hasHunk && (diffKind === "add" || diffKind === "remove" || diffKind === "context")) {
+      oldLine = 1;
+      newLine = 1;
+      hasHunk = true;
+    }
 
-      return wrappedLines.map((line) => ({
-        content: line,
-        diffKind
-      }));
+    if (diffKind === "add") {
+      parsedLines.push({
+        rawLine,
+        diffKind,
+        lineNumber: newLine
+      });
+      newLine += 1;
+      continue;
+    }
+
+    if (diffKind === "remove") {
+      parsedLines.push({
+        rawLine,
+        diffKind,
+        lineNumber: oldLine
+      });
+      oldLine += 1;
+      continue;
+    }
+
+    if (diffKind === "context") {
+      parsedLines.push({
+        rawLine,
+        diffKind,
+        lineNumber: newLine
+      });
+      oldLine += 1;
+      newLine += 1;
+      continue;
+    }
+
+    parsedLines.push({
+      rawLine,
+      diffKind
     });
+  }
+
+  return parsedLines;
+}
+
+function parseDiffHunkHeader(line: string): { oldStart: number; newStart: number } | null {
+  const match = /^@@\s+-(\d+)(?:,\d+)?\s+\+(\d+)(?:,\d+)?\s+@@/.exec(line);
+  if (!match) {
+    return null;
+  }
+
+  const oldStart = Number.parseInt(match[1]!, 10);
+  const newStart = Number.parseInt(match[2]!, 10);
+  if (!Number.isFinite(oldStart) || !Number.isFinite(newStart)) {
+    return null;
+  }
+
+  return {
+    oldStart,
+    newStart
+  };
 }
 
 function classifyDiffLine(line: string): DiffLineKind | undefined {
@@ -371,57 +631,6 @@ function getRenderedLineColors(
   }
 }
 
-function buildCollapsedRenderedSections(
-  blocks: TerminalUiMessageBlock[],
-  width: number,
-  maxLines: number
-): {
-  sections: RenderedSection[];
-  truncated: boolean;
-} {
-  const previewSections: RenderedSection[] = [];
-  let remainingLines = Math.max(1, maxLines);
-  let truncated = false;
-
-  for (const block of blocks) {
-    if (remainingLines <= 0) {
-      truncated = true;
-      break;
-    }
-
-    const section = buildRenderedSection(block, width);
-    if (section.lines.length === 0) {
-      continue;
-    }
-
-    const visibleLineCount = Math.min(section.lines.length, remainingLines);
-    previewSections.push({
-      ...section,
-      lines: section.lines.slice(0, visibleLineCount)
-    });
-
-    truncated ||= section.lines.length > visibleLineCount;
-    remainingLines -= visibleLineCount;
-    if (section.lines.length > visibleLineCount) {
-      break;
-    }
-  }
-
-  if (previewSections.length === 0) {
-    previewSections.push({
-      label: "Output",
-      lines: [{ content: "(empty)" }],
-      tone: "muted",
-      style: "plain"
-    });
-  }
-
-  return {
-    sections: previewSections,
-    truncated
-  };
-}
-
 function shouldDisplaySectionLabel(section: RenderedSection) {
   return Boolean(section.label) && !section.isDiff;
 }
@@ -432,8 +641,10 @@ function countRenderedSectionRows(sections: RenderedSection[]) {
   }, 0);
 }
 
-function isDefaultExpandedToolMessage(_message: TerminalUiMessage) {
-  return false;
+function isDefaultExpandedToolMessage(message: TerminalUiMessage) {
+  return message.kind === "tool" &&
+    message.toolData !== undefined &&
+    isEditLikeToolResult(message.toolData.resultKind);
 }
 
 function isMessageExpanded(message: TerminalUiMessage, expandedMessageIds: ReadonlySet<string>) {
@@ -445,7 +656,7 @@ function isMessageExpanded(message: TerminalUiMessage, expandedMessageIds: Reado
 }
 
 function isCollapsibleSystemMessage(message: TerminalUiMessage) {
-  return message.kind === "system" && COLLAPSIBLE_SYSTEM_TITLES.has(message.title);
+  return message.kind === "system" && message.title !== "Startup";
 }
 
 function findFirstNonEmptyLineBlock(blocks: TerminalUiMessageBlock[]): TerminalUiMessageBlock | null {
@@ -551,86 +762,36 @@ function renderToolMessageState(
   expanded: boolean
 ): ExpandableRenderState {
   const toolData = message.toolData;
-  const baseMetadata = message.metadata;
+  const renderableBlocks =
+    !toolData || toolData.ok === false
+      ? message.blocks
+      : getRenderableToolBlocks(message.blocks, toolData);
 
-  if (!toolData) {
-    return renderLegacyToolMessageState(message, width, expanded);
-  }
-
-  if (toolData.ok === false) {
-    const collapsedPreview = buildCollapsedMessageBlocks(message.blocks, width, 12);
-    const sections = renderSections(expanded ? message.blocks : collapsedPreview.blocks, width);
-    const toggleHint = collapsedPreview.truncated
-      ? expanded
-        ? "Click to collapse"
-        : "Click to expand"
-      : undefined;
-
-    return {
-      sections,
-      metadataLine: buildExpandableMetadataLine(baseMetadata, toggleHint),
-      expandable: Boolean(toggleHint)
-    };
-  }
-
-  if (isEditLikeToolResult(toolData.resultKind)) {
-    const renderableBlocks = getRenderableToolBlocks(message.blocks, toolData);
-    const collapsedPreview = buildCollapsedRenderedSections(renderableBlocks, width, 12);
-    const sections = expanded
-      ? renderSections(renderableBlocks, width)
-      : collapsedPreview.sections;
-    const toggleHint = collapsedPreview.truncated
-      ? expanded
-        ? "Click to collapse"
-        : "Click to expand"
-      : undefined;
-
-    return {
-      sections,
-      metadataLine: buildExpandableMetadataLine(baseMetadata, toggleHint),
-      expandable: Boolean(toggleHint)
-    };
-  }
-
-  const collapsedPreview = buildCollapsedToolBlocks(message, toolData, width);
-  const renderableBlocks = getRenderableToolBlocks(message.blocks, toolData);
-  const sections = renderSections(expanded ? renderableBlocks : collapsedPreview.blocks, width);
-  const toggleHint = collapsedPreview.truncated
-    ? expanded
-      ? "Click to collapse"
-      : "Click to expand"
-    : undefined;
-
-  return {
-    sections,
-    metadataLine: buildExpandableMetadataLine(baseMetadata, toggleHint),
-    expandable: Boolean(toggleHint)
-  };
+  return renderHeaderOnlyExpandableState(message.metadata, renderableBlocks, width, expanded);
 }
 
 function isEditLikeToolResult(resultKind: TerminalUiToolData["resultKind"]) {
   return resultKind === "edit" || resultKind === "write" || resultKind === "patch";
 }
 
-function renderLegacyToolMessageState(
-  message: TerminalUiMessage,
+function renderHeaderOnlyExpandableState(
+  metadata: string[],
+  blocks: TerminalUiMessageBlock[],
   width: number,
   expanded: boolean
 ): ExpandableRenderState {
-  const baseMetadata = message.metadata;
-
-  const collapsedPreview = buildCollapsedLegacyToolBlocks(message, width);
-  const sections = renderSections(expanded ? message.blocks : collapsedPreview.blocks, width);
-  const toggleHint = collapsedPreview.truncated
+  const expandedSections = renderSections(blocks, width);
+  const expandable = countRenderedSectionRows(expandedSections) > 0;
+  const toggleHint = expandable
     ? expanded
       ? "Click to collapse"
       : "Click to expand"
     : undefined;
 
   return {
-    sections,
-    metadataLine: buildExpandableMetadataLine(baseMetadata, toggleHint),
-    expandable: Boolean(toggleHint)
+    sections: expanded ? expandedSections : [],
+    metadataLine: buildExpandableMetadataLine(metadata, toggleHint),
+    expandable
   };
 }
 
@@ -699,16 +860,6 @@ function buildCollapsedMessageBlocks(
     blocks: previewBlocks,
     truncated
   };
-}
-
-function buildCollapsedLegacyToolBlocks(
-  message: TerminalUiMessage,
-  width: number
-): {
-  blocks: TerminalUiMessageBlock[];
-  truncated: boolean;
-} {
-  return buildCollapsedMessageBlocks(message.blocks, width, 10);
 }
 
 function buildCollapsedToolBlocks(
@@ -910,10 +1061,6 @@ function buildRenderedMessageEntries(
     const sections = markdownPlan
       ? []
       : expandableRenderState?.sections ?? renderSections(message.blocks, contentWidth);
-    const headerTitle =
-      message.kind === "user" || message.kind === "assistant"
-        ? undefined
-        : message.title;
     const metadataLine =
       expandableRenderState?.metadataLine ??
       (message.metadata.length > 0 ? message.metadata.join(" | ") : undefined);
@@ -926,8 +1073,7 @@ function buildRenderedMessageEntries(
     return {
       message,
       isSelected,
-      headerLabel: badge.label,
-      headerTitle,
+      headerSegments: buildHeaderSegments(message, badge.label, palette),
       sections,
       markdownPlan,
       metadataLine,
@@ -1010,6 +1156,8 @@ export const __MESSAGE_LIST_TESTING__ = {
   buildCollapsedMessageBlocks,
   buildCollapsedToolBlocks,
   combineShellOutput,
+  buildHeaderSegments,
+  buildShellCommandHeaderSegments,
   renderToolMessageState,
   buildRenderedMessageEntries,
   sliceMessagesForNonVirtualizedList,
@@ -1192,10 +1340,11 @@ const TranscriptRows = React.memo(function TranscriptRows(props: {
               : undefined}
           >
             <SelectionSafeRow wrap="truncate-end">
-              <Text color={entry.palette.headerColor}>{entry.headerLabel}</Text>
-              {entry.headerTitle ? (
-                <Text color={entry.palette.headerColor}> · {entry.headerTitle}</Text>
-              ) : null}
+              {entry.headerSegments.map((segment, index) => (
+                <Text key={`${entry.message.id}-header-${index}`} color={segment.color}>
+                  {segment.text}
+                </Text>
+              ))}
               <Text color={entry.palette.mutedColor}> · {timestamp}</Text>
             </SelectionSafeRow>
             {entry.markdownPlan ? (
@@ -1234,6 +1383,14 @@ const TranscriptRows = React.memo(function TranscriptRows(props: {
                         color={lineColors.color}
                         backgroundColor={lineColors.backgroundColor}
                       >
+                        {line.lineNumberText !== undefined ? (
+                          <Text
+                            color={terminalUiTheme.colors.subtle}
+                            backgroundColor={lineColors.backgroundColor}
+                          >
+                            {DIFF_LINE_NUMBER_LEFT_PADDING}{line.lineNumberText}{" "}
+                          </Text>
+                        ) : null}
                         {line.content || " "}
                       </SelectionSafeRow>
                     );

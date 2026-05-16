@@ -723,6 +723,7 @@ function buildApplyPatchResult(completed: readonly CompletedPatchChange[]): File
   const files = completed.map(toFileResult);
   const structuredPatch = completed.flatMap((change) =>
     createStructuredPatch({
+      filePath: change.targetRelative,
       oldContent: change.oldContent,
       newContent: change.finalContent
     })

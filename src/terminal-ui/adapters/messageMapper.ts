@@ -1138,7 +1138,7 @@ function extractStructuredPatchDisplayText(value: unknown) {
 
   const filteredLines = rawPatchText
     .split("\n")
-    .filter((line) => !line.startsWith("--- ") && !line.startsWith("+++ ") && !line.startsWith("@@"));
+    .filter((line) => !line.startsWith("--- ") && !line.startsWith("+++ "));
 
   return filteredLines.join("\n");
 }
@@ -1171,8 +1171,56 @@ function extractStructuredPatchLines(record: Record<string, unknown>) {
       return [];
     }
 
-    return lines;
+    return normalizeStructuredPatchHunkLines({
+      oldStart,
+      oldLines,
+      newStart,
+      newLines,
+      lines
+    });
   });
+}
+
+function normalizeStructuredPatchHunkLines(options: {
+  oldStart: number;
+  oldLines: number;
+  newStart: number;
+  newLines: number;
+  lines: string[];
+}) {
+  const hunkHeader = `@@ -${formatStructuredPatchRange(options.oldStart, options.oldLines)} +${formatStructuredPatchRange(options.newStart, options.newLines)} @@`;
+  const hunkHeaderIndex = options.lines.findIndex((line) => line.startsWith("@@"));
+
+  if (hunkHeaderIndex >= 0) {
+    if (isStructuredPatchHunkHeader(options.lines[hunkHeaderIndex]!)) {
+      return options.lines;
+    }
+
+    return [
+      ...options.lines.slice(0, hunkHeaderIndex),
+      hunkHeader,
+      ...options.lines.slice(hunkHeaderIndex + 1)
+    ];
+  }
+
+  const firstPatchLineIndex = options.lines.findIndex(
+    (line) => !line.startsWith("--- ") && !line.startsWith("+++ ")
+  );
+  const insertionIndex = firstPatchLineIndex >= 0 ? firstPatchLineIndex : options.lines.length;
+
+  return [
+    ...options.lines.slice(0, insertionIndex),
+    hunkHeader,
+    ...options.lines.slice(insertionIndex)
+  ];
+}
+
+function isStructuredPatchHunkHeader(line: string) {
+  return /^@@\s+-(\d+)(?:,\d+)?\s+\+(\d+)(?:,\d+)?\s+@@/.test(line);
+}
+
+function formatStructuredPatchRange(start: number, count: number) {
+  return `${start},${count}`;
 }
 
 function formatToolError(error: ParsedToolCallExecutionResult["error"], fallback: string) {

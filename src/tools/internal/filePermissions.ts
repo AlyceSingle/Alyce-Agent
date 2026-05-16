@@ -206,6 +206,10 @@ export function getPatchPermissionPattern(
     return uniquePatterns[0]!;
   }
 
+  if (uniquePatterns.every((pattern) => pattern.startsWith("workspace:"))) {
+    return "workspace:*";
+  }
+
   return `patch:${uniquePatterns.sort().join(";")}`;
 }
 

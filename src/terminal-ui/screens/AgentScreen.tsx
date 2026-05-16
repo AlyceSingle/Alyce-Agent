@@ -2,13 +2,14 @@ import React, { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useSta
 import { Box, useApp, useStdout, useTerminalSize, Text } from "../runtime/ink.js";
 import { FullscreenLayout } from "../components/FullscreenLayout.js";
 import { MessageList, type MessageListHandle } from "../components/MessageList.js";
-import { PromptInput } from "../components/PromptInput.js";
+import { INPUT_LOCKED_PLACEHOLDER, PromptInput } from "../components/PromptInput.js";
 import { StatusBar } from "../components/StatusBar.js";
 import { TodoPanel } from "../components/TodoPanel.js";
 import { TaskPanel } from "../components/TaskPanel.js";
 import { ApprovalDialog } from "../components/ApprovalDialog.js";
 import { AskUserQuestionDialog } from "../components/AskUserQuestionDialog.js";
 import { SettingsDialog } from "../components/SettingsDialog.js";
+import { PermissionsDialog } from "../components/PermissionsDialog.js";
 import { SessionPickerDialog } from "../components/SessionPickerDialog.js";
 import { RewindPickerDialog } from "../components/RewindPickerDialog.js";
 import type { SessionController } from "../adapters/sessionController.js";
@@ -98,9 +99,6 @@ export function AgentScreen(props: { controller: SessionController }) {
   const settingsState = useTerminalUiSelector((value) => value.settingsState);
   const workspaceRoot = useTerminalUiSelector((value) => value.workspaceRoot);
   const sessionApprovalMode = useTerminalUiSelector((value) => value.sessionApprovalMode);
-  const sessionFullApprovalEnabled = useTerminalUiSelector(
-    (value) => value.sessionFullApprovalEnabled
-  );
   const sessionAllowedKinds = useTerminalUiSelector((value) => value.sessionAllowedKinds);
   const requestPatchCount = useTerminalUiSelector((value) => value.requestPatchCount);
   const statusText = useTerminalUiSelector((value) => value.statusText);
@@ -413,14 +411,7 @@ export function AgentScreen(props: { controller: SessionController }) {
     copyStatusText ?? (historyEscPending ? "Press ESC again to open input history." : statusText);
   const completedTodoCount = todos.filter((todo) => todo.status === "completed").length;
   const todoSummary = todos.length > 0 ? `${completedTodoCount}/${todos.length}` : undefined;
-  const runningTaskCount = backgroundTasks.filter((task) => task.status === "running").length;
-  const unreadTaskCount = backgroundTasks.filter((task) => task.status === "completed" && task.unread).length;
-  const failedTaskCount = backgroundTasks.filter((task) => task.status === "failed").length;
-  const taskSummary = [
-    runningTaskCount > 0 ? `${runningTaskCount} run` : null,
-    unreadTaskCount > 0 ? `${unreadTaskCount} unread` : null,
-    failedTaskCount > 0 ? `${failedTaskCount} fail` : null
-  ].filter((value): value is string => value !== null).join(",");
+  const taskSummary = backgroundTasks.length > 0 ? `${backgroundTasks.length} run` : "";
   const promptDisabledReason =
     hasDialog
       ? `${
@@ -430,9 +421,11 @@ export function AgentScreen(props: { controller: SessionController }) {
               ? "Resolve the question dialog above"
               : "Resolve the active panel above"
         } before typing.`
-      : isLoading
-        ? "Input locked while Alyce is working. Press ESC to interrupt."
-        : undefined;
+      : undefined;
+  const promptDisabledPlaceholder =
+    isLoading && !hasDialog
+      ? INPUT_LOCKED_PLACEHOLDER
+      : undefined;
 
   const overlay =
     activeDialog?.type === "permission" ? (
@@ -461,6 +454,14 @@ export function AgentScreen(props: { controller: SessionController }) {
         }}
         onCtrlCCaptureChange={setCtrlCCapture}
       />
+    ) : activeDialog?.type === "permissions" ? (
+      <PermissionsDialog
+        mode={sessionApprovalMode}
+        onSelect={(mode) => {
+          void props.controller.setApprovalMode(mode);
+        }}
+        onCancel={() => props.controller.closeDialog()}
+      />
     ) : activeDialog?.type === "rewind-picker" ? (
       <RewindPickerDialog
         points={activeDialog.points}
@@ -488,7 +489,6 @@ export function AgentScreen(props: { controller: SessionController }) {
         {unseenMessageCount} new message{unseenMessageCount === 1 ? "" : "s"} | {LAST_MESSAGE_SHORTCUT} jump to bottom | {PAGE_UP_SHORTCUT}/{PAGE_DOWN_SHORTCUT} scroll
       </Text>
     ) : null;
-
   const todoPanel = todos.length > 0 ? <TodoPanel todos={todos} /> : null;
   const taskPanel = backgroundTasks.length > 0 ? <TaskPanel tasks={backgroundTasks} /> : null;
 
@@ -509,7 +509,6 @@ export function AgentScreen(props: { controller: SessionController }) {
         <StatusBar
           connectionState={connectionState}
           sessionApprovalMode={sessionApprovalMode}
-          sessionFullApprovalEnabled={sessionFullApprovalEnabled}
           sessionAllowedKinds={sessionAllowedKinds}
           requestPatchCount={requestPatchCount}
           planModeEnabled={planModeEnabled}
@@ -541,6 +540,7 @@ export function AgentScreen(props: { controller: SessionController }) {
           viewportWidth={terminalWidth}
           disabled={isLoading || hasDialog}
           disabledReason={promptDisabledReason}
+          disabledPlaceholder={promptDisabledPlaceholder}
           sublineText={`${formatCompactModelDisplay(connection.model)} | ${workspaceRoot}`}
           onLayoutHeightChange={refreshPromptLayout}
           onChange={(value) => props.controller.setDraftInput(value)}

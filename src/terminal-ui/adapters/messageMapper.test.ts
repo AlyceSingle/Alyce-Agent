@@ -30,6 +30,8 @@ function runTests() {
   testProcessStartRunningResultUsesReadableBlocks();
   testPtyReadResultUsesReadableBlocks();
   testPtyListResultUsesReadableBlocks();
+  testApplyPatchResultSynthesizesStructuredPatchHunkHeader();
+  testWriteResultKeepsStructuredPatchHunkHeaderAndFiltersFileMetadata();
   testDiagnosticsFollowUpIncludesPhase5Metadata();
   console.log("messageMapper tests passed");
 }
@@ -169,6 +171,99 @@ function testPtyListResultUsesReadableBlocks() {
   assert.equal(message.blocks[0]?.tone, "success");
   assert.match(message.blocks[0]?.content ?? "", /pty_test/);
   assert.match(message.blocks[0]?.content ?? "", /pwsh\.exe/);
+}
+
+function testApplyPatchResultSynthesizesStructuredPatchHunkHeader() {
+  const message = createToolResultMessage(
+    "apply_patch",
+    JSON.stringify({
+      ok: true,
+      status: "success",
+      tool: "apply_patch",
+      result: {
+        filePath: "src/demo.ts",
+        operationCount: 1,
+        additions: 1,
+        deletions: 1,
+        files: [
+          {
+            type: "update",
+            filePath: "src/demo.ts",
+            additions: 1,
+            deletions: 1,
+            matchStrategies: []
+          }
+        ],
+        structuredPatch: [
+          {
+            oldStart: 42,
+            oldLines: 1,
+            newStart: 42,
+            newLines: 1,
+            lines: ["@@", "-old line", "+new line"]
+          }
+        ],
+        formatter: { status: "skipped" },
+        diagnostics: {
+          status: "skipped",
+          issues: [],
+          totalIssueCount: 0,
+          truncated: false
+        }
+      }
+    }),
+    JSON.stringify({ patchText: "patch" })
+  );
+
+  const patchBlock = message.blocks.find((block) => block.label === "Patch");
+  assert.equal(patchBlock?.content, "@@ -42,1 +42,1 @@\n-old line\n+new line");
+}
+
+function testWriteResultKeepsStructuredPatchHunkHeaderAndFiltersFileMetadata() {
+  const message = createToolResultMessage(
+    "Write",
+    JSON.stringify({
+      ok: true,
+      status: "success",
+      tool: "Write",
+      result: {
+        filePath: "src/demo.ts",
+        type: "update",
+        bytes: 18,
+        lineCount: 2,
+        structuredPatch: [
+          {
+            oldStart: 10,
+            oldLines: 1,
+            newStart: 10,
+            newLines: 2,
+            lines: [
+              "--- src/demo.ts",
+              "+++ src/demo.ts",
+              "@@ -10,1 +10,2 @@",
+              "-old line",
+              "+new line",
+              "+another line"
+            ]
+          }
+        ],
+        formatter: { status: "skipped" },
+        diagnostics: {
+          status: "skipped",
+          issues: [],
+          totalIssueCount: 0,
+          truncated: false
+        }
+      }
+    }),
+    JSON.stringify({ file_path: "src/demo.ts" })
+  );
+
+  const patchBlock = message.blocks.find((block) => block.label === "Patch");
+  assert.equal(
+    patchBlock?.content,
+    "@@ -10,1 +10,2 @@\n-old line\n+new line\n+another line"
+  );
 }
 
 function testDiagnosticsFollowUpIncludesPhase5Metadata() {

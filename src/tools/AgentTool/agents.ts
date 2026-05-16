@@ -12,6 +12,7 @@ export interface SubagentDefinition {
   maxSteps?: number;
   model?: string;
   source?: "built-in" | "custom";
+  internal?: boolean;
 }
 
 const SHARED_SUBAGENT_RULES = [
@@ -23,6 +24,29 @@ const SHARED_SUBAGENT_RULES = [
 ].join("\n");
 
 export const SUBAGENT_DEFINITIONS: SubagentDefinition[] = [
+  {
+    type: "auto-reviewer",
+    label: "Auto Reviewer",
+    description:
+      "Internal read-only approval reviewer for eligible permission requests.",
+    allowedTools: [],
+    policy: {
+      allowWrite: false,
+      allowNetwork: false,
+      shell: "none"
+    },
+    maxSteps: 2,
+    internal: true,
+    systemPrompt: [
+      SHARED_SUBAGENT_RULES,
+      "",
+      "You are deciding whether one pending Alyce permission request should be approved.",
+      "Use only the request details supplied in the assignment. Do not call tools.",
+      "Approve only when the request is clearly consistent with the user's task and low risk.",
+      "Reject requests that are destructive, expose secrets, expand trust broadly, access unrelated paths, or are ambiguous.",
+      "Return only strict JSON: {\"decision\":\"approve\"|\"reject\",\"confidence\":0.0-1.0,\"reason\":\"short reason\"}."
+    ].join("\n")
+  },
   {
     type: "general",
     label: "General",
@@ -155,11 +179,11 @@ export function getSubagentDefinition(type: string): SubagentDefinition | undefi
 }
 
 export function getSubagentTypes() {
-  return SUBAGENT_DEFINITIONS.map((agent) => agent.type);
+  return SUBAGENT_DEFINITIONS.filter(isPublicSubagent).map((agent) => agent.type);
 }
 
 export function formatSubagentList() {
-  return SUBAGENT_DEFINITIONS.map(
+  return SUBAGENT_DEFINITIONS.filter(isPublicSubagent).map(
     (agent) => `- ${agent.type}: ${agent.description} (Tools: ${agent.allowedTools.join(", ")})`
   ).join("\n");
 }
@@ -171,10 +195,22 @@ export async function loadSubagentDefinitions(workspaceRoot: string): Promise<Su
     merged.set(agent.type, { ...agent, source: "built-in" });
   }
   for (const agent of custom) {
+    if (merged.get(agent.type)?.internal === true) {
+      continue;
+    }
+
     merged.set(agent.type, agent);
   }
 
   return [...merged.values()];
+}
+
+function isPublicSubagent(agent: Pick<SubagentDefinition, "internal">) {
+  return agent.internal !== true;
+}
+
+export function isInternalSubagentType(type: string) {
+  return getSubagentDefinition(type)?.internal === true;
 }
 
 export async function loadSubagentDefinition(

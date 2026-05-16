@@ -21,7 +21,7 @@ Alyce 是本地交互式工具代理，不是远程沙箱。你批准工具请�
 - `dist`、`build`、`coverage`、`.next`、`.nuxt`、`node_modules` 等生成目录的写入会被谨慎处理。
 - Plan Mode 会阻止文件修改、修改型 shell 命令、子代理、任意 MCP 工具和技能加载，同时保留只读探索能力。
 
-审批规则是便利控制，不是完整隔离机制。不要在不可信仓库里开启 auto approval 或宽泛的持久 allow 规则。
+审批规则是便利控制，不是完整隔离机制。不要在不可信仓库里开启 `full-access`、`auto-review` 或宽泛的持久 allow 规则。
 
 ## 运行时风险区域
 
@@ -63,7 +63,7 @@ Web fetch/search 会把 URL、搜索词和请求元数据发送到外部服务�
 面对新的或可疑的 checkout：
 
 1. 先查看 `.alyce/mcp.json`、`.alyce/skills/**/SKILL.md` 和项目 settings。
-2. 保持 `approvalMode` 为 `manual`。
+2. 保持 `approvalMode` 为 `read-only` 或 `default`。
 3. 如需先分析，使用 `/plan`。
 4. 运行 `/doctor` 检查环境、配置、审批风险、MCP、技能和存储。
 5. 只有理解对应命令、路径或 server 后，才批准宽泛或持久规则。

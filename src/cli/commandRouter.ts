@@ -43,6 +43,12 @@ export const REPL_COMMAND_DEFINITIONS: ReplCommandDefinition[] = [
     completion: "/settings"
   },
   {
+    command: "/permissions",
+    usage: "/permissions",
+    description: "Switch approval and access mode",
+    completion: "/permissions"
+  },
+  {
     command: "/setup",
     usage: "/setup",
     description: "Open connection setup",
@@ -259,6 +265,7 @@ export type ParsedCommand =
   | { type: "rewind" }
   | { type: "exit" }
   | { type: "open-settings"; section: "connection" | "session" }
+  | { type: "open-permissions" }
   | { type: "open-session-picker" }
   | { type: "resume-session"; query: string }
   | { type: "sessions-list" }
@@ -368,6 +375,18 @@ export function parseReplCommand(input: string): ParsedCommand {
 
   if (input === "/settings") {
     return { type: "open-settings", section: "session" };
+  }
+
+  if (input === "/permissions") {
+    return { type: "open-permissions" };
+  }
+
+  if (input.startsWith("/permissions ")) {
+    return {
+      type: "command-error",
+      input,
+      message: "Unsupported /permissions argument. Use /permissions."
+    };
   }
 
   if (input === "/setup") {

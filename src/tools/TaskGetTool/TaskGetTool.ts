@@ -1,5 +1,6 @@
 import { z } from "zod";
 import type { SubagentTaskInfo, ToolExecutionContext } from "../types.js";
+import { isInternalSubagentType } from "../AgentTool/agents.js";
 import { TASK_GET_TOOL_DESCRIPTION, TASK_GET_TOOL_NAME } from "./prompt.js";
 
 export const TaskGetInputSchema = z
@@ -57,7 +58,7 @@ export async function executeTaskGetTool(
   }
 
   const task = await context.getSubagentTask(input.task_id);
-  if (!task) {
+  if (!task || isInternalSubagentType(task.agentType)) {
     return {
       status: "not_found",
       task_id: input.task_id,

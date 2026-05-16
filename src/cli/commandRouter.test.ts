@@ -39,6 +39,12 @@ function testParserHandlesRepresentedCommands() {
   assert.deepEqual(parseReplCommand("/plan exit"), { type: "plan-exit" });
   assert.deepEqual(parseReplCommand("/build"), { type: "plan-exit" });
   assert.deepEqual(parseReplCommand("/settings"), { type: "open-settings", section: "session" });
+  assert.deepEqual(parseReplCommand("/permissions"), { type: "open-permissions" });
+  assert.deepEqual(parseReplCommand("/permissions default"), {
+    type: "command-error",
+    input: "/permissions default",
+    message: "Unsupported /permissions argument. Use /permissions."
+  });
   assert.deepEqual(parseReplCommand("/setup"), { type: "open-settings", section: "connection" });
   assert.deepEqual(parseReplCommand("/memory clear --all"), {
     type: "memory-clear",

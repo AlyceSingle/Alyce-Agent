@@ -1,3 +1,8 @@
+import {
+  createStructuredPatch as createLineStructuredPatch,
+  type StructuredPatchHunk
+} from "./structuredPatch.js";
+
 export type ApplyPatchOperation =
   | { type: "add"; path: string; contents: string; additions: number }
   | { type: "delete"; path: string }
@@ -19,13 +24,7 @@ export interface ApplyPatchUpdateChunk {
 
 const UNIFIED_DIFF_RANGE_CONTEXT = /^-\d+(?:,\d+)? \+\d+(?:,\d+)? @@(?:\s*(.*))?$/;
 
-export interface ApplyPatchStructuredPatchHunk {
-  oldStart: number;
-  oldLines: number;
-  newStart: number;
-  newLines: number;
-  lines: string[];
-}
+export type ApplyPatchStructuredPatchHunk = StructuredPatchHunk;
 
 export interface PatchedContentResult {
   content: string;
@@ -203,29 +202,16 @@ export function ensureTrailingNewline(content: string) {
 }
 
 export function createStructuredPatch(options: {
+  filePath?: string;
   oldContent: string;
   newContent: string;
 }): ApplyPatchStructuredPatchHunk[] {
-  const oldLines = splitPatchLines(options.oldContent);
-  const newLines = splitPatchLines(options.newContent);
-
-  if (options.oldContent === options.newContent) {
-    return [];
-  }
-
-  return [
-    {
-      oldStart: 1,
-      oldLines: oldLines.length,
-      newStart: 1,
-      newLines: newLines.length,
-      lines: [
-        "@@",
-        ...oldLines.map((line) => `-${line}`),
-        ...newLines.map((line) => `+${line}`)
-      ]
-    }
-  ];
+  return createLineStructuredPatch({
+    filePath: options.filePath,
+    oldContent: options.oldContent,
+    newContent: options.newContent,
+    includeFileHeader: Boolean(options.filePath)
+  });
 }
 
 export function splitPatchLines(content: string) {

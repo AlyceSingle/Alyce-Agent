@@ -159,6 +159,24 @@ alyce --cwd . --selection-file ".alyce/vscode-selection.txt" --initial-prompt "R
 
 安全边界保持不变：启动文件必须位于 allowed roots 内，Alyce 不会自动读取整个 workspace，传入上下文也不会授予写入权限。
 
+## 首次检查
+
+程序启动后，请运行：
+
+```text
+/doctor
+```
+
+根据诊断报告修复缺失的配置、TTY 问题、过时的构建输出、审批风险、MCP 配置问题、技能发现问题、缺失的 `rg`/`git` 或 `.alyce` 存储问题。
+
+如果需要在修改前进行分析，请输入：
+
+```text
+/plan
+```
+
+Plan Mode（计划模式）保持探索过程为只读。准备好进入实现阶段时，使用 `/plan exit` 或 `/build` 退出。在 Alyce 中，`/build` 只是退出计划模式的别名，并不会执行 `npm run build`。
+
 ## 首次启动建议
 
 程序运行后，建议您先完成以下操作：
@@ -174,6 +192,7 @@ alyce --cwd . --selection-file ".alyce/vscode-selection.txt" --initial-prompt "R
 /help       — 列出所有可用命令
 /doctor     — 运行本地健康检查
 /settings   — 直接打开设置面板
+/permissions — 切换审批和访问模式
 /setup      — 首次配置引导
 /plan       — 进入只读计划模式
 /build      — 退出 Plan Mode，不会执行 npm run build

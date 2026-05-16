@@ -3,8 +3,7 @@ import type { SessionSettingsState } from "../../config/runtime.js";
 import {
   createInitialTerminalUiState,
   prependMessages,
-  setPlanModeEnabled,
-  setSessionFullApprovalEnabled
+  setPlanModeEnabled
 } from "./actions.js";
 import type { TerminalUiMessage } from "./types.js";
 
@@ -24,7 +23,7 @@ function createMessage(id: string): TerminalUiMessage {
 function createSettingsState(): SessionSettingsState {
   return {
     effective: {
-      approvalMode: "manual",
+      approvalMode: "default",
       maxSteps: 50,
       commandTimeoutMs: 120_000,
       scrollSpeed: 2,
@@ -96,8 +95,6 @@ function runTests() {
   testInitialStateDisablesPlanMode();
   testInitialStateUsesConnectionReadyOverride();
   testSetPlanModeEnabled();
-  testInitialStateDisablesFullApproval();
-  testSetSessionFullApprovalEnabled();
   testPrependMessagesAddsUniqueMessagesAtTop();
   testPrependMessagesPreservesSelectedMessage();
   console.log("actions tests passed");
@@ -166,20 +163,6 @@ function testSetPlanModeEnabled() {
 
   assert.equal(next.planModeEnabled, true);
   assert.equal(setPlanModeEnabled(next, true), next);
-}
-
-function testInitialStateDisablesFullApproval() {
-  const initial = createInitialState();
-
-  assert.equal(initial.sessionFullApprovalEnabled, false);
-}
-
-function testSetSessionFullApprovalEnabled() {
-  const initial = createInitialState();
-  const next = setSessionFullApprovalEnabled(initial, true);
-
-  assert.equal(next.sessionFullApprovalEnabled, true);
-  assert.equal(setSessionFullApprovalEnabled(next, true), next);
 }
 
 function testPrependMessagesAddsUniqueMessagesAtTop() {

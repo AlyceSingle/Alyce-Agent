@@ -12,12 +12,13 @@ import {
   readTextFileWithMetadata,
   writeTextFileWithMetadata
 } from "../internal/textFileIO.js";
+import { createStructuredPatch } from "../internal/structuredPatch.js";
 import { assertExistingFileBytesUnchangedAfterApproval } from "../internal/writeSafety.js";
 import type { ToolExecutionContext } from "../types.js";
 import { FILE_EDIT_TOOL_NAME } from "./constants.js";
 import { getEditToolDescription } from "./prompt.js";
 import { type FileEditOutput, inputSchema } from "./types.js";
-import { getPatchForEdit, resolveEditMatch } from "./utils.js";
+import { applyEditToFile, resolveEditMatch } from "./utils.js";
 
 export const FileEditInputSchema = inputSchema();
 export const FILE_EDIT_TOOL_DESCRIPTION = getEditToolDescription();
@@ -53,15 +54,13 @@ async function executeFileEditLocked(
 
   const match = resolveEditMatch(originalFile, input.old_string, Boolean(input.replace_all));
 
-  const patchResult = getPatchForEdit({
-    filePath: relativePath,
-    fileContents: originalFile,
-    oldString: match.actualOldString,
-    newString: input.new_string,
-    replaceAll: input.replace_all
+  const updatedFile = applyEditToFile(originalFile, {
+    old_string: match.actualOldString,
+    new_string: input.new_string,
+    replace_all: Boolean(input.replace_all)
   });
 
-  if (patchResult.updatedFile === originalFile) {
+  if (updatedFile === originalFile) {
     throw new Error("Edit produced no changes");
   }
 
@@ -87,7 +86,7 @@ async function executeFileEditLocked(
   });
 
   await context.captureFileBeforeWrite(fullFilePath);
-  await writeTextFileWithMetadata(fullFilePath, patchResult.updatedFile, {
+  await writeTextFileWithMetadata(fullFilePath, updatedFile, {
     encoding: originalMetadata.encoding,
     hasBom: originalMetadata.hasBom,
     lineEndings: originalMetadata.lineEndings
@@ -108,16 +107,12 @@ async function executeFileEditLocked(
     newString: input.new_string,
     actualOldString: match.actualOldString,
     matchStrategy: match.strategy,
-    structuredPatch:
-      finalFile === patchResult.updatedFile
-        ? patchResult.patch
-        : getPatchForEdit({
-            filePath: relativePath,
-            fileContents: originalFile,
-            oldString: originalFile,
-            newString: finalFile,
-            replaceAll: false
-          }).patch,
+    structuredPatch: createStructuredPatch({
+      filePath: relativePath,
+      oldContent: originalFile,
+      newContent: finalFile,
+      includeFileHeader: true
+    }),
     userModified: false,
     replaceAll: Boolean(input.replace_all),
     matchCount: match.matchCount,

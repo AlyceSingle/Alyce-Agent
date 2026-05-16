@@ -74,7 +74,8 @@ export type ConnectionConfigLayer = Partial<ConnectionConfig> & {
 
 export type ConnectionConfigSaveTarget = "user" | "project";
 
-export type ApprovalMode = "manual" | "auto";
+export type ApprovalMode = "read-only" | "default" | "auto-review" | "full-access";
+type ApprovalModeInput = ApprovalMode | "manual" | "auto";
 
 export interface SessionSettings extends PromptOverrideConfig {
   approvalMode: ApprovalMode;
@@ -180,7 +181,8 @@ const ConnectionConfigFileSchema = z
   })
   .strict();
 
-type SessionSettingsFile = Omit<Partial<SessionSettings>, "snapshot"> & {
+type SessionSettingsFile = Omit<Partial<SessionSettings>, "snapshot" | "approvalMode"> & {
+  approvalMode?: ApprovalModeInput;
   snapshot?: Partial<SnapshotRuntimeConfig>;
   autoSummaryEnabled?: boolean;
   statusUsageDisplayEnabled?: boolean;
@@ -189,7 +191,15 @@ type SessionSettingsFile = Omit<Partial<SessionSettings>, "snapshot"> & {
 
 const SessionSettingsFileSchema: z.ZodType<SessionSettingsFile> = z
   .object({
-    approvalMode: z.union([z.literal("manual"), z.literal("auto")]).optional(),
+    approvalMode: z.union([
+      z.literal("read-only"),
+      z.literal("default"),
+      z.literal("auto-review"),
+      z.literal("full-access"),
+      // Legacy aliases kept so existing settings files continue to load.
+      z.literal("manual"),
+      z.literal("auto")
+    ]).optional(),
     maxSteps: z.number().int().positive().optional(),
     commandTimeoutMs: z.number().int().positive().optional(),
     scrollSpeed: z.number().int().positive().optional(),
@@ -672,10 +682,15 @@ function normalizeSessionSettingsFile(input: Partial<SessionSettingsFile>): Part
     autoSummaryEnabled,
     statusUsageDisplayEnabled: _removedStatusUsageDisplayEnabled,
     startupInstructionFiles: _removedStartupInstructionFiles,
+    approvalMode,
     snapshot,
     ...settings
   } = input;
   const normalized: Partial<SessionSettings> = { ...settings };
+  if (approvalMode !== undefined) {
+    normalized.approvalMode = normalizeApprovalMode(approvalMode);
+  }
+
   if (snapshot !== undefined) {
     normalized.snapshot = normalizeSnapshotSettings(snapshot);
   }
@@ -712,7 +727,7 @@ function normalizeSessionSettings(
   workspaceRoot: string
 ): SessionSettings {
   return {
-    approvalMode: input.approvalMode === "auto" ? "auto" : "manual",
+    approvalMode: normalizeApprovalMode(input.approvalMode),
     maxSteps: clampPositiveInt(input.maxSteps, 50),
     commandTimeoutMs: clampPositiveInt(input.commandTimeoutMs, 120_000),
     scrollSpeed: clampBoundedInt(input.scrollSpeed, 2, 1, 8),
@@ -837,6 +852,21 @@ function serializeSessionSettings(
   });
 }
 
+export function normalizeApprovalMode(value: ApprovalModeInput | undefined): ApprovalMode {
+  switch (value) {
+    case "read-only":
+    case "default":
+    case "auto-review":
+    case "full-access":
+      return value;
+    case "auto":
+      return "full-access";
+    case "manual":
+    default:
+      return "default";
+  }
+}
+
 function serializeOptionalTextSetting(value: string | undefined): string | undefined {
   // 空字符串是“显式清空用户层值”的标记，用于覆盖项目层默认值。
   if (value === "") {
@@ -929,7 +959,7 @@ function parseModelContextWindowOverridesFromEnv(
 
 function resolveSettingsFromCli(argv: string[]): Partial<SessionSettings> {
   return compactObject({
-    approvalMode: hasFlag(argv, "--yolo") ? "auto" : undefined,
+    approvalMode: hasFlag(argv, "--yolo") ? "full-access" : undefined,
     languagePreference: getArgValue(argv, "--lang"),
     personaPreset: resolvePersonaPreset(getArgValue(argv, "--persona-preset")),
     aiPersonalityPrompt: getArgValue(argv, "--persona"),

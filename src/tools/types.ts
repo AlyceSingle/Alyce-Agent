@@ -166,6 +166,7 @@ export interface SubagentDefinitionInfo {
   maxSteps?: number;
   model?: string;
   source?: "built-in" | "custom";
+  internal?: boolean;
 }
 
 export type FileReadStateKind =

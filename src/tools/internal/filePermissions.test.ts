@@ -23,6 +23,7 @@ async function runTests() {
   await testSensitiveReadRequestsFileReadPermission();
   await testNormalReadSkipsApproval();
   await testWorkspaceWriteApprovalCarriesFileWritePattern();
+  testPatchPatternCollapsesAllWorkspacePaths();
   testPatchPatternAggregatesTouchedPaths();
   console.log("filePermissions tests passed");
 }
@@ -143,6 +144,17 @@ function testPatchPatternAggregatesTouchedPaths() {
   assert.match(pattern, /workspace:src\/a\.ts/);
   assert.match(pattern, /sensitive:\.env/);
   assert.equal(details.forceAsk, true);
+}
+
+function testPatchPatternCollapsesAllWorkspacePaths() {
+  const workspaceRoot = path.resolve("D:\\Code\\AlyceAgent");
+  const sourcePath = path.join(workspaceRoot, "src", "a.ts");
+  const testPath = path.join(workspaceRoot, "src", "a.test.ts");
+  const pattern = getPatchPermissionPattern(workspaceRoot, [sourcePath, testPath]);
+  const details = getAggregateFilePermissionDetails(workspaceRoot, [sourcePath, testPath]);
+
+  assert.equal(pattern, "workspace:*");
+  assert.equal(details.forceAsk, false);
 }
 
 async function createTestContext(): Promise<TestContext> {

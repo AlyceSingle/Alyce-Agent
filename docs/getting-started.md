@@ -160,6 +160,24 @@ Example `.vscode/tasks.json` tasks for the current file plus selected text:
 
 Security boundaries stay the same: startup file paths must be inside allowed roots, Alyce does not read the whole workspace, and passing context does not grant write approval.
 
+## First Checks
+
+After Alyce starts, run:
+
+```text
+/doctor
+```
+
+Use the doctor report to fix missing config, TTY problems, stale build output, approval risk, MCP config issues, skill discovery issues, missing `rg`/`git`, or `.alyce` storage problems.
+
+For analysis before edits, enter:
+
+```text
+/plan
+```
+
+Plan Mode keeps exploration read-only. Use `/plan exit` or `/build` to leave it when you are ready for implementation work. In Alyce, `/build` is only a Plan Mode exit alias; it does not run `npm run build`.
+
 ## First-Run Recommendations
 
 Once Alyce is running, we recommend the following steps:
@@ -175,6 +193,7 @@ Once Alyce is running, we recommend the following steps:
 /help       — shows the full command list
 /doctor     — runs local health checks
 /settings   — opens settings directly
+/permissions — switches approval and access mode
 /setup      — first-run configuration wizard
 /plan       — enters read-only planning mode
 /build      — exits Plan Mode; does not run npm run build

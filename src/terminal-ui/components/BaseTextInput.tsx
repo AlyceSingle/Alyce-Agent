@@ -33,7 +33,7 @@ export function BaseTextInput(props: BaseTextInputProps & {
         <Text>
           <Text color={prefixColor}>{firstLinePrefix}</Text>
           {props.showCursor ? <Text inverse>{" "}</Text> : null}
-          <Text color={placeholderColor} dimColor>
+          <Text color={placeholderColor} dimColor={props.placeholderDimColor ?? true}>
             {props.placeholder ?? ""}
           </Text>
         </Text>

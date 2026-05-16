@@ -218,7 +218,7 @@ description: 用于重复项目任务的流程。
 在设置面板（`Ctrl+X`）的“会话”标签页中可以调整以下内容：
 
 ### 执行与审批
-- **审批模式**：控制工具调用的审批严格程度。
+- **审批模式**（`approvalMode`）：控制访问与审批方式，支持 `read-only`、`default`、`auto-review`、`full-access`。
 - **最大步数**：单轮对话中允许 Agent 连续调用工具的最大次数。
 - **命令超时**：Shell 命令执行的超时时间（毫秒）。
 - **滚动速度**（`scrollSpeed`）：逐行滚动动作使用的基础行数（`1-8`）。
@@ -232,7 +232,7 @@ description: 用于重复项目任务的流程。
 
 ```json
 {
-  "approvalMode": "manual",
+  "approvalMode": "default",
   "permissionRules": [
     {
       "permission": "shell",
@@ -279,14 +279,23 @@ task.spawn
 - `npm run build` 这类精确 shell/PowerShell 命令文本。
 - `https://docs.example.com/*` 或 `*` 这类 URL/MCP pattern。
 
-规则优先级从低到高是：内置默认、项目设置、用户设置、本会话审批、Plan Mode 覆盖层。多个规则同时命中时，更严格的动作优先，`deny` 高于 `allow`，`allow` 高于 `ask`。某些请求会强制再次询问，例如敏感/生成目录文件和高风险命令，宽泛的会话允许规则不会跳过这些提示。
+规则优先级从低到高是：内置默认、项目设置、用户设置、本会话审批、Plan Mode 覆盖层。多个规则同时命中时，更严格的动作优先，`deny` 高于 `allow`，`allow` 高于 `ask`。某些请求会强制再次询问，例如敏感/生成目录文件和高风险命令；只有 `full-access` 会跳过这些强制提示。
+
+内置审批模式：
+
+- `read-only`：允许工作区读取；写入、命令、网络和外部目录需要审批。
+- `default`：允许工作区读写和普通命令；网络、外部目录和强制审批请求仍会询问。
+- `auto-review`：基础权限同 `default`，符合条件的普通审批会先交给内部 `auto-reviewer` 子代理判断，失败再回到人工审批。
+- `full-access`：所有权限请求直接允许，包括强制审批请求。
 
 审批弹窗也会创建临时会话规则：
 
 - **Allow once**：只允许当前请求。
 - **Allow this kind for session**：本次运行期间允许同类普通请求。
 - **Allow directory for session**：本次运行期间允许该外部目录。
-- **Auto approve this session**：本次运行期间普通请求自动批准；高风险强制审批请求仍可能弹窗。
+- **Switch to Full Access**：保存 `approvalMode: "full-access"` 并批准当前请求。
+
+可以用 `/permissions` 在四种审批模式之间切换。
 
 ### Plan Mode
 

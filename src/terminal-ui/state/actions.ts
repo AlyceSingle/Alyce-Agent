@@ -55,7 +55,6 @@ export function createInitialTerminalUiState(options: {
     unseenDividerMessageId: null,
     unseenMessageCount: 0,
     sessionApprovalMode: options.settingsState.effective.approvalMode,
-    sessionFullApprovalEnabled: false,
     sessionAllowedKinds: []
   };
 }
@@ -298,6 +297,13 @@ export function openSettingsDialog(
   });
 }
 
+export function openPermissionsDialog(state: TerminalUiState): TerminalUiState {
+  return pushDialog(state, {
+    type: "permissions",
+    layer: "overlay"
+  });
+}
+
 export function openSessionPickerDialog(
   state: TerminalUiState,
   sessions: SessionHistoryListItem[]
@@ -413,20 +419,6 @@ export function setSessionApprovalMode(
   return {
     ...state,
     sessionApprovalMode
-  };
-}
-
-export function setSessionFullApprovalEnabled(
-  state: TerminalUiState,
-  sessionFullApprovalEnabled: boolean
-): TerminalUiState {
-  if (state.sessionFullApprovalEnabled === sessionFullApprovalEnabled) {
-    return state;
-  }
-
-  return {
-    ...state,
-    sessionFullApprovalEnabled
   };
 }
 

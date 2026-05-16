@@ -30,6 +30,7 @@ async function runTests() {
   await testAwaitsAsyncTaskLookupAndRetrievedHook();
   await testRecordsRetrievedEventWhenTaskExists();
   await testReturnsNotFound();
+  await testInternalAutoReviewerTaskReturnsNotFound();
   await testRequiresRuntimeHook();
   console.log("TaskGet tests passed");
 }
@@ -64,6 +65,25 @@ async function testReturnsNotFound() {
 
   assert.equal(result.status, "not_found");
   assert.equal(result.task_id, "missing-task");
+}
+
+async function testInternalAutoReviewerTaskReturnsNotFound() {
+  const result = await executeTaskGetTool({
+    task_id: "task-internal"
+  }, createTestContext({
+    taskId: "task-internal",
+    agentType: "auto-reviewer",
+    description: "Internal review",
+    model: "test-model",
+    maxSteps: 2,
+    status: "completed",
+    createdAt: "2026-05-06T00:00:00.000Z",
+    updatedAt: "2026-05-06T00:00:01.000Z",
+    progress: []
+  }));
+
+  assert.equal(result.status, "not_found");
+  assert.equal(result.task_id, "task-internal");
 }
 
 async function testRecordsRetrievedEventWhenTaskExists() {

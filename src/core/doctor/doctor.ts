@@ -466,14 +466,25 @@ function checkApprovalRisk(settings: SessionSettings, allowedRoots: string[]): D
     details.push(`Persistent additional directories: ${settings.additionalDirectories.length}`);
   }
 
-  if (settings.approvalMode === "auto") {
+  if (settings.approvalMode === "full-access") {
     return {
       id: "settings.approval",
       title: "Approval mode",
       status: "warn",
-      summary: "Auto approval is enabled, so tool requests can proceed with fewer stops.",
+      summary: "Full Access is enabled, so tool requests can proceed without approval prompts.",
       details,
-      suggestion: "Use manual approval while editing untrusted repositories."
+      suggestion: "Use Default or Read Only while editing untrusted repositories."
+    };
+  }
+
+  if (settings.approvalMode === "auto-review") {
+    return {
+      id: "settings.approval",
+      title: "Approval mode",
+      status: "warn",
+      summary: "Auto-review approval is enabled, so eligible prompts can be decided by a subagent.",
+      details,
+      suggestion: "Review permission messages and use Default for untrusted repositories."
     };
   }
 
@@ -482,7 +493,7 @@ function checkApprovalRisk(settings: SessionSettings, allowedRoots: string[]): D
       id: "settings.approval",
       title: "Approval mode",
       status: "warn",
-      summary: "Manual approval is enabled, but extra persistent directories are allowed.",
+      summary: `${settings.approvalMode} approval is enabled, but extra persistent directories are allowed.`,
       details: [
         ...details,
         ...settings.additionalDirectories.map((directory) => `Allowed: ${directory}`)
@@ -495,7 +506,7 @@ function checkApprovalRisk(settings: SessionSettings, allowedRoots: string[]): D
     id: "settings.approval",
     title: "Approval mode",
     status: "ok",
-    summary: "Manual approval is enabled and no persistent extra directories are configured.",
+    summary: `${settings.approvalMode} approval is enabled and no persistent extra directories are configured.`,
     details
   };
 }

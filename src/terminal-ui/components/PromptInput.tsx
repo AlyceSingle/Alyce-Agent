@@ -11,6 +11,8 @@ import TextInput from "./TextInput.js";
 
 const PROMPT_INPUT_VIEWPORT_OFFSET = 8;
 const MAX_VISIBLE_SLASH_COMMAND_SUGGESTIONS = 10;
+const DEFAULT_PROMPT_PLACEHOLDER = "Ask Alyce to inspect, edit, or explain something...";
+export const INPUT_LOCKED_PLACEHOLDER = "Input locked while Alyce is working. Press ESC to interrupt.";
 
 export function isSlashCommandInput(value: string) {
   return value.startsWith("/") && !value.includes("\n");
@@ -64,11 +66,30 @@ export function shouldToggleModeFromPromptKey(
   return key.tab && !key.shift && !key.meta && !key.ctrl && !disabled && !isSlashCommandInput(value);
 }
 
+export function resolvePromptPlaceholderState(options: {
+  disabled: boolean;
+  disabledPlaceholder?: string;
+}) {
+  const useDisabledPlaceholder =
+    options.disabled &&
+    options.disabledPlaceholder !== undefined &&
+    options.disabledPlaceholder.trim().length > 0;
+
+  return {
+    text: useDisabledPlaceholder ? options.disabledPlaceholder! : DEFAULT_PROMPT_PLACEHOLDER,
+    color: useDisabledPlaceholder
+      ? terminalUiTheme.colors.warning
+      : terminalUiTheme.colors.inputPlaceholder,
+    dimColor: !useDisabledPlaceholder
+  };
+}
+
 export function PromptInput(props: {
   value: string;
   viewportWidth: number;
   disabled: boolean;
   disabledReason?: string;
+  disabledPlaceholder?: string;
   sublineText?: string;
   onLayoutHeightChange?: () => void;
   onChange: (value: string) => void;
@@ -247,11 +268,16 @@ export function PromptInput(props: {
     slashSuggestions.length
   ]);
 
-  const statusHint = props.disabled
-    ? props.disabledReason || "Input locked."
-    : escClearPending
+  const hasDisabledReason = props.disabled && props.disabledReason !== undefined;
+  const statusHint = hasDisabledReason
+    ? props.disabledReason
+    : !props.disabled && escClearPending
       ? "Press Esc again to clear input."
       : props.sublineText;
+  const placeholderState = resolvePromptPlaceholderState({
+    disabled: props.disabled,
+    disabledPlaceholder: props.disabledPlaceholder
+  });
 
   return (
     <Box flexDirection="column" flexShrink={0} width="100%">
@@ -286,17 +312,18 @@ export function PromptInput(props: {
           cursorOffset={cursorOffset}
           onChangeCursorOffset={handleCursorOffsetChange}
           onEscClearPendingChange={setEscClearPending}
-          placeholder="Ask Alyce to inspect, edit, or explain something..."
+          placeholder={placeholderState.text}
           firstLinePrefix="› "
           continuationPrefix="  "
           prefixColor={props.disabled ? terminalUiTheme.colors.muted : terminalUiTheme.colors.promptAccent}
-          placeholderColor={terminalUiTheme.colors.inputPlaceholder}
+          placeholderColor={placeholderState.color}
+          placeholderDimColor={placeholderState.dimColor}
           overflowHintColor={terminalUiTheme.colors.promptMuted}
         />
         {statusHint ? (
           <Box marginTop={1} width="100%">
             <Text
-              color={props.disabled ? terminalUiTheme.colors.warning : terminalUiTheme.colors.inputTray}
+              color={hasDisabledReason ? terminalUiTheme.colors.warning : terminalUiTheme.colors.inputTray}
               wrap="truncate-end"
             >
               {statusHint}

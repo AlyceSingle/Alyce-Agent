@@ -19,6 +19,10 @@ async function runTests() {
   testExtractThinkingDeltaForUnchangedSnapshot();
   testExtractThinkingDeltaForOverlap();
   testShouldSkipApprovalDialog();
+  testBuildApprovalModePermissionRules();
+  testBackgroundPanelOnlyShowsRunningNonAutoReviewerTasks();
+  testBackgroundProcessCountOnlyIncludesRunningProcesses();
+  testParseAutoReviewDecision();
   await testProcessCommandsRouteThroughController();
   await testWaitForUiPaintYieldsToMacrotask();
   console.log("sessionController tests passed");
@@ -80,17 +84,100 @@ function testExtractThinkingDeltaForOverlap() {
 function testShouldSkipApprovalDialog() {
   const shouldSkip = __SESSION_CONTROLLER_TESTING__.shouldSkipApprovalDialog;
 
-  assert.equal(shouldSkip({ action: "allow" }, { forceAsk: false }, false), true);
-  assert.equal(shouldSkip({ action: "allow" }, { forceAsk: true }, false), false);
-  assert.equal(shouldSkip({ action: "allow" }, { forceAsk: true }, true), true);
-  assert.equal(shouldSkip(null, { forceAsk: true }, true), true);
-  assert.equal(shouldSkip({ action: "deny" }, { forceAsk: false }, true), false);
+  assert.equal(shouldSkip({ action: "allow" }, { forceAsk: false }, "default"), true);
+  assert.equal(shouldSkip({ action: "allow" }, { forceAsk: true }, "default"), false);
+  assert.equal(shouldSkip({ action: "allow" }, { forceAsk: true }, "full-access"), true);
+  assert.equal(shouldSkip(null, { forceAsk: true }, "full-access"), true);
+  assert.equal(shouldSkip({ action: "deny" }, { forceAsk: false }, "full-access"), false);
+}
+
+function testBuildApprovalModePermissionRules() {
+  const rules = __SESSION_CONTROLLER_TESTING__.buildApprovalModePermissionRules;
+
+  assert.deepEqual(rules("read-only"), []);
+  assert.deepEqual(
+    rules("default").map((rule) => `${rule.permission}:${rule.pattern}:${rule.action}`),
+    [
+      "file.write:workspace:*:allow",
+      "file.edit:workspace:*:allow",
+      "file.patch:workspace:*:allow",
+      "shell:*:allow",
+      "powershell:*:allow"
+    ]
+  );
+  assert.deepEqual(
+    rules("auto-review").map((rule) => `${rule.permission}:${rule.pattern}:${rule.action}`),
+    [
+      "file.write:workspace:*:allow",
+      "file.edit:workspace:*:allow",
+      "file.patch:workspace:*:allow",
+      "shell:*:allow",
+      "powershell:*:allow"
+    ]
+  );
+  assert.deepEqual(
+    rules("full-access").map((rule) => `${rule.permission}:${rule.pattern}:${rule.action}`),
+    ["*:*:allow"]
+  );
+}
+
+function testBackgroundPanelOnlyShowsRunningNonAutoReviewerTasks() {
+  const isVisible = __SESSION_CONTROLLER_TESTING__.isVisibleBackgroundTask;
+
+  assert.equal(isVisible({ agentType: "auto-reviewer", status: "running" }), false);
+  assert.equal(isVisible({ agentType: "review", status: "running" }), true);
+  assert.equal(isVisible({ agentType: "general", status: "running" }), true);
+  assert.equal(isVisible({ agentType: "review", status: "completed" }), false);
+  assert.equal(isVisible({ agentType: "review", status: "failed" }), false);
+  assert.equal(isVisible({ agentType: "review", status: "stopped" }), false);
+}
+
+function testBackgroundProcessCountOnlyIncludesRunningProcesses() {
+  const isVisible = __SESSION_CONTROLLER_TESTING__.isVisibleBackgroundProcess;
+
+  assert.equal(isVisible({ status: "running" }), true);
+  assert.equal(isVisible({ status: "starting" }), false);
+  assert.equal(isVisible({ status: "exited" }), false);
+  assert.equal(isVisible({ status: "failed" }), false);
+  assert.equal(isVisible({ status: "stopped" }), false);
+}
+
+function testParseAutoReviewDecision() {
+  const parse = __SESSION_CONTROLLER_TESTING__.parseAutoReviewDecision;
+
+  assert.deepEqual(
+    parse('{"decision":"approve","confidence":0.9,"reason":"Scoped request."}'),
+    {
+      decision: "approve",
+      confidence: 0.9,
+      reason: "Scoped request."
+    }
+  );
+  assert.deepEqual(
+    parse('```json\n{"decision":"reject","confidence":2,"reason":"Too broad."}\n```'),
+    {
+      decision: "reject",
+      confidence: 1,
+      reason: "Too broad."
+    }
+  );
+  assert.equal(parse('{"decision":"maybe","confidence":0.9}'), null);
+  assert.equal(parse("not json"), null);
 }
 
 async function testProcessCommandsRouteThroughController() {
   const runningProcess = createBackgroundProcessRecord({ status: "running" });
+  const startingProcess = createBackgroundProcessRecord({ id: "bg_starting", status: "starting" });
+  const exitedProcess = createBackgroundProcessRecord({ id: "bg_exited", status: "exited" });
+  const failedProcess = createBackgroundProcessRecord({ id: "bg_failed", status: "failed" });
   const stoppedProcess = createBackgroundProcessRecord({ status: "stopped" });
-  let processes: BackgroundProcessRecord[] = [runningProcess];
+  let processes: BackgroundProcessRecord[] = [
+    runningProcess,
+    startingProcess,
+    exitedProcess,
+    failedProcess,
+    stoppedProcess
+  ];
   let stoppedProcessId = "";
   const runtime = createRuntimeStub({
     listBackgroundProcesses: () => processes,
@@ -204,7 +291,7 @@ function createInitialState() {
 function createSettingsState(): SessionSettingsState {
   return {
     effective: {
-      approvalMode: "manual",
+      approvalMode: "default",
       maxSteps: 50,
       commandTimeoutMs: 120_000,
       scrollSpeed: 2,

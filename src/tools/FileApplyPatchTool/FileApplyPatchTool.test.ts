@@ -74,6 +74,7 @@ async function createTestContext(options: {
 
 async function runTests() {
   await testUpdateApplies();
+  await testUpdateStructuredPatchUsesChangedFileLineNumbers();
   await testAddRollbackOnPostWriteFailure();
   await testUpdateRollbackOnPostWriteFailure();
   await testRenameOnlyMoveWithMatchingTarget();
@@ -102,6 +103,42 @@ async function testUpdateApplies() {
     }, context);
 
     assert.equal(await fs.readFile(path.join(context.workspaceRoot, "a.txt"), "utf8"), "ONE\ntwo\n");
+  } finally {
+    await context.cleanup();
+  }
+}
+
+async function testUpdateStructuredPatchUsesChangedFileLineNumbers() {
+  const context = await createTestContext();
+  try {
+    await fs.writeFile(path.join(context.workspaceRoot, "a.txt"), "one\ntwo\nthree\nfour\n");
+    await context.markRead("a.txt");
+
+    const result = await executeFileApplyPatch({
+      patchText: [
+        "*** Begin Patch",
+        "*** Update File: a.txt",
+        "@@",
+        "-three",
+        "+THREE",
+        "*** End Patch"
+      ].join("\n")
+    }, context);
+
+    assert.equal(result.structuredPatch.length, 1);
+    assert.deepEqual(result.structuredPatch[0], {
+      oldStart: 3,
+      oldLines: 1,
+      newStart: 3,
+      newLines: 1,
+      lines: [
+        "--- a.txt",
+        "+++ a.txt",
+        "@@ -3,1 +3,1 @@",
+        "-three",
+        "+THREE"
+      ]
+    });
   } finally {
     await context.cleanup();
   }

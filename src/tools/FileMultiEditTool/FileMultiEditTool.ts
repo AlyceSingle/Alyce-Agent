@@ -12,9 +12,10 @@ import {
   readTextFileWithMetadata,
   writeTextFileWithMetadata
 } from "../internal/textFileIO.js";
+import { createStructuredPatch } from "../internal/structuredPatch.js";
 import { assertExistingFileBytesUnchangedAfterApproval } from "../internal/writeSafety.js";
 import type { ToolExecutionContext } from "../types.js";
-import { getPatchForEdit, resolveEditMatch } from "../FileEditTool/utils.js";
+import { applyEditToFile, resolveEditMatch } from "../FileEditTool/utils.js";
 import {
   FILE_MULTI_EDIT_TOOL_NAME,
   getMultiEditToolDescription
@@ -57,14 +58,11 @@ async function executeFileMultiEditLocked(
     }
 
     const match = resolveEditMatch(updatedFile, edit.old_string, Boolean(edit.replace_all));
-    const patchResult = getPatchForEdit({
-      filePath: relativePath,
-      fileContents: updatedFile,
-      oldString: match.actualOldString,
-      newString: edit.new_string,
-      replaceAll: edit.replace_all
+    updatedFile = applyEditToFile(updatedFile, {
+      old_string: match.actualOldString,
+      new_string: edit.new_string,
+      replace_all: Boolean(edit.replace_all)
     });
-    updatedFile = patchResult.updatedFile;
     totalMatches += match.matchCount;
     appliedEdits.push({
       oldString: edit.old_string,
@@ -120,13 +118,12 @@ async function executeFileMultiEditLocked(
     filePath: relativePath,
     editCount: input.edits.length,
     edits: appliedEdits,
-    structuredPatch: getPatchForEdit({
+    structuredPatch: createStructuredPatch({
       filePath: relativePath,
-      fileContents: originalFile,
-      oldString: originalFile,
-      newString: finalFile,
-      replaceAll: false
-    }).patch,
+      oldContent: originalFile,
+      newContent: finalFile,
+      includeFileHeader: true
+    }),
     userModified: false,
     replaceAll: input.edits.some((edit) => Boolean(edit.replace_all)),
     matchCount: totalMatches,

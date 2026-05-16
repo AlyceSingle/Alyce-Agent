@@ -431,7 +431,7 @@ async function normalizeTaskInput(
 ): Promise<NormalizedTask | { error: Record<string, unknown> }> {
   const agentType = input.subagent_type ?? "general";
   const agent = await resolveSubagentDefinition(agentType, context);
-  if (!agent) {
+  if (!agent || agent.internal === true) {
     return {
       error: {
         index,
@@ -519,7 +519,9 @@ async function resolveSubagentDefinition(
 
 async function resolveSubagentTypes(context: ToolExecutionContext) {
   if (context.listSubagentDefinitions) {
-    return (await context.listSubagentDefinitions()).map((agent) => agent.type);
+    return (await context.listSubagentDefinitions())
+      .filter((agent) => agent.internal !== true)
+      .map((agent) => agent.type);
   }
 
   return getSubagentTypes();

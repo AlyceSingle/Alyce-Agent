@@ -34,5 +34,6 @@ export type BaseTextInputProps = {
   continuationPrefix?: string;
   prefixColor?: string;
   placeholderColor?: string;
+  placeholderDimColor?: boolean;
   overflowHintColor?: string;
 };

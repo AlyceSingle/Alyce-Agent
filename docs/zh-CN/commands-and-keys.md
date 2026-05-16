@@ -17,6 +17,7 @@
 | `/help` | 列出所有可用命令。 |
 | `/doctor` | 运行本地健康检查，包括 Node、TTY、工作区、连接配置、审批风险、MCP、技能、`rg`、`git`、`.alyce` 存储、snapshot 存储和请求 patch。 |
 | `/settings` | 打开设置面板。 |
+| `/permissions` | 打开四档审批和访问模式切换面板。 |
 | `/setup` | 启动首次配置引导。 |
 | `/clear` | 清空当前对话上下文。 |
 | `/rewind` | 打开回退选择器，恢复到之前的输入状态。 |

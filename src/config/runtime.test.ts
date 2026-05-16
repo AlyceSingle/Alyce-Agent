@@ -11,8 +11,11 @@ import {
 
 async function runTests() {
   testSessionSettingsDefaultsIncludeScrollPerformanceSettings();
+  testSessionSettingsNormalizesApprovalModes();
   testSessionSettingsClampsScrollSpeed();
   await testRuntimeConfigReadsScrollPerformanceEnv();
+  await testRuntimeConfigReadsLegacyApprovalModes();
+  await testRuntimeConfigMapsYoloToFullAccess();
   await testRuntimeConfigReadsSnapshotSettingsFromEnv();
   await testRuntimeConfigIgnoresRetiredStatusUsageSetting();
   await testSessionSettingsSerializationIncludesScrollPerformanceSettings();
@@ -30,10 +33,29 @@ function createPaths(workspaceRoot: string): Pick<
   };
 }
 
+async function loadRuntimeConfigForTest(
+  argv: string[],
+  env: NodeJS.ProcessEnv
+) {
+  return withTemporaryHome(() => loadRuntimeConfig(argv, env));
+}
+
+async function withTemporaryHome<T>(callback: () => Promise<T>): Promise<T> {
+  const originalHomedir = os.homedir;
+  const homeDirectory = await fs.mkdtemp(path.join(os.tmpdir(), "alyce-runtime-home-"));
+  os.homedir = () => homeDirectory;
+  try {
+    return await callback();
+  } finally {
+    os.homedir = originalHomedir;
+  }
+}
+
 function testSessionSettingsDefaultsIncludeScrollPerformanceSettings() {
   const state = buildSessionSettingsState(createPaths("C:\\workspace"), {});
 
   assert.equal(state.effective.scrollSpeed, 2);
+  assert.equal(state.effective.approvalMode, "default");
   assert.equal(state.effective.scrollAccelerationEnabled, false);
   assert.equal(state.effective.historyPagingEnabled, false);
   assert.equal(state.effective.maxMessagesWithoutVirtualization, 200);
@@ -52,6 +74,22 @@ function testSessionSettingsDefaultsIncludeScrollPerformanceSettings() {
   assert.deepEqual(state.effective.permissionRules, []);
 }
 
+function testSessionSettingsNormalizesApprovalModes() {
+  const readOnly = buildSessionSettingsState(createPaths("C:\\workspace"), {
+    user: { approvalMode: "read-only" }
+  });
+  const autoReview = buildSessionSettingsState(createPaths("C:\\workspace"), {
+    user: { approvalMode: "auto-review" }
+  });
+  const fullAccess = buildSessionSettingsState(createPaths("C:\\workspace"), {
+    user: { approvalMode: "full-access" }
+  });
+
+  assert.equal(readOnly.effective.approvalMode, "read-only");
+  assert.equal(autoReview.effective.approvalMode, "auto-review");
+  assert.equal(fullAccess.effective.approvalMode, "full-access");
+}
+
 function testSessionSettingsClampsScrollSpeed() {
   const low = buildSessionSettingsState(createPaths("C:\\workspace"), {
     user: { scrollSpeed: 0 }
@@ -66,7 +104,7 @@ function testSessionSettingsClampsScrollSpeed() {
 
 async function testRuntimeConfigReadsScrollPerformanceEnv() {
   const workspaceRoot = await fs.mkdtemp(path.join(os.tmpdir(), "alyce-runtime-config-"));
-  const config = await loadRuntimeConfig([], {
+  const config = await loadRuntimeConfigForTest([], {
     ...process.env,
     AGENT_WORKSPACE: workspaceRoot,
     AGENT_SCROLL_SPEED: "6",
@@ -87,9 +125,48 @@ async function testRuntimeConfigReadsScrollPerformanceEnv() {
   assert.equal(config.settings.diagnosticsFailureCooldownMs, 90_000);
 }
 
+async function testRuntimeConfigReadsLegacyApprovalModes() {
+  const manualWorkspace = await fs.mkdtemp(path.join(os.tmpdir(), "alyce-runtime-config-manual-"));
+  await fs.mkdir(path.join(manualWorkspace, ".alyce"), { recursive: true });
+  await fs.writeFile(
+    path.join(manualWorkspace, ".alyce", "settings.json"),
+    JSON.stringify({ approvalMode: "manual" }),
+    "utf8"
+  );
+  const manual = await loadRuntimeConfigForTest([], {
+    ...process.env,
+    AGENT_WORKSPACE: manualWorkspace
+  });
+
+  const autoWorkspace = await fs.mkdtemp(path.join(os.tmpdir(), "alyce-runtime-config-auto-"));
+  await fs.mkdir(path.join(autoWorkspace, ".alyce"), { recursive: true });
+  await fs.writeFile(
+    path.join(autoWorkspace, ".alyce", "settings.json"),
+    JSON.stringify({ approvalMode: "auto" }),
+    "utf8"
+  );
+  const auto = await loadRuntimeConfigForTest([], {
+    ...process.env,
+    AGENT_WORKSPACE: autoWorkspace
+  });
+
+  assert.equal(manual.settings.approvalMode, "default");
+  assert.equal(auto.settings.approvalMode, "full-access");
+}
+
+async function testRuntimeConfigMapsYoloToFullAccess() {
+  const workspaceRoot = await fs.mkdtemp(path.join(os.tmpdir(), "alyce-runtime-config-yolo-"));
+  const config = await loadRuntimeConfigForTest(["--yolo"], {
+    ...process.env,
+    AGENT_WORKSPACE: workspaceRoot
+  });
+
+  assert.equal(config.settings.approvalMode, "full-access");
+}
+
 async function testRuntimeConfigReadsSnapshotSettingsFromEnv() {
   const workspaceRoot = await fs.mkdtemp(path.join(os.tmpdir(), "alyce-runtime-config-snapshot-"));
-  const config = await loadRuntimeConfig([], {
+  const config = await loadRuntimeConfigForTest([], {
     ...process.env,
     AGENT_WORKSPACE: workspaceRoot,
     AGENT_SNAPSHOT_ENABLED: "false",
@@ -125,7 +202,7 @@ async function testRuntimeConfigIgnoresRetiredStatusUsageSetting() {
     "utf8"
   );
 
-  const config = await loadRuntimeConfig([], {
+  const config = await loadRuntimeConfigForTest([], {
     ...process.env,
     AGENT_WORKSPACE: workspaceRoot
   });
@@ -155,6 +232,7 @@ async function testSessionSettingsSerializationIncludesScrollPerformanceSettings
 
   await saveUserSessionSettings(paths, {
     scrollSpeed: 5,
+    approvalMode: "auto-review",
     scrollAccelerationEnabled: true,
     historyPagingEnabled: true,
     maxMessagesWithoutVirtualization: 90,
@@ -183,6 +261,7 @@ async function testSessionSettingsSerializationIncludesScrollPerformanceSettings
   const raw = JSON.parse(await fs.readFile(paths.userSettingsConfigPath, "utf8")) as Record<string, unknown>;
 
   assert.equal(raw.scrollSpeed, 5);
+  assert.equal(raw.approvalMode, "auto-review");
   assert.equal(raw.scrollAccelerationEnabled, true);
   assert.equal(raw.historyPagingEnabled, true);
   assert.equal(raw.maxMessagesWithoutVirtualization, 90);

@@ -3,9 +3,11 @@ import {
   getSlashCommandSuggestions,
   getVisibleSlashCommandSuggestions,
   isSlashCommandInput,
+  resolvePromptPlaceholderState,
   shouldCompleteSlashCommandInput,
   shouldToggleModeFromPromptKey
 } from "./PromptInput.js";
+import { terminalUiTheme } from "../theme/theme.js";
 
 function runTests() {
   testSlashInputDetection();
@@ -14,6 +16,7 @@ function runTests() {
   testVisibleSlashSuggestionsAreCappedAndScrollable();
   testSlashCompletionRules();
   testModeToggleKeyRules();
+  testLockedPlaceholderUsesWarningTextInsideInput();
   console.log("PromptInput tests passed");
 }
 
@@ -76,6 +79,26 @@ function testModeToggleKeyRules() {
   assert.equal(shouldToggleModeFromPromptKey("/help", false, tabKey), false);
   assert.equal(shouldToggleModeFromPromptKey("", true, tabKey), false);
   assert.equal(shouldToggleModeFromPromptKey("", false, { ...tabKey, shift: true }), false);
+}
+
+function testLockedPlaceholderUsesWarningTextInsideInput() {
+  const locked = resolvePromptPlaceholderState({
+    disabled: true,
+    disabledPlaceholder: "Input locked while Alyce is working. Press ESC to interrupt."
+  });
+  const normal = resolvePromptPlaceholderState({
+    disabled: false,
+    disabledPlaceholder: "Input locked while Alyce is working. Press ESC to interrupt."
+  });
+
+  assert.deepEqual(locked, {
+    text: "Input locked while Alyce is working. Press ESC to interrupt.",
+    color: terminalUiTheme.colors.warning,
+    dimColor: false
+  });
+  assert.equal(normal.text, "Ask Alyce to inspect, edit, or explain something...");
+  assert.equal(normal.color, terminalUiTheme.colors.inputPlaceholder);
+  assert.equal(normal.dimColor, true);
 }
 
 runTests();

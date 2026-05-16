@@ -58,6 +58,7 @@ import {
   type VolatileConversationSnapshot
 } from "../../cli/sessionRuntime.js";
 import type {
+  ApprovalMode,
   ConnectionConfig,
   ConnectionConfigSaveTarget,
   SessionSettings
@@ -75,6 +76,7 @@ import {
   closeDialog,
   getActiveDialog,
   openPermissionDialog,
+  openPermissionsDialog,
   openQuestionDialog,
   openRewindPickerDialog,
   openSessionPickerDialog,
@@ -91,7 +93,6 @@ import {
   setPlanModeEnabled,
   setSessionAllowedKinds,
   setSessionApprovalMode,
-  setSessionFullApprovalEnabled,
   setSessionSettingsState,
   setStatusText,
   setTodos,
@@ -145,6 +146,7 @@ const REVERT_FILES_ONLY_LABEL = "Files only";
 const REVERT_FILES_AND_CONVERSATION_LABEL = "Files and conversation";
 const REVERT_CONVERSATION_ONLY_LABEL = "Conversation only";
 const REVERT_CANCEL_LABEL = "Cancel";
+const AUTO_REVIEW_CONFIDENCE_THRESHOLD = 0.72;
 
 // 每轮请求在执行前都会记录一个 checkpoint，便于中断时回滚消息和文件改动。
 interface TurnCheckpoint {
@@ -278,6 +280,7 @@ export interface SessionController {
   respondToApproval: (decision: PermissionDecision) => void;
   respondToQuestion: (response: AskUserQuestionResponse | null) => void;
   openSettings: (section?: SettingsSection, reason?: string) => void;
+  setApprovalMode: (mode: ApprovalMode) => Promise<void>;
   closeDialog: () => void;
   resumeSession: (sessionId: string) => Promise<void>;
   saveConfig: (
@@ -303,7 +306,6 @@ export function createSessionController(
   let pendingApprovalResolver: ((decision: PermissionDecision) => void) | null = null;
   let pendingQuestionResolver: ((response: AskUserQuestionResponse | null) => void) | null = null;
   let sessionApprovalMode = runtime.getSettings().approvalMode;
-  let sessionFullApprovalEnabled = false;
   const sessionAllowedKinds = new Set<ToolPermissionKind>();
   let sessionPermissionRules: PermissionRuleInput[] = [];
   let activeTurn: TurnCheckpoint | null = null;
@@ -399,18 +401,11 @@ export function createSessionController(
   const toTerminalTaskSummary = (task: SubagentTaskInfo): TerminalUiTaskSummary => ({
     taskId: task.taskId,
     agentType: task.agentType,
-    description: task.description,
-    status: task.status,
-    updatedAt: task.updatedAt,
-    unread: unreadTaskIds.has(task.taskId),
-    ...(task.worktreePath ? { worktreePath: task.worktreePath } : {}),
-    ...(task.hasChanges !== undefined ? { hasChanges: task.hasChanges } : {}),
-    ...(task.error ? { error: task.error } : {}),
-    ...(task.progress.at(-1)?.message ? { latestProgress: task.progress.at(-1)?.message } : {})
+    description: task.description
   });
 
   const updateTaskState = (tasks: SubagentTaskInfo[]) => {
-    const summaries = tasks.map(toTerminalTaskSummary);
+    const summaries = tasks.filter(isVisibleBackgroundTask).map(toTerminalTaskSummary);
     const snapshotJson = JSON.stringify(summaries);
     if (snapshotJson === lastTaskSnapshotJson) {
       return;
@@ -444,8 +439,9 @@ export function createSessionController(
         (previousStatus === "running" || previousStatus === undefined) &&
         isTerminalTaskStatus(task.status) &&
         !notifiedTerminalTaskIds.has(task.taskId);
+      const notifiableTask = isNotifiableBackgroundTask(task);
 
-      if (shouldNotify && becameTerminal) {
+      if (notifiableTask && shouldNotify && becameTerminal) {
         if (task.status === "completed") {
           unreadTaskIds.add(task.taskId);
         }
@@ -463,7 +459,7 @@ export function createSessionController(
   const syncBackgroundProcesses = () => {
     let processCount: number;
     try {
-      processCount = runtime.listBackgroundProcesses().length;
+      processCount = runtime.listBackgroundProcesses().filter(isVisibleBackgroundProcess).length;
     } catch {
       return;
     }
@@ -615,11 +611,40 @@ export function createSessionController(
   const syncApprovalState = () => {
     store.updateState((state) =>
       setSessionAllowedKinds(
-        setSessionFullApprovalEnabled(
-          setSessionApprovalMode(state, sessionApprovalMode),
-          sessionFullApprovalEnabled
-        ),
+        setSessionApprovalMode(state, sessionApprovalMode),
         [...sessionAllowedKinds]
+      )
+    );
+  };
+
+  const setApprovalModeFromUi = async (
+    mode: ApprovalMode,
+    sourceLabel: string,
+    options: { closeActiveDialog?: boolean } = {}
+  ) => {
+    await runtime.updateSettings({ approvalMode: mode });
+    sessionApprovalMode = runtime.getSettings().approvalMode;
+    sessionAllowedKinds.clear();
+    sessionPermissionRules = [];
+    store.updateState((state) =>
+      setStatusText(
+        setSessionAllowedKinds(
+          setSessionApprovalMode(
+            setSessionSettingsState(
+              options.closeActiveDialog === false ? state : closeDialog(state),
+              runtime.getSettingsState()
+            ),
+            sessionApprovalMode
+          ),
+          []
+        ),
+        `Permissions: ${sessionApprovalMode}`
+      )
+    );
+    appendUiMessage(
+      createSystemMessage(
+        `Approval mode set to ${sessionApprovalMode} by ${sourceLabel}.`,
+        "Permissions"
       )
     );
   };
@@ -639,23 +664,7 @@ export function createSessionController(
       }
     }
 
-    if (sessionFullApprovalEnabled) {
-      rules.push({
-        permission: "*",
-        pattern: "*",
-        action: "allow",
-        scope: "session",
-        reason: "User fully approved all permission prompts for this session."
-      });
-    } else if (sessionApprovalMode === "auto") {
-      rules.push({
-        permission: "*",
-        pattern: "*",
-        action: "allow",
-        scope: "session",
-        reason: "User enabled auto approval for this session."
-      });
-    }
+    rules.push(...buildApprovalModePermissionRules(sessionApprovalMode));
 
     return rules;
   };
@@ -1050,8 +1059,17 @@ export function createSessionController(
       return false;
     }
 
-    if (shouldSkipApprovalDialog(permissionEvaluation, request, sessionFullApprovalEnabled)) {
+    if (shouldSkipApprovalDialog(permissionEvaluation, request, sessionApprovalMode)) {
       return true;
+    }
+
+    const autoReviewDecision = await maybeResolveApprovalWithAutoReviewer(
+      request,
+      permissionEvaluation,
+      options
+    );
+    if (autoReviewDecision !== null) {
+      return autoReviewDecision;
     }
 
     if (pendingApprovalResolver) {
@@ -1084,13 +1102,11 @@ export function createSessionController(
           } else if (decision === "allow-scope-session") {
             approved = true;
             await allowRequestScopeForSession(request);
-          } else if (decision === "auto-approve-session") {
+          } else if (decision === "full-access-session") {
             approved = true;
-            sessionApprovalMode = "auto";
-          } else if (decision === "full-approve-session") {
-            approved = true;
-            sessionApprovalMode = "auto";
-            sessionFullApprovalEnabled = true;
+            await setApprovalModeFromUi("full-access", "Approval dialog", {
+              closeActiveDialog: false
+            });
           }
         } catch (error) {
           approved = false;
@@ -1142,6 +1158,95 @@ export function createSessionController(
     });
   };
 
+  const maybeResolveApprovalWithAutoReviewer = async (
+    request: ToolApprovalRequest,
+    permissionEvaluation: PermissionEvaluation | null,
+    options: { signal?: AbortSignal }
+  ): Promise<boolean | null> => {
+    if (
+      sessionApprovalMode !== "auto-review" ||
+      request.forceAsk ||
+      permissionEvaluation?.action !== "ask" ||
+      !activeTurn
+    ) {
+      return null;
+    }
+
+    throwIfAborted(options.signal);
+    store.updateState((state) => setStatusText(state, "Auto-reviewing permission request..."));
+    try {
+      const result = await runtime.runSubagent({
+        agentType: "auto-reviewer",
+        description: `Review permission request for ${request.toolName}`,
+        prompt: buildAutoReviewPrompt({
+          request,
+          permissionEvaluation,
+          userRequest: activeTurn.input,
+          approvalMode: sessionApprovalMode
+        }),
+        maxSteps: 2,
+        isolateWorktree: false
+      }, {
+        turnId: activeTurn.turnId,
+        abortSignal: options.signal ?? activeTurn.controller.signal,
+        requestApproval,
+        askUserQuestions: async () => {
+          throw new Error("The auto-reviewer cannot ask the user questions.");
+        },
+        getTodos,
+        setTodos: setTodoItems
+      });
+      const decision = parseAutoReviewDecision(result.output);
+      if (!decision || decision.confidence < AUTO_REVIEW_CONFIDENCE_THRESHOLD) {
+        appendUiMessage(
+          createSystemMessage(
+            [
+              "Auto-review could not decide this permission request.",
+              `${request.title}: ${request.summary}`,
+              decision
+                ? `Decision: ${decision.decision}; confidence: ${decision.confidence}`
+                : "Decision: unavailable",
+              "Falling back to manual approval."
+            ].join("\n"),
+            "Permissions"
+          )
+        );
+        return null;
+      }
+
+      const approved = decision.decision === "approve";
+      appendUiMessage(
+        createSystemMessage(
+          [
+            `Auto-review ${approved ? "approved" : "rejected"} permission request.`,
+            `${request.title}: ${request.summary}`,
+            `Confidence: ${decision.confidence}`,
+            `Reason: ${decision.reason}`
+          ].join("\n"),
+          "Permissions"
+        )
+      );
+      return approved;
+    } catch (error) {
+      if (isTurnInterruptedError(error, options.signal ?? activeTurn?.controller.signal)) {
+        throw error;
+      }
+
+      appendUiMessage(
+        createSystemMessage(
+          [
+            "Auto-review failed for this permission request.",
+            `${request.title}: ${request.summary}`,
+            `Error: ${getErrorMessage(error)}`,
+            "Falling back to manual approval."
+          ].join("\n"),
+          "Permissions"
+        )
+      );
+      return null;
+    }
+  };
+
   const allowRequestScopeForSession = async (request: ToolApprovalRequest) => {
     if (request.scope?.type !== "external-directory") {
       sessionAllowedKinds.add(request.kind);
@@ -1185,12 +1290,8 @@ export function createSessionController(
       return `allow ${request.kind} scope for session`;
     }
 
-    if (decision === "auto-approve-session") {
-      return "auto approve session";
-    }
-
-    if (decision === "full-approve-session") {
-      return "full approve session";
+    if (decision === "full-access-session") {
+      return "switch to Full Access";
     }
 
     return decision;
@@ -1251,7 +1352,6 @@ export function createSessionController(
     sessionAllowedKinds.clear();
     sessionPermissionRules = [];
     sessionApprovalMode = runtime.getSettings().approvalMode;
-    sessionFullApprovalEnabled = false;
 
     const allRestoredMessages = filterUiMessages(resumed.uiMessages as TerminalUiMessage[]);
     const historyPagingEnabled = runtime.getSettings().historyPagingEnabled;
@@ -1292,18 +1392,15 @@ export function createSessionController(
     store.updateState((state) =>
       setStatusText(
         setSessionAllowedKinds(
-          setSessionFullApprovalEnabled(
-            setSessionApprovalMode(
-              setDraftInput(
-                setContextBudget(
-                  setTodos(replaceMessages(closeDialog(state), [...restoredMessages, systemMessage]), []),
-                  null
-                ),
-                ""
+          setSessionApprovalMode(
+            setDraftInput(
+              setContextBudget(
+                setTodos(replaceMessages(closeDialog(state), [...restoredMessages, systemMessage]), []),
+                null
               ),
-              sessionApprovalMode
+              ""
             ),
-            sessionFullApprovalEnabled
+            sessionApprovalMode
           ),
           []
         ),
@@ -1732,6 +1829,11 @@ export function createSessionController(
 
     if (parsedCommand.type === "open-settings") {
       store.updateState((state) => openSettingsDialog(state, parsedCommand.section));
+      return true;
+    }
+
+    if (parsedCommand.type === "open-permissions") {
+      store.updateState((state) => openPermissionsDialog(state));
       return true;
     }
 
@@ -2542,6 +2644,16 @@ export function createSessionController(
     openSettings: (section = "session", reason) => {
       store.updateState((state) => openSettingsDialog(state, section, reason));
     },
+    setApprovalMode: async (mode) => {
+      try {
+        await setApprovalModeFromUi(mode, "/permissions");
+      } catch (error) {
+        appendUiMessage(
+          createErrorMessage(`Failed to update permissions: ${getErrorMessage(error)}`)
+        );
+        store.updateState((state) => setStatusText(state, "Permissions update failed"));
+      }
+    },
     closeDialog: () => {
       const activeDialog = getActiveDialog(store.getState());
       if (activeDialog?.type === "permission" || activeDialog?.type === "question") {
@@ -2562,22 +2674,18 @@ export function createSessionController(
       }
 
       sessionApprovalMode = runtime.getSettings().approvalMode;
-      sessionFullApprovalEnabled = false;
       sessionAllowedKinds.clear();
       sessionPermissionRules = [];
 
       store.updateState((state) =>
         setStatusText(
           setSessionAllowedKinds(
-            setSessionFullApprovalEnabled(
-              setSessionApprovalMode(
-                setSessionSettingsState(
-                  setConnectionConfigState(closeDialog(state), runtime.getConnectionConfigState()),
-                  runtime.getSettingsState()
-                ),
-                sessionApprovalMode
+            setSessionApprovalMode(
+              setSessionSettingsState(
+                setConnectionConfigState(closeDialog(state), runtime.getConnectionConfigState()),
+                runtime.getSettingsState()
               ),
-              sessionFullApprovalEnabled
+              sessionApprovalMode
             ),
             []
           ),
@@ -2609,6 +2717,144 @@ export function createSessionController(
       exitHandler = handler;
     }
   };
+}
+
+interface AutoReviewDecision {
+  decision: "approve" | "reject";
+  confidence: number;
+  reason: string;
+}
+
+function buildAutoReviewPrompt(options: {
+  request: ToolApprovalRequest;
+  permissionEvaluation: PermissionEvaluation;
+  userRequest: string;
+  approvalMode: ApprovalMode;
+}): string {
+  return [
+    "Review this pending Alyce permission request.",
+    "Return only strict JSON with keys decision, confidence, and reason.",
+    "",
+    JSON.stringify({
+      currentApprovalMode: options.approvalMode,
+      userRequest: options.userRequest,
+      request: {
+        kind: options.request.kind,
+        toolName: options.request.toolName,
+        title: options.request.title,
+        summary: options.request.summary,
+        details: options.request.details,
+        scope: options.request.scope,
+        permission: options.request.permission,
+        forceAsk: options.request.forceAsk === true
+      },
+      permissionEvaluation: {
+        action: options.permissionEvaluation.action,
+        permission: options.permissionEvaluation.permission,
+        pattern: options.permissionEvaluation.pattern,
+        reason: options.permissionEvaluation.reason
+      },
+      policy:
+        "Approve only if the request is necessary for the user request, low risk, and scoped. Reject destructive, secret-bearing, unrelated, broad, or ambiguous requests."
+    }, null, 2)
+  ].join("\n");
+}
+
+function parseAutoReviewDecision(output: string): AutoReviewDecision | null {
+  const normalized = output.trim().replace(/^```(?:json)?\s*/i, "").replace(/\s*```$/i, "");
+  const jsonCandidate = normalized.startsWith("{")
+    ? normalized
+    : normalized.match(/\{[\s\S]*\}/)?.[0];
+  if (!jsonCandidate) {
+    return null;
+  }
+
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(jsonCandidate);
+  } catch {
+    return null;
+  }
+
+  if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+    return null;
+  }
+
+  const record = parsed as Record<string, unknown>;
+  const decision = record.decision;
+  const confidence = record.confidence;
+  const reason = record.reason;
+  if (decision !== "approve" && decision !== "reject") {
+    return null;
+  }
+
+  if (typeof confidence !== "number" || !Number.isFinite(confidence)) {
+    return null;
+  }
+
+  return {
+    decision,
+    confidence: Math.max(0, Math.min(1, confidence)),
+    reason: typeof reason === "string" && reason.trim().length > 0
+      ? reason.trim()
+      : "No reason provided."
+  };
+}
+
+function buildApprovalModePermissionRules(mode: ApprovalMode): PermissionRuleInput[] {
+  if (mode === "default" || mode === "auto-review") {
+    return [
+      {
+        permission: "file.write",
+        pattern: "workspace:*",
+        action: "allow",
+        scope: "session",
+        reason: `${mode} mode allows workspace file writes.`
+      },
+      {
+        permission: "file.edit",
+        pattern: "workspace:*",
+        action: "allow",
+        scope: "session",
+        reason: `${mode} mode allows workspace file edits.`
+      },
+      {
+        permission: "file.patch",
+        pattern: "workspace:*",
+        action: "allow",
+        scope: "session",
+        reason: `${mode} mode allows workspace patches.`
+      },
+      {
+        permission: "shell",
+        pattern: "*",
+        action: "allow",
+        scope: "session",
+        reason: `${mode} mode allows command execution.`
+      },
+      {
+        permission: "powershell",
+        pattern: "*",
+        action: "allow",
+        scope: "session",
+        reason: `${mode} mode allows command execution.`
+      }
+    ];
+  }
+
+  if (mode === "full-access") {
+    return [
+      {
+        permission: "*",
+        pattern: "*",
+        action: "allow",
+        scope: "session",
+        reason: "Full Access mode allows all permission requests."
+      }
+    ];
+  }
+
+  return [];
 }
 
 function formatSessionTime(value: string): string {
@@ -2833,13 +3079,13 @@ function extractThinkingDelta(previous: string, next: string): string {
 function shouldSkipApprovalDialog(
   permissionEvaluation: Pick<PermissionEvaluation, "action"> | null | undefined,
   request: Pick<ToolApprovalRequest, "forceAsk">,
-  sessionFullApprovalEnabled: boolean
+  sessionApprovalMode: ApprovalMode
 ): boolean {
   if (permissionEvaluation?.action === "deny") {
     return false;
   }
 
-  if (sessionFullApprovalEnabled) {
+  if (sessionApprovalMode === "full-access") {
     return true;
   }
 
@@ -2848,6 +3094,18 @@ function shouldSkipApprovalDialog(
 
 function isBackgroundProcessToolName(toolName: string): boolean {
   return BACKGROUND_PROCESS_TOOL_NAMES.has(toolName);
+}
+
+function isNotifiableBackgroundTask(task: Pick<SubagentTaskInfo, "agentType">): boolean {
+  return task.agentType !== "auto-reviewer";
+}
+
+function isVisibleBackgroundTask(task: Pick<SubagentTaskInfo, "agentType" | "status">): boolean {
+  return isNotifiableBackgroundTask(task) && task.status === "running";
+}
+
+function isVisibleBackgroundProcess(process: { status: string }): boolean {
+  return process.status === "running";
 }
 
 async function waitForUiPaint(): Promise<void> {
@@ -2860,7 +3118,12 @@ export const __SESSION_CONTROLLER_TESTING__ = {
   mergeThinkingContent,
   extractThinkingDelta,
   shouldSkipApprovalDialog,
+  parseAutoReviewDecision,
+  buildAutoReviewPrompt,
+  buildApprovalModePermissionRules,
   isBackgroundProcessToolName,
+  isVisibleBackgroundProcess,
+  isVisibleBackgroundTask,
   waitForUiPaint
 } as const;
 

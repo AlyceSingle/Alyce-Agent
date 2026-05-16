@@ -6,28 +6,18 @@ import { terminalUiTheme } from "../theme/theme.js";
 
 function formatApprovalMode(
   mode: ApprovalMode,
-  allowedKinds: string[],
-  fullApprovalEnabled: boolean
+  allowedKinds: string[]
 ) {
-  if (fullApprovalEnabled) {
-    return "full";
-  }
-
-  if (mode === "auto") {
-    return "auto";
-  }
-
   if (allowedKinds.length === 0) {
-    return "manual";
+    return mode;
   }
 
-  return `manual + ${allowedKinds.join(", ")}`;
+  return `${mode} + ${allowedKinds.join(", ")}`;
 }
 
 export function StatusBar(props: {
   connectionState: ConnectionConfigState;
   sessionApprovalMode: ApprovalMode;
-  sessionFullApprovalEnabled: boolean;
   sessionAllowedKinds: string[];
   requestPatchCount: number;
   planModeEnabled: boolean;
@@ -82,8 +72,7 @@ export function StatusBar(props: {
         {" | "}
         Approval {formatApprovalMode(
           props.sessionApprovalMode,
-          props.sessionAllowedKinds,
-          props.sessionFullApprovalEnabled
+          props.sessionAllowedKinds
         )}
         {" | "}
         Mode {props.planModeEnabled ? "Plan" : "Build"}

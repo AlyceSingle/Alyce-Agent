@@ -10,6 +10,7 @@ import {
   buildSessionSettingsState,
   loadRuntimeConfig,
   normalizeAdditionalDirectories,
+  normalizeApprovalMode,
   normalizeSnapshotSettings,
   resolveDirectoryInput,
   saveConnectionConfig,
@@ -125,6 +126,7 @@ import { createProjectMcpRuntime } from "../mcp/runtime.js";
 import { getRegisteredToolNames, getToolSchemasByName } from "../tools/registry.js";
 import { TOOL_SCHEMAS } from "../tools.js";
 import {
+  isInternalSubagentType,
   loadSubagentDefinition,
   loadSubagentDefinitions,
   type SubagentDefinition
@@ -280,6 +282,10 @@ export interface SessionRuntime {
   listSubagentTasks: () => SubagentTaskInfo[];
   getSubagentTask: (taskId: string) => Promise<SubagentTaskInfo | undefined>;
   stopSubagentTask: (taskId: string) => Promise<SubagentTaskStopResult>;
+  runSubagent: (
+    input: SubagentRunInput,
+    parentContextOptions: Parameters<SessionRuntime["createToolContext"]>[0]
+  ) => Promise<SubagentRunResult>;
   runSubagentStorageCleanup: (options?: { apply?: boolean }) => Promise<SubagentStorageCleanupReport>;
   listBackgroundProcesses: (options?: { includeExited?: boolean }) => BackgroundProcessRecord[];
   stopBackgroundProcess: (
@@ -356,6 +362,10 @@ const HISTORICAL_SUBAGENT_RUNNING_ERROR = "Task is not running in this process."
 function getCurrentDateLabel(now = new Date()) {
   // 不用 UTC 截日，避免本地时间接近零点时把 prompt 里的日期算错一天。
   return formatCurrentDateLabel(now);
+}
+
+function isUserVisibleSubagentAgentType(agentType: string) {
+  return !isInternalSubagentType(agentType);
 }
 
 export function getHelpText(currentModel: string) {
@@ -957,6 +967,7 @@ export async function createSessionRuntime(
     listSubagentTasks: () => listSubagentTasks(),
     getSubagentTask: (taskId) => getSubagentTask(taskId),
     stopSubagentTask: (taskId) => stopSubagentTask(taskId),
+    runSubagent,
     runSubagentStorageCleanup: async (options = {}) => {
       const report = await cleanupSubagentStorageArtifacts({
         storage: subagentTaskStorage,
@@ -2038,12 +2049,16 @@ export async function createSessionRuntime(
 
     // 先放入轻量索引，保证“历史任务”在没有活跃内存会话时仍可见。
     for (const item of currentSessionTaskIndex.values()) {
+      if (!isUserVisibleSubagentAgentType(item.agentType)) {
+        continue;
+      }
+
       merged.set(item.taskId, toSubagentTaskInfoFromIndex(item));
     }
 
     // 再用内存态覆盖索引态，确保运行中任务和最新状态优先展示。
     for (const session of subagentSessions.values()) {
-      if (!isCurrentSessionSubagent(session)) {
+      if (!isCurrentSessionSubagent(session) || !isUserVisibleSubagentAgentType(session.agentType)) {
         continue;
       }
 
@@ -2059,10 +2074,16 @@ export async function createSessionRuntime(
     if (session && !isCurrentSessionSubagent(session)) {
       return undefined;
     }
+    if (session && !isUserVisibleSubagentAgentType(session.agentType)) {
+      return undefined;
+    }
     if (!session) {
       session = getIndexedSubagentSession(taskId);
     }
     if (!session) {
+      return undefined;
+    }
+    if (!isUserVisibleSubagentAgentType(session.agentType)) {
       return undefined;
     }
 
@@ -2074,6 +2095,14 @@ export async function createSessionRuntime(
   async function stopSubagentTask(taskId: string): Promise<SubagentTaskStopResult> {
     const session = subagentSessions.get(taskId);
     if (session && isCurrentSessionSubagent(session)) {
+      if (!isUserVisibleSubagentAgentType(session.agentType)) {
+        return {
+          taskId,
+          status: "not_found",
+          message: `Unknown subagent task_id: ${taskId}`
+        };
+      }
+
       if (session.status !== "running") {
         return {
           taskId,
@@ -2107,6 +2136,14 @@ export async function createSessionRuntime(
     const indexItem = currentSessionTaskIndex.get(taskId);
     if (indexItem) {
       const normalizedItem = normalizeHistoricalTaskIndexItem(indexItem);
+      if (!isUserVisibleSubagentAgentType(normalizedItem.agentType)) {
+        return {
+          taskId,
+          status: "not_found",
+          message: `Unknown subagent task_id: ${taskId}`
+        };
+      }
+
       if (normalizedItem !== indexItem) {
         currentSessionTaskIndex.set(taskId, normalizedItem);
       }
@@ -2665,7 +2702,7 @@ function normalizeSettingsPatch(
   const normalized: Partial<SessionSettings> = {};
 
   if ("approvalMode" in patch) {
-    normalized.approvalMode = patch.approvalMode === "auto" ? "auto" : "manual";
+    normalized.approvalMode = normalizeApprovalMode(patch.approvalMode);
   }
 
   if ("maxSteps" in patch && patch.maxSteps !== undefined) {

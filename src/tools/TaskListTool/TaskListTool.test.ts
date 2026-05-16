@@ -27,6 +27,7 @@ function createTestContext(
 
 async function runTests() {
   await testListsTasks();
+  await testHidesInternalAutoReviewerTasks();
   await testMapsHistoricalTaskFields();
   await testCanHideCompletedTasks();
   await testRequiresRuntimeHook();
@@ -42,6 +43,15 @@ async function testListsTasks() {
   assert.equal(result.tasks.length, 2);
   assert.equal(result.tasks[0]?.task_id, "task-1");
   assert.equal(result.tasks[1]?.has_output, true);
+}
+
+async function testHidesInternalAutoReviewerTasks() {
+  const result = await executeTaskListTool({}, createTestContext([
+    createTask("task-visible", "running"),
+    createTask("task-internal", "completed", { agentType: "auto-reviewer" })
+  ]));
+
+  assert.deepEqual(result.tasks.map((task) => task.task_id), ["task-visible"]);
 }
 
 async function testCanHideCompletedTasks() {
