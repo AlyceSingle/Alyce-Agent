@@ -1,3 +1,4 @@
-# Keep GitHub Linguist from classifying TypeScript entrypoints as JavaScript.
+# Keep GitHub Linguist stats focused on the handwritten TypeScript source.
 *.ts linguist-language=TypeScript
 *.tsx linguist-language=TypeScript
+scripts/*.mjs linguist-vendored
