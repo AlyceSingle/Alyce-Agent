@@ -17,10 +17,10 @@ Type these into the main input. They start with `/` and execute immediately.
 | Command | What it does |
 |---|---|
 | `/help` | Shows all available commands. *Start here if you're lost.* |
-| `/doctor` | Runs local health checks for Node, TTY, workspace files, connection config, approval risk, MCP config, skills, `rg`, `git`, `.alyce` storage, snapshot storage, and request patches. |
+| `/doctor` | Runs local health checks for Node, TTY, workspace files, connection config, approval risk, MCP config, skills, provider plugins, `rg`, `git`, `.alyce` storage, snapshot storage, and request patches. |
 | `/settings` | Jumps straight to the settings dialog. |
 | `/permissions` | Opens the four-mode approval and access switcher. |
-| `/setup` | First-run configuration wizard. |
+| `/setup` | Alias for `/connect`; opens the provider picker. |
 | `/clear` | Wipes the current conversation and starts fresh. |
 | `/rewind` | Opens the rewind selector so you can restore to an earlier prompt. |
 | `/exit` | Closes Alyce. |
@@ -72,9 +72,14 @@ After a turn edits files, Alyce also prints a concise diff summary with file cou
 |---|---|
 | `/context` | Previews the exact payload the model will receive next turn. *This is incredibly useful for debugging — it shows you things like memory injections and compaction summaries that aren't visible in the chat.* |
 | `/context <text>` | Same as above, but with an additional message added to the context. |
-| `/model` or `/models` | Shows the current provider/model, configured providers, known models, and switch examples. |
+| `/connect` | Open the interactive provider picker, then enter API key, baseURL, and model fields in a step-by-step form. Secret fields are masked. Built-in presets include OpenAI, Anthropic, Google, OpenRouter, DeepSeek, Kimi, Qwen, SiliconFlow, Doubao, Ollama, and LM Studio. |
+| `/logout <provider>` | Remove a provider credential from `~/.alyce/auth.json` without deleting provider profiles. |
+| `/model` | Refreshes the current provider's model list and opens its model picker. |
+| `/models` or `/model list` | Shows the current provider/model, configured providers, known models, and switch examples. |
 | `/model <name>` | Switches the active model on the current provider, e.g. `/model gpt-5.2`. |
 | `/model <provider>/<model>` | Switches to a provider-qualified model, e.g. `/model openrouter/openai/gpt-5.2`. |
+
+Advanced/scriptable forms are still available: `/connect <provider> <api-key> [model] [baseURL]` for API-key presets, `/connect <local-provider> [baseURL] [model]` for local presets, and `/connect custom <provider-id> <baseURL> <model> <api-key> [label]`.
 
 ### Usage
 
@@ -163,19 +168,10 @@ When you press `Ctrl+X`, a settings dialog opens. Here's how to navigate it:
 
 | Key | Action |
 |---|---|
-| `Left` / `Right` | Switch between the Connection and Session tabs. |
 | `Up` / `Down` | Move through fields. |
 | `Enter` | Edit the selected field, or toggle on/off for boolean fields, or cycle options for select fields. |
 | `S` | Save all changes. |
 | `Esc` | Close without saving. |
-
-### Connection Tab Only
-
-| Key | Action |
-|---|---|
-| `P` | Toggle the save target between **project** scope and **user** scope. Project config lives in `./.alyce/config.json`; user config lives in `~/.alyce/config.json`. |
-
-*The scope toggle is easy to overlook but important. If you save a key to project scope and then share the repo... well, don't do that.*
 
 ## Field Quirks
 

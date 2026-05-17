@@ -12,6 +12,7 @@ function runTests() {
   testConfiguredProviderProfileWinsOverLegacyEnvironment();
   testUserProviderProfilePartiallyOverridesProjectProviderProfile();
   testProviderModelContextOverrideWinsOverBareOverride();
+  testBuiltInOpenAICompatiblePresetsResolve();
   testInvalidConfiguredModelDoesNotBreakProviderRegistry();
   console.log("provider resolveModel tests passed");
 }
@@ -220,6 +221,27 @@ function testProviderModelContextOverrideWinsOverBareOverride() {
   assert.equal(resolved.contextWindow, 222_000);
   assert.equal(resolved.contextWindowSource, "override");
   assert.equal(resolved.contextWindowMatchedPattern, "openai/gpt-5.2");
+}
+
+function testBuiltInOpenAICompatiblePresetsResolve() {
+  const state = buildConnectionConfigState(getRuntimePaths("C:\\workspace"), {
+    user: {
+      model: "deepseek/deepseek-chat"
+    }
+  });
+  const resolved = resolveModelProfile(state.effective.model, {
+    providers: state.providerProfiles,
+    env: {
+      DEEPSEEK_API_KEY: "deepseek-key"
+    }
+  });
+
+  assert.equal(resolved.providerId, "deepseek");
+  assert.equal(resolved.kind, "openai-compatible");
+  assert.equal(resolved.apiKey, "deepseek-key");
+  assert.equal(resolved.apiKeyEnv, "DEEPSEEK_API_KEY");
+  assert.equal(resolved.baseURL, "https://api.deepseek.com/v1");
+  assert.equal(resolved.contextWindow, 64_000);
 }
 
 function testInvalidConfiguredModelDoesNotBreakProviderRegistry() {

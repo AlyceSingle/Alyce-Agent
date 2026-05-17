@@ -31,6 +31,7 @@ export interface ProviderProfile {
   apiKeyEnv?: string;
   apiKey?: string;
   baseURL?: string;
+  headers?: Record<string, string>;
   defaultModel?: ModelId;
   models?: Record<ModelId, ModelProfile>;
 }
@@ -55,6 +56,7 @@ export interface ResolvedModelProfile {
   apiKey?: string;
   apiKeyEnv?: string;
   baseURL?: string;
+  headers?: Record<string, string>;
   contextWindow: number;
   contextWindowSource: ResolvedContextWindowSource;
   contextWindowLabel: string;

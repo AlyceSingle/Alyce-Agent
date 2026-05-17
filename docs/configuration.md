@@ -15,9 +15,9 @@ Alyce's configuration is layered. Multiple sources can set the same value, and a
 Loaded in this priority order — **earlier wins over later**:
 
 1. **CLI arguments** (passed when launching the app)
-2. **Environment variables** (from your `.env` file)
+2. **User config** — `~/.alyce/config.json`
 3. **Project config** — `./.alyce/config.json`
-4. **User config** — `~/.alyce/config.json`
+4. **Environment variables** (legacy `OPENAI_*` startup defaults)
 
 ### Session Settings (persona, memory, approval, etc.)
 
@@ -25,8 +25,8 @@ Loaded in this priority order — **again, earlier wins**:
 
 1. **CLI arguments**
 2. **Environment variables**
-3. **Project settings** — `./.alyce/settings.json`
-4. **User settings** — `~/.alyce/settings.json`
+3. **User settings** — `~/.alyce/settings.json`
+4. **Project settings** — `./.alyce/settings.json`
 
 ## File Map
 
@@ -34,6 +34,9 @@ Loaded in this priority order — **again, earlier wins**:
 |---|---|
 | Project connection config | `./.alyce/config.json` |
 | User connection config | `~/.alyce/config.json` |
+| User provider credentials | `~/.alyce/auth.json` |
+| User provider plugins | `~/.alyce/plugins/*/.alyce-plugin.json` |
+| Project provider plugins | `./.alyce/plugins/*/.alyce-plugin.json` (disabled by default) |
 | Project session settings | `./.alyce/settings.json` |
 | User session settings | `~/.alyce/settings.json` |
 | Project MCP servers | `./.alyce/mcp.json` |
@@ -41,7 +44,7 @@ Loaded in this priority order — **again, earlier wins**:
 | User skills | `~/.alyce/skills/**/SKILL.md` |
 | MCP binary resource output | `./.alyce/mcp-output/` |
 
-Do not commit `.env`, `./.alyce/`, `~/.alyce/`, or generated `dist/` output. Project settings can contain local paths, permission rules, memory, session history, MCP output, and sometimes credentials.
+Do not commit `.env`, `./.alyce/`, `~/.alyce/`, or generated `dist/` output. Project settings can contain local paths, permission rules, memory, session history, and MCP output. Real provider tokens should live in `~/.alyce/auth.json` or an environment variable, not in project config.
 
 ## Environment Variables
 
@@ -62,15 +65,32 @@ All startup file paths are resolved under the same allowed-root rules as file to
 - `OPENAI_BASE_URL`
 - `OPENAI_MODEL`
 
-Saved connection config still overrides these startup defaults. The old shape remains valid:
+Saved connection config still overrides these startup defaults. The old inline `apiKey` shape remains readable for compatibility, but prefer `OPENAI_API_KEY`, `/connect`, or provider `apiKeyEnv` for real tokens.
 
 ```json
 {
-  "apiKey": "sk-...",
   "baseURL": "https://api.openai.com/v1",
   "model": "gpt-5.2"
 }
 ```
+
+### AuthStore and `/connect`
+
+Use `/connect` to save common provider credentials without editing `.env`. With no arguments, `/connect` opens an interactive provider picker and masked credential form. Built-in presets currently include OpenAI, Anthropic, Google, OpenRouter, DeepSeek, Kimi, Qwen/DashScope, SiliconFlow, Doubao/Volcengine Ark, generic local, Ollama, and LM Studio.
+
+Advanced/scriptable forms are also available:
+
+```text
+/connect <provider> <api-key> [model] [baseURL]
+/connect <local-provider> [baseURL] [model]
+/connect custom <provider-id> <baseURL> <model> <api-key> [label]
+```
+
+API-key presets: `openai`, `anthropic`, `google`, `openrouter`, `deepseek`, `kimi`, `qwen`, `siliconflow`, `doubao`.
+
+Local presets: `local`, `ollama`, `lmstudio`.
+
+API keys saved by `/connect` are written to `~/.alyce/auth.json`. The selected model is saved in user connection config, and custom/local provider profiles are saved without `apiKey`. `/logout <provider>` removes the AuthStore credential but leaves provider profiles and selected model unchanged.
 
 Provider profiles can be stored in `./.alyce/config.json` or `~/.alyce/config.json` under `providers`. Model references use `provider/model`; a bare `/model gpt-5.2` keeps using the current provider.
 
@@ -108,9 +128,37 @@ Provider profiles can be stored in `./.alyce/config.json` or `~/.alyce/config.js
 }
 ```
 
-Use `/model` or `/models` to see the current provider/model, provider availability, known models, and switch examples. Alyce currently sends configured providers through the OpenAI-compatible adapter. Native Anthropic and Google provider kinds require an OpenAI-compatible `baseURL` until native adapters are added.
+Use `/model` to refresh the current provider's model list and open its model picker, or `/models`/`/model list` to see the current provider/model, provider auth status, provider availability, known models, and switch examples. OpenAI-compatible providers continue through the shared compatible adapter. Anthropic and Google use native adapters when no compatible `baseURL` is configured, and fall back to the compatible adapter when a `baseURL` is present.
+
+Built-in preset defaults:
+
+| Provider | `apiKeyEnv` | Base URL | Default model |
+|---|---|---|---|
+| `openai` | `OPENAI_API_KEY` | `https://api.openai.com/v1` | `gpt-4.1-mini` |
+| `anthropic` | `ANTHROPIC_API_KEY` | native Messages API | `claude-sonnet-4.6` |
+| `google` | `GOOGLE_API_KEY` | native Gemini API | `gemini-3-flash` |
+| `openrouter` | `OPENROUTER_API_KEY` | `https://openrouter.ai/api/v1` | `openai/gpt-5.2` |
+| `deepseek` | `DEEPSEEK_API_KEY` | `https://api.deepseek.com/v1` | `deepseek-chat` |
+| `kimi` | `MOONSHOT_API_KEY` | `https://api.moonshot.ai/v1` | `kimi-k2.6` |
+| `qwen` | `DASHSCOPE_API_KEY` | `https://dashscope.aliyuncs.com/compatible-mode/v1` | `qwen-plus` |
+| `siliconflow` | `SILICONFLOW_API_KEY` | `https://api.siliconflow.cn/v1` | `deepseek-ai/DeepSeek-V3` |
+| `doubao` | `ARK_API_KEY` | `https://ark.cn-beijing.volces.com/api/v3` | `doubao-seed-1-6-250615` |
+| `local` | not required | configured during `/connect` | `local-model` |
+| `ollama` | not required | `http://127.0.0.1:11434/v1` | `llama3.1` |
+| `lmstudio` | not required | `http://localhost:1234/v1` | `local-model` |
 
 Optional model price metadata can be added per model with `inputCostPerMillionTokens` and `outputCostPerMillionTokens`. `/usage` uses these values for estimated cost; models without both values are shown as tokens only.
+
+### Experimental Connectors and Provider Plugins
+
+GitHub Copilot and Codex / ChatGPT account connectors are visible in `/connect`, but still marked experimental. They use local browser/device OAuth-style flows and store tokens only in `~/.alyce/auth.json`. They do not require an Alyce server, public callback domain, or certificate. They are intentionally isolated from stable API-key providers because these account flows can break when upstream platforms change.
+
+Alyce also has a JSON-only provider plugin boundary:
+
+- User plugins load from `~/.alyce/plugins/*/.alyce-plugin.json`.
+- Project plugins are scanned from `./.alyce/plugins/*/.alyce-plugin.json` but skipped unless `ALYCE_ENABLE_PROJECT_PROVIDER_PLUGINS=true`.
+- Plugin manifests can declare provider profiles and API-key or well-known auth prompts. They cannot execute shell commands by default.
+- Invalid plugin manifests are reported by `/doctor` and do not block startup.
 
 ### Optional (memory tuning, mostly)
 - `AGENT_ADDITIONAL_DIRECTORIES` — extra paths separated by the system path delimiter (`;` on Windows, `:` on Linux/macOS)
@@ -255,16 +303,6 @@ After startup, Alyce exposes:
 ```
 
 If a server fails, Alyce reports that server's error without disabling other configured MCP servers.
-
-## Connection Fields
-
-These appear in the **Connection** tab of settings:
-
-- `apiKey` — your OpenAI-compatible API key
-- `baseURL` — the endpoint URL
-- `model` — model identifier string
-
-You can save these to **user scope** (global on your machine) or **project scope** (lives with this project). Press `P` in the Connection tab to switch.
 
 ## Session Settings
 

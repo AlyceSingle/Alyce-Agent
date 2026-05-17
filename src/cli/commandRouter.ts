@@ -51,8 +51,20 @@ export const REPL_COMMAND_DEFINITIONS: ReplCommandDefinition[] = [
   {
     command: "/setup",
     usage: "/setup",
-    description: "Open connection setup",
+    description: "Open provider connection picker",
     completion: "/setup"
+  },
+  {
+    command: "/connect",
+    usage: "/connect",
+    description: "Open provider connection picker",
+    completion: "/connect "
+  },
+  {
+    command: "/logout",
+    usage: "/logout <provider>",
+    description: "Remove a provider credential",
+    completion: "/logout "
   },
   {
     command: "/clear",
@@ -213,8 +225,8 @@ export const REPL_COMMAND_DEFINITIONS: ReplCommandDefinition[] = [
   {
     command: "/model",
     usage: "/model [provider/model]",
-    description: "Show or switch provider/model",
-    completion: "/model "
+    description: "Open model picker or switch provider/model",
+    completion: "/model"
   },
   {
     command: "/models",
@@ -266,6 +278,8 @@ export type ParsedCommand =
   | { type: "exit" }
   | { type: "open-settings"; section: "connection" | "session" }
   | { type: "open-permissions" }
+  | { type: "connect-provider"; provider?: string; args: string[] }
+  | { type: "logout-provider"; provider: string }
   | { type: "open-session-picker" }
   | { type: "resume-session"; query: string }
   | { type: "sessions-list" }
@@ -274,6 +288,7 @@ export type ParsedCommand =
   | { type: "memory-view" }
   | { type: "memory-clear"; clearPersistent: boolean }
   | { type: "add-directory"; directory: string; persist: boolean }
+  | { type: "open-model-picker" }
   | { type: "model-view" }
   | { type: "switch-model"; model: string }
   | { type: "tasks-list" }
@@ -390,7 +405,44 @@ export function parseReplCommand(input: string): ParsedCommand {
   }
 
   if (input === "/setup") {
-    return { type: "open-settings", section: "connection" };
+    return { type: "connect-provider", args: [] };
+  }
+
+  if (input === "/connect") {
+    return { type: "connect-provider", args: [] };
+  }
+
+  if (input.startsWith("/connect ")) {
+    const tokens = input.slice(9).trim().split(/\s+/).filter(Boolean);
+    return {
+      type: "connect-provider",
+      provider: tokens[0],
+      args: tokens.slice(1)
+    };
+  }
+
+  if (input === "/logout") {
+    return {
+      type: "command-error",
+      input,
+      message: "Missing provider. Use /logout <provider>."
+    };
+  }
+
+  if (input.startsWith("/logout ")) {
+    const provider = input.slice(8).trim();
+    if (!provider || provider.includes(" ")) {
+      return {
+        type: "command-error",
+        input,
+        message: "Use /logout <provider> with one provider id."
+      };
+    }
+
+    return {
+      type: "logout-provider",
+      provider
+    };
   }
 
   const memoryCommand = parseMemoryCommand(input);
@@ -516,7 +568,11 @@ export function parseReplCommand(input: string): ParsedCommand {
     };
   }
 
-  if (input === "/model" || input === "/model list" || input === "/models") {
+  if (input === "/model") {
+    return { type: "open-model-picker" };
+  }
+
+  if (input === "/model list" || input === "/models") {
     return { type: "model-view" };
   }
 

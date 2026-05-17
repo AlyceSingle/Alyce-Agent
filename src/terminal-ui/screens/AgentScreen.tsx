@@ -1,3 +1,4 @@
+import process from "node:process";
 import React, { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { Box, useApp, useStdout, useTerminalSize, Text } from "../runtime/ink.js";
 import { FullscreenLayout } from "../components/FullscreenLayout.js";
@@ -8,15 +9,14 @@ import { TodoPanel } from "../components/TodoPanel.js";
 import { TaskPanel } from "../components/TaskPanel.js";
 import { ApprovalDialog } from "../components/ApprovalDialog.js";
 import { AskUserQuestionDialog } from "../components/AskUserQuestionDialog.js";
+import { ConnectProviderDialog } from "../components/ConnectProviderDialog.js";
+import { ModelPickerDialog } from "../components/ModelPickerDialog.js";
 import { SettingsDialog } from "../components/SettingsDialog.js";
 import { PermissionsDialog } from "../components/PermissionsDialog.js";
 import { SessionPickerDialog } from "../components/SessionPickerDialog.js";
 import { RewindPickerDialog } from "../components/RewindPickerDialog.js";
 import type { SessionController } from "../adapters/sessionController.js";
-import {
-  formatCurrentModelDisplay,
-  isConnectionStateReady
-} from "../../cli/modelCommand.js";
+import { formatCurrentModelDisplay } from "../../cli/modelCommand.js";
 import { getBuiltinPersonaPresetTitle } from "../../core/prompt/fragments/personaPresets.js";
 import { useIsOverlayActive } from "../context/overlayContext.js";
 import { useKeybindings } from "../keybindings/useKeybindings.js";
@@ -139,7 +139,6 @@ export function AgentScreen(props: { controller: SessionController }) {
   const activeDialog = dialogQueue[0] ?? null;
   const hasDialog = activeDialog !== null;
   const hasActiveOverlay = useIsOverlayActive();
-  const hasConnectionConfig = isConnectionStateReady(connectionState);
   const layoutSurfaceKey =
     activeDialog === null
       ? "conversation"
@@ -301,7 +300,7 @@ export function AgentScreen(props: { controller: SessionController }) {
       props.controller.requestExit();
     },
     "app:openSettings": () => {
-      props.controller.openSettings(hasConnectionConfig ? "session" : "connection");
+      props.controller.openSettings("session");
     },
     "app:escape": () => {
       if (isLoading) {
@@ -351,7 +350,6 @@ export function AgentScreen(props: { controller: SessionController }) {
     }
   }), [
     draftInput,
-    hasConnectionConfig,
     isLoading,
     props.controller,
     resetScrollAcceleration,
@@ -473,12 +471,34 @@ export function AgentScreen(props: { controller: SessionController }) {
     ) : null;
 
   const modal =
-    activeDialog?.type === "session-picker" ? (
+    activeDialog?.type === "connect-provider" ? (
+      <ConnectProviderDialog
+        connectionState={connectionState}
+        onConnect={(provider, args) => props.controller.connectProviderFromDialog(provider, args)}
+        onAuthorizeAuth={(provider, methodIndex, inputs) =>
+          props.controller.authorizeProviderAuthFromDialog(provider, methodIndex, inputs)}
+        onAuthCallback={(provider, methodIndex, code, options) =>
+          props.controller.completeProviderAuthFromDialog(provider, methodIndex, code, options)}
+        onCancelAuth={(provider, methodIndex) =>
+          props.controller.cancelProviderAuthFromDialog(provider, methodIndex)}
+        onCancel={() => props.controller.closeDialog()}
+      />
+    ) : activeDialog?.type === "session-picker" ? (
       <SessionPickerDialog
         sessions={activeDialog.sessions}
         onSelect={(sessionId) => {
           void props.controller.resumeSession(sessionId);
         }}
+        onCancel={() => props.controller.closeDialog()}
+      />
+    ) : activeDialog?.type === "model-picker" ? (
+      <ModelPickerDialog
+        connectionState={connectionState}
+        settings={settings}
+        currentModel={connection.model}
+        refreshState={activeDialog.state}
+        env={process.env}
+        onSelect={(model) => props.controller.switchModelFromDialog(model)}
         onCancel={() => props.controller.closeDialog()}
       />
     ) : null;

@@ -33,6 +33,12 @@ import {
   ContextBudgetService,
   type ContextBudgetSnapshot
 } from "../core/context/contextBudget.js";
+import {
+  applyProviderAuthRecords,
+  AuthStore,
+  getAuthStorePath,
+  type ProviderAuthMap
+} from "../core/auth/authStore.js";
 import { BackgroundProcessManager } from "../core/background-process/backgroundProcessManager.js";
 import type {
   BackgroundProcessRecord,
@@ -90,7 +96,13 @@ import { cloneJson } from "../core/json/clone.js";
 import { buildEffectiveSystemPrompt } from "../core/prompt/builder.js";
 import { PromptSectionResolver } from "../core/prompt/sectionResolver.js";
 import { parseModelRef, resolveModelProfile } from "../core/providers/resolveModel.js";
-import type { ModelRef, ResolvedModelProfile } from "../core/providers/types.js";
+import type { ProviderProfileInput } from "../core/providers/registry.js";
+import type { ModelProfile, ModelRef, ProviderProfileMap, ResolvedModelProfile } from "../core/providers/types.js";
+import { ProviderAuthService, type AuthFlow } from "../core/providers/providerAuth.js";
+import {
+  refreshProviderModels,
+  type ProviderModelRefreshResult
+} from "../core/providers/modelDiscovery.js";
 import { runAgentTurn } from "../core/agent/runAgentTurn.js";
 import type { AgentQuerySource } from "../core/agent/querySource.js";
 import { formatUsageReport } from "../core/usage/formatUsage.js";
@@ -149,6 +161,7 @@ import type {
   ToolExecutionContext
 } from "../tools/types.js";
 import { buildNextTurnContextPreview } from "./contextPreview.js";
+import type { ProviderConnectionPlan } from "./connectCommand.js";
 import { resolveSubagentAllowedRoots } from "./subagentAllowedRoots.js";
 import {
   MAX_SUBAGENT_PROGRESS_DETAIL_CHARS,
@@ -232,6 +245,8 @@ export interface SessionRuntime {
   hasConnectionConfig: () => boolean;
   getConnectionConfig: () => ConnectionConfig;
   getConnectionConfigState: () => ConnectionConfigState;
+  getProviderAuthRecords: () => ProviderAuthMap;
+  getAuthStorePath: () => string;
   getSettings: () => SessionSettings;
   getSettingsState: () => SessionSettingsState;
   getPlanModeState: () => PlanModeState;
@@ -240,11 +255,29 @@ export interface SessionRuntime {
   getCurrentModel: () => string;
   getCurrentModelRef: () => ModelRef;
   getResolvedModelProfile: () => ResolvedModelProfile;
+  refreshCurrentProviderModels: () => Promise<ProviderModelRefreshResult>;
   setCurrentModel: (model: string) => Promise<void>;
   updateConnectionConfig: (
     patch: Partial<ConnectionConfig>,
     target?: ConnectionConfigSaveTarget
   ) => Promise<void>;
+  applyProviderConnection: (plan: ProviderConnectionPlan) => Promise<void>;
+  authorizeProviderAuth: (
+    providerId: string,
+    methodIndex: number,
+    inputs?: Record<string, string>
+  ) => Promise<
+    | { type: "stored"; providerId: string; model: string }
+    | { type: "flow"; flow: AuthFlow }
+  >;
+  completeProviderAuth: (
+    providerId: string,
+    methodIndex: number,
+    code?: string,
+    options?: { signal?: AbortSignal }
+  ) => Promise<{ providerId: string; model: string }>;
+  clearProviderAuthFlow: (providerId?: string) => void;
+  removeProviderAuth: (providerId: string) => Promise<boolean>;
   updateSettings: (patch: Partial<SessionSettings>) => Promise<void>;
   getAllowedRoots: () => string[];
   getSessionAdditionalDirectories: () => string[];
@@ -425,8 +458,17 @@ export async function createSessionRuntime(
   env: NodeJS.ProcessEnv
 ): Promise<SessionRuntime> {
   const config = await loadRuntimeConfig(argv, env);
+  const authStore = await AuthStore.load(getAuthStorePath(config.paths.userAlyceDirectory));
+  const providerAuthService = new ProviderAuthService(config.providerConnectors, authStore);
+  let runtimeProviderModelOverrides: Record<string, Record<string, ModelProfile>> = {};
   // 运行时维护一份可变快照，避免直接在初始配置对象上原地修改。
-  let connectionState = cloneConnectionConfigState(config.connectionState);
+  let connectionState = applyRuntimeProviderModelOverrides(
+    applyAuthToConnectionState(
+      cloneConnectionConfigState(config.connectionState),
+      authStore.all()
+    ),
+    runtimeProviderModelOverrides
+  );
   let settingsState = cloneSessionSettingsState(config.settingsState);
   let connection = connectionState.effective;
   let settings = settingsState.effective;
@@ -684,13 +726,20 @@ export async function createSessionRuntime(
     project?: ConnectionConfigLayer;
     preferredSaveTarget?: ConnectionConfigSaveTarget;
   }) => {
-    connectionState = buildConnectionConfigState(config.paths, {
-      user: options.user ?? connectionState.user,
-      project: options.project ?? connectionState.project,
-      env: connectionState.env,
-      cli: connectionState.cli,
-      preferredSaveTarget: options.preferredSaveTarget ?? connectionSaveTarget
-    });
+    connectionState = applyRuntimeProviderModelOverrides(
+      applyAuthToConnectionState(
+        buildConnectionConfigState(config.paths, {
+          user: options.user ?? connectionState.user,
+          project: options.project ?? connectionState.project,
+          env: connectionState.env,
+          cli: connectionState.cli,
+          pluginProviders: config.providerPluginProfiles,
+          preferredSaveTarget: options.preferredSaveTarget ?? connectionSaveTarget
+        }),
+        authStore.all()
+      ),
+      runtimeProviderModelOverrides
+    );
     connection = connectionState.effective;
     connectionSaveTarget = connectionState.saveTarget;
   };
@@ -746,6 +795,115 @@ export async function createSessionRuntime(
     }
 
     await resetSystemMessage();
+  };
+
+  const applyProviderConnection = async (plan: ProviderConnectionPlan) => {
+    if (plan.apiKey) {
+      await authStore.set(plan.providerId, {
+        type: "api",
+        apiKey: plan.apiKey
+      });
+    }
+
+    let nextUser = connectionState.user;
+    if (plan.providerProfile) {
+      nextUser = mergeUserProviderProfile(nextUser, plan.providerId, plan.providerProfile);
+    }
+
+    const sourcePatch = normalizeConnectionPatch({ model: plan.model }, connection);
+    nextUser = mergePersistedSource(nextUser, sourcePatch);
+    rebuildConnectionState({
+      user: nextUser,
+      preferredSaveTarget: "user"
+    });
+    await persistConnection("user");
+    await resetSystemMessage();
+  };
+
+  const applyProviderAuthConnection = async (providerId: string) => {
+    const normalizedProviderId = providerId.trim().toLowerCase();
+    rebuildConnectionState({});
+    const provider = connectionState.providerProfiles[normalizedProviderId];
+    if (!provider) {
+      throw new Error(`Provider '${normalizedProviderId}' is not configured.`);
+    }
+
+    const modelId = provider.defaultModel ?? Object.keys(provider.models ?? {})[0];
+    if (!modelId) {
+      throw new Error(`Provider '${normalizedProviderId}' does not define a default model.`);
+    }
+
+    const model = `${normalizedProviderId}/${modelId}`;
+    const sourcePatch = normalizeConnectionPatch({ model }, connection);
+    const nextUser = mergePersistedSource(connectionState.user, sourcePatch);
+    rebuildConnectionState({
+      user: nextUser,
+      preferredSaveTarget: "user"
+    });
+    await persistConnection("user");
+    await resetSystemMessage();
+    return {
+      providerId: normalizedProviderId,
+      model
+    };
+  };
+
+  const authorizeProviderAuth = async (
+    providerId: string,
+    methodIndex: number,
+    inputs: Record<string, string> = {}
+  ) => {
+    const result = await providerAuthService.authorize(providerId, methodIndex, inputs);
+    if (result.type === "flow") {
+      return result;
+    }
+
+    return {
+      type: "stored" as const,
+      ...await applyProviderAuthConnection(providerId)
+    };
+  };
+
+  const completeProviderAuth = async (
+    providerId: string,
+    methodIndex: number,
+    code?: string,
+    options: { signal?: AbortSignal } = {}
+  ) => {
+    await providerAuthService.callback(providerId, methodIndex, code, options);
+    return applyProviderAuthConnection(providerId);
+  };
+
+  const refreshCurrentProviderModels = async (): Promise<ProviderModelRefreshResult> => {
+    const modelRef = parseModelRef(connection.model);
+    const provider = connectionState.providerProfiles[modelRef.providerId];
+    if (!provider) {
+      throw new Error(`Unknown provider: ${modelRef.providerId}`);
+    }
+
+    const result = await refreshProviderModels({
+      provider,
+      auth: authStore.get(provider.id),
+      connector: providerAuthService.connector(provider.id),
+      env
+    });
+    if (result.source === "live") {
+      runtimeProviderModelOverrides = {
+        ...runtimeProviderModelOverrides,
+        [provider.id]: result.models
+      };
+      rebuildConnectionState({});
+    }
+
+    return result;
+  };
+
+  const removeProviderAuth = async (providerId: string) => {
+    const removed = await authStore.remove(providerId);
+    providerAuthService.clearPending(providerId);
+    rebuildConnectionState({});
+    await resetSystemMessage();
+    return removed;
   };
 
   const recordUsage = (event: UsageRecordInput) => {
@@ -835,6 +993,8 @@ export async function createSessionRuntime(
     hasConnectionConfig: () => hasUsableModelAdapter(),
     getConnectionConfig: () => ({ ...connection }),
     getConnectionConfigState: () => cloneConnectionConfigState(connectionState),
+    getProviderAuthRecords: () => authStore.all(),
+    getAuthStorePath: () => authStore.getPath(),
     getSettings: () => cloneJson(settings),
     getSettingsState: () => cloneSessionSettingsState(settingsState),
     getPlanModeState: () => ({ ...planModeState }),
@@ -864,12 +1024,20 @@ export async function createSessionRuntime(
     getCurrentModel: () => connection.model,
     getCurrentModelRef: () => parseModelRef(connection.model),
     getResolvedModelProfile: () => resolveModelProfileFor(),
+    refreshCurrentProviderModels,
     setCurrentModel: async (model) => {
       await applyConnectionPatch({ model });
     },
     updateConnectionConfig: async (patch, target) => {
       await applyConnectionPatch(patch, target);
     },
+    applyProviderConnection,
+    authorizeProviderAuth,
+    completeProviderAuth,
+    clearProviderAuthFlow: (providerId) => {
+      providerAuthService.clearPending(providerId);
+    },
+    removeProviderAuth,
     updateSettings: async (patch) => {
       const userPatch = normalizeSettingsPatch(patch, config.paths.workspaceRoot);
       // 会话设置只回写 user 层；project / env / cli 仍然参与最终覆盖，但不会被保存动作覆盖掉。
@@ -2591,6 +2759,76 @@ function mergePersistedSource<T extends object>(base: Partial<T>, patch: Partial
   }
 
   return next;
+}
+
+function mergeUserProviderProfile(
+  user: ConnectionConfigLayer,
+  providerId: string,
+  profile: ProviderProfileInput
+): ConnectionConfigLayer {
+  const providers = cloneJson(user.providers ?? {});
+  const existing = providers[providerId] ?? {};
+  providers[providerId] = {
+    ...existing,
+    ...profile,
+    models: {
+      ...(existing.models ?? {}),
+      ...(profile.models ?? {})
+    }
+  };
+
+  return {
+    ...user,
+    providers
+  };
+}
+
+function applyAuthToConnectionState(
+  state: ConnectionConfigState,
+  authRecords: ProviderAuthMap
+): ConnectionConfigState {
+  return {
+    ...state,
+    providerProfiles: applyProviderAuthRecords(state.providerProfiles, authRecords)
+  };
+}
+
+function applyRuntimeProviderModelOverrides(
+  state: ConnectionConfigState,
+  overrides: Record<string, Record<string, ModelProfile>>
+): ConnectionConfigState {
+  const providerProfiles: ProviderProfileMap = { ...state.providerProfiles };
+  for (const [providerId, models] of Object.entries(overrides)) {
+    const provider = providerProfiles[providerId];
+    if (!provider) {
+      continue;
+    }
+
+    providerProfiles[providerId] = {
+      ...provider,
+      models: mergeRuntimeModelProfiles(provider.models ?? {}, models)
+    };
+  }
+
+  return {
+    ...state,
+    providerProfiles
+  };
+}
+
+function mergeRuntimeModelProfiles(
+  existing: Record<string, ModelProfile>,
+  discovered: Record<string, ModelProfile>
+): Record<string, ModelProfile> {
+  const merged: Record<string, ModelProfile> = {};
+  for (const [modelId, profile] of Object.entries(discovered)) {
+    merged[modelId] = {
+      ...(existing[modelId] ?? {}),
+      ...profile
+    };
+  }
+
+  return merged;
 }
 
 function cloneConnectionConfigState(state: ConnectionConfigState): ConnectionConfigState {

@@ -45,7 +45,28 @@ function testParserHandlesRepresentedCommands() {
     input: "/permissions default",
     message: "Unsupported /permissions argument. Use /permissions."
   });
-  assert.deepEqual(parseReplCommand("/setup"), { type: "open-settings", section: "connection" });
+  assert.deepEqual(parseReplCommand("/setup"), {
+    type: "connect-provider",
+    args: []
+  });
+  assert.deepEqual(parseReplCommand("/connect"), {
+    type: "connect-provider",
+    args: []
+  });
+  assert.deepEqual(parseReplCommand("/connect openrouter sk-test openai/gpt-5.2"), {
+    type: "connect-provider",
+    provider: "openrouter",
+    args: ["sk-test", "openai/gpt-5.2"]
+  });
+  assert.deepEqual(parseReplCommand("/logout openrouter"), {
+    type: "logout-provider",
+    provider: "openrouter"
+  });
+  assert.deepEqual(parseReplCommand("/logout"), {
+    type: "command-error",
+    input: "/logout",
+    message: "Missing provider. Use /logout <provider>."
+  });
   assert.deepEqual(parseReplCommand("/memory clear --all"), {
     type: "memory-clear",
     clearPersistent: true
@@ -138,7 +159,7 @@ function testParserHandlesRepresentedCommands() {
     input: "/diff last extra",
     message: "Unsupported /diff argument. Use /diff, /diff last, /diff current, or /diff <turn>."
   });
-  assert.deepEqual(parseReplCommand("/model"), { type: "model-view" });
+  assert.deepEqual(parseReplCommand("/model"), { type: "open-model-picker" });
   assert.deepEqual(parseReplCommand("/model list"), { type: "model-view" });
   assert.deepEqual(parseReplCommand("/models"), { type: "model-view" });
   assert.deepEqual(parseReplCommand("/model openrouter/openai/gpt-5.2"), {

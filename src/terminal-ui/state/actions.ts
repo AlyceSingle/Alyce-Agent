@@ -11,6 +11,7 @@ import type {
 } from "../../tools/types.js";
 import type {
   ActiveDialog,
+  ModelPickerDialogState,
   TerminalUiRewindPoint,
   SettingsSection,
   TerminalUiMessage,
@@ -302,6 +303,51 @@ export function openPermissionsDialog(state: TerminalUiState): TerminalUiState {
     type: "permissions",
     layer: "overlay"
   });
+}
+
+export function openConnectProviderDialog(state: TerminalUiState): TerminalUiState {
+  return pushDialog(state, {
+    type: "connect-provider",
+    layer: "modal"
+  });
+}
+
+export function openModelPickerDialog(
+  state: TerminalUiState,
+  dialogState: ModelPickerDialogState
+): TerminalUiState {
+  return pushDialog(state, {
+    type: "model-picker",
+    layer: "modal",
+    state: dialogState
+  });
+}
+
+export function updateModelPickerDialogState(
+  state: TerminalUiState,
+  dialogState: ModelPickerDialogState
+): TerminalUiState {
+  const dialogIndex = state.dialogQueue.findIndex((dialog) => dialog.type === "model-picker");
+  if (dialogIndex < 0) {
+    return state;
+  }
+
+  const dialog = state.dialogQueue[dialogIndex];
+  if (dialog?.type !== "model-picker") {
+    return state;
+  }
+
+  return {
+    ...state,
+    dialogQueue: [
+      ...state.dialogQueue.slice(0, dialogIndex),
+      {
+        ...dialog,
+        state: dialogState
+      },
+      ...state.dialogQueue.slice(dialogIndex + 1)
+    ]
+  };
 }
 
 export function openSessionPickerDialog(

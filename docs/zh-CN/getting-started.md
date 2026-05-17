@@ -44,11 +44,13 @@ copy .env.example .env     # Windows
 # 或者：cp .env.example .env  # Linux / macOS
 ```
 
-打开 `.env`，请至少填写以下三项：
+打开 `.env`，如果您想从环境变量启动，可以填写旧版 OpenAI-compatible 默认项：
 
 - `OPENAI_API_KEY` — 您的 API 密钥
 - `OPENAI_BASE_URL` — 接口地址（例如 `https://api.openai.com/v1`）
 - `OPENAI_MODEL` — 使用的模型名称（例如 `gpt-4o`）
+
+也可以不手动编辑 `.env`，启动 Alyce 后直接运行 `/connect`。Provider 选择器支持 OpenAI、Anthropic、Google、OpenRouter、DeepSeek、Kimi、Qwen、SiliconFlow、豆包、Ollama、LM Studio 和自定义 OpenAI-compatible 端点。Secret 字段会遮罩，并保存到 `~/.alyce/auth.json`。
 
 **安全提示：** 请勿将 `.env` 文件提交到 Git 仓库。项目已默认在 `.gitignore` 中忽略此文件。
 
@@ -181,10 +183,10 @@ Plan Mode（计划模式）保持探索过程为只读。准备好进入实现�
 
 程序运行后，建议您先完成以下操作：
 
-1. **按 `Ctrl+X`** 打开设置面板。
-2. **核对连接信息**：确认 API Key、Base URL 和 Model 与 `.env` 中的配置一致。
-3. **添加外部目录**：如果您需要助手访问当前工作区以外的文件，可以在设置中添加。
-4. **开启系统时间注入**：如果您希望模型在回复时了解当前的本地日期和时间，可以在设置中开启此项。
+1. **运行 `/connect`** 选择 AI provider，并输入 API key、Base URL 和 Model。
+2. **运行 `/models`** 核对当前 provider/model 和 auth 状态，或运行 `/model` 刷新并切换当前 provider 的模型。
+3. **按 `Ctrl+X`** 按需调整会话/运行时设置。
+4. **添加外部目录**：如果您需要助手访问当前工作区以外的文件，可以在设置中添加。
 
 ## 常用命令
 
@@ -193,7 +195,8 @@ Plan Mode（计划模式）保持探索过程为只读。准备好进入实现�
 /doctor     — 运行本地健康检查
 /settings   — 直接打开设置面板
 /permissions — 切换审批和访问模式
-/setup      — 首次配置引导
+/connect    — 打开 provider 选择器
+/setup      — 打开 provider 选择器
 /plan       — 进入只读计划模式
 /build      — 退出 Plan Mode，不会执行 npm run build
 /context    — 预览模型下一轮实际接收到的内容

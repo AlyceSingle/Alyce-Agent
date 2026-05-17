@@ -21,6 +21,12 @@ import {
   normalizeProviderProfileInputMap,
   type ProviderProfileInputMap
 } from "../core/providers/registry.js";
+import {
+  loadConnectorPlugins,
+  type ConnectorPluginDiagnostic
+} from "../core/providers/pluginConnectors.js";
+import { getBuiltInProviderConnectors } from "../core/providers/connectors/index.js";
+import type { ProviderConnector } from "../core/providers/providerAuth.js";
 import type { ProviderProfileMap } from "../core/providers/types.js";
 
 export interface PromptOverrideConfig {
@@ -135,9 +141,11 @@ export interface RuntimePaths {
   alyceDirectory: string;
   connectionConfigPath: string;
   settingsConfigPath: string;
+  projectPluginsDirectory: string;
   userAlyceDirectory: string;
   userConnectionConfigPath: string;
   userSettingsConfigPath: string;
+  userPluginsDirectory: string;
 }
 
 export interface RuntimeConfig {
@@ -146,6 +154,9 @@ export interface RuntimeConfig {
   connectionState: ConnectionConfigState;
   settings: SessionSettings;
   settingsState: SessionSettingsState;
+  providerConnectors: ProviderConnector[];
+  providerPluginProfiles: ProviderProfileInputMap;
+  providerPluginDiagnostics: ConnectorPluginDiagnostic[];
   requestPatches: RequestPatchOperation[];
   memory: MemoryRuntimeConfig;
 }
@@ -284,12 +295,17 @@ export async function loadRuntimeConfig(
 ): Promise<RuntimeConfig> {
   const workspaceRoot = path.resolve(getArgValue(argv, "--cwd") || env.AGENT_WORKSPACE || ".");
   const paths = getRuntimePaths(workspaceRoot);
-  const [projectConnection, userConnection, projectSettingsFile, userSettingsFile] =
+  const [projectConnection, userConnection, projectSettingsFile, userSettingsFile, pluginResult] =
     await Promise.all([
       readJsonConfig(paths.connectionConfigPath, ConnectionConfigFileSchema),
       readJsonConfig(paths.userConnectionConfigPath, ConnectionConfigFileSchema),
       readJsonConfig(paths.settingsConfigPath, SessionSettingsFileSchema),
-      readJsonConfig(paths.userSettingsConfigPath, SessionSettingsFileSchema)
+      readJsonConfig(paths.userSettingsConfigPath, SessionSettingsFileSchema),
+      loadConnectorPlugins({
+        userPluginsDirectory: paths.userPluginsDirectory,
+        projectPluginsDirectory: paths.projectPluginsDirectory,
+        enableProjectPlugins: parseBoolean(env.ALYCE_ENABLE_PROJECT_PROVIDER_PLUGINS, false)
+      })
     ]);
   const projectSettings = normalizeSessionSettingsFile(projectSettingsFile);
   const userSettings = normalizeSessionSettingsFile(userSettingsFile);
@@ -298,7 +314,8 @@ export async function loadRuntimeConfig(
     user: userConnection,
     project: projectConnection,
     env: resolveConnectionFromEnv(env),
-    cli: resolveConnectionFromCli(argv)
+    cli: resolveConnectionFromCli(argv),
+    pluginProviders: pluginResult.providerProfiles
   });
   const settingsState = buildSessionSettingsState(paths, {
     project: projectSettings,
@@ -313,6 +330,12 @@ export async function loadRuntimeConfig(
     connectionState,
     settings: settingsState.effective,
     settingsState,
+    providerConnectors: [
+      ...getBuiltInProviderConnectors(),
+      ...pluginResult.connectors
+    ],
+    providerPluginProfiles: pluginResult.providerProfiles,
+    providerPluginDiagnostics: pluginResult.diagnostics,
     requestPatches: resolveRequestPatches(argv, env),
     memory: {
       directory: env.AGENT_MEMORY_DIR || ".alyce/memory",
@@ -348,9 +371,11 @@ export function getRuntimePaths(workspaceRoot: string): RuntimePaths {
     alyceDirectory,
     connectionConfigPath: path.join(alyceDirectory, "config.json"),
     settingsConfigPath: path.join(alyceDirectory, "settings.json"),
+    projectPluginsDirectory: path.join(alyceDirectory, "plugins"),
     userAlyceDirectory,
     userConnectionConfigPath: path.join(userAlyceDirectory, "config.json"),
-    userSettingsConfigPath: path.join(userAlyceDirectory, "settings.json")
+    userSettingsConfigPath: path.join(userAlyceDirectory, "settings.json"),
+    userPluginsDirectory: path.join(userAlyceDirectory, "plugins")
   };
 }
 
@@ -361,6 +386,7 @@ export function buildConnectionConfigState(
     project?: ConnectionConfigLayer;
     env?: Partial<ConnectionConfig>;
     cli?: Partial<ConnectionConfig>;
+    pluginProviders?: ProviderProfileInputMap;
     preferredSaveTarget?: ConnectionConfigSaveTarget;
   }
 ): ConnectionConfigState {
@@ -391,7 +417,11 @@ export function buildConnectionConfigState(
     sources: buildSourceMap(effective, orderedLayers, "default"),
     providerProfiles: buildProviderRegistry({
       connection: effective,
-      configuredProviders: mergeProviderProfileMaps(project.providers, user.providers)
+      configuredProviders: mergeProviderProfileMaps(
+        layers.pluginProviders,
+        project.providers,
+        user.providers
+      )
     }).providers,
     saveTarget,
     saveTargetPath:

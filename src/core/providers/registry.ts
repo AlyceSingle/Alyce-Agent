@@ -183,6 +183,7 @@ function mergeProviderProfileInput(
     ...(base?.apiKeyEnv ? { apiKeyEnv: base.apiKeyEnv } : {}),
     ...(base?.apiKey ? { apiKey: base.apiKey } : {}),
     ...(base?.baseURL ? { baseURL: base.baseURL } : {}),
+    ...(base?.headers ? { headers: { ...base.headers } } : {}),
     ...(base?.defaultModel ? { defaultModel: base.defaultModel } : {}),
     ...(input.apiKeyEnv?.trim() ? { apiKeyEnv: input.apiKeyEnv.trim() } : {}),
     ...(input.apiKey?.trim() ? { apiKey: input.apiKey.trim() } : {}),
@@ -247,7 +248,7 @@ function buildLegacyOpenAIProfile(
 ): ProviderProfile {
   return {
     id: DEFAULT_PROVIDER_ID,
-    label: connection.baseURL ? "OpenAI-compatible" : "OpenAI",
+    label: "OpenAI",
     kind: connection.baseURL ? "openai-compatible" : "openai",
     apiKeyEnv: "OPENAI_API_KEY",
     ...(connection.apiKey.trim() ? { apiKey: connection.apiKey.trim() } : {}),
@@ -262,6 +263,7 @@ function cloneProviderMap(input: ProviderProfileMap): ProviderProfileMap {
       id,
       {
         ...profile,
+        headers: profile.headers ? { ...profile.headers } : undefined,
         models: profile.models
           ? Object.fromEntries(
               Object.entries(profile.models).map(([modelId, model]) => [

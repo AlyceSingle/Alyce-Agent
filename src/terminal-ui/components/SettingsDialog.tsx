@@ -28,9 +28,6 @@ type FieldDefinition = {
 const PERSONA_OPTIONS = ["", ...getBuiltinPersonaPresetNames()];
 
 const FIELD_DEFINITIONS: FieldDefinition[] = [
-  { key: "apiKey", label: "API Key", type: "text", section: "connection", secret: true },
-  { key: "baseURL", label: "Base URL", type: "text", section: "connection" },
-  { key: "model", label: "Model", type: "text", section: "connection" },
   {
     key: "approvalMode",
     label: "Approval Mode",
@@ -289,7 +286,7 @@ export function SettingsDialog(props: {
     ...props.connection,
     ...props.settings
   };
-  const [section, setSection] = useState<SettingsSection>(props.initialSection);
+  const [section, setSection] = useState<SettingsSection>("session");
   const [selectedIndex, setSelectedIndex] = useState(0);
   const [isEditing, setIsEditing] = useState(false);
   const [draftValue, setDraftValue] = useState("");
@@ -303,21 +300,17 @@ export function SettingsDialog(props: {
 
   useRegisterOverlay("settings", props.visible);
 
-  // 连接/会话字段是静态集合，直接复用常量可避免每次渲染重复筛选。
-  const sectionFields = section === "connection" ? CONNECTION_FIELDS : SESSION_FIELDS;
+  // Connection provider setup lives in /connect; settings only edits session/runtime behavior.
+  const sectionFields = SESSION_FIELDS;
   const currentField = sectionFields[selectedIndex] ?? sectionFields[0];
   const sourceInfo =
-    currentField?.section === "connection"
+    currentField
       ? {
-          source: props.connectionState.sources[currentField.key as keyof ConnectionConfig] ?? "default"
+          source: props.settingsState.sources[currentField.key as keyof SessionSettings] ?? "default",
+          saveTargetPath: props.settingsState.saveTargetPath,
+          fallbackPath: props.settingsState.projectPath
         }
-      : currentField
-        ? {
-            source: props.settingsState.sources[currentField.key as keyof SessionSettings] ?? "default",
-            saveTargetPath: props.settingsState.saveTargetPath,
-            fallbackPath: props.settingsState.projectPath
-          }
-        : null;
+      : null;
   const connectionSavePath =
     connectionSaveTarget === "project"
       ? props.connectionState.projectPath
@@ -336,7 +329,7 @@ export function SettingsDialog(props: {
       ...props.connection,
       ...props.settings
     };
-    setSection(props.initialSection);
+    setSection("session");
     setSelectedIndex(0);
     setIsEditing(false);
     setDraftValue("");
@@ -406,12 +399,6 @@ export function SettingsDialog(props: {
       return;
     }
 
-    if (key.leftArrow || key.rightArrow) {
-      setSection((current) => (current === "connection" ? "session" : "connection"));
-      setSelectedIndex(0);
-      return;
-    }
-
     if (key.upArrow) {
       setSelectedIndex((current) => Math.max(0, current - 1));
       return;
@@ -423,11 +410,6 @@ export function SettingsDialog(props: {
     }
 
     if (!currentField) {
-      return;
-    }
-
-    if (section === "connection" && input.toLowerCase() === "p") {
-      setConnectionSaveTarget((current) => (current === "project" ? "user" : "project"));
       return;
     }
 
@@ -473,21 +455,10 @@ export function SettingsDialog(props: {
   return (
     <Pane
       title="Settings"
-      subtitle={props.reason ?? `${section === "connection" ? "Connection" : "Session"} settings`}
+      subtitle={props.reason ?? "Session settings"}
       accentColor={terminalUiTheme.colors.chrome}
-      footer={
-        section === "connection"
-          ? "←/→ switch tab | ↑/↓ move | Enter edit | P target | S save | Esc close"
-          : "←/→ switch tab | ↑/↓ move | Enter edit | S save | Esc close"
-      }
+      footer="↑/↓ move | Enter edit | S save | Esc close"
     >
-      {section === "connection" ? (
-        <Text color={terminalUiTheme.colors.subtle} wrap="truncate-end">
-          Save scope: {getConnectionSaveTargetLabel(connectionSaveTarget)}
-          {" | "}
-          Path: {normalizeInlineValue(connectionSavePath, "(none)")}
-        </Text>
-      ) : null}
       <Box flexDirection="column" marginTop={1} width="100%">
         {visibleFields.map((field, index) => {
           const actualIndex = startIndex + index;

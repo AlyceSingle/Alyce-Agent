@@ -7,13 +7,21 @@ import {
 } from "./modelAdapters.js";
 import { sendChatCompletion } from "./sendChatCompletion.js";
 import type { ResolvedModelProfile } from "../providers/types.js";
+import { buildAnthropicRequest, convertAnthropicResponse } from "./anthropicAdapter.js";
+import { buildGoogleRequest, convertGoogleResponse } from "./googleAdapter.js";
 
 async function runTests() {
   await testAdapterRequestUsesProviderModelId();
   testOpenAIProviderWithoutBaseUrlIsAvailable();
   testLocalProviderWithBaseUrlDoesNotRequireApiKey();
   testLocalProviderRequiresBaseUrl();
-  testAnthropicProviderRequiresOpenAICompatibleBaseUrl();
+  testAnthropicNativeProviderWithoutBaseUrlIsAvailable();
+  testGoogleNativeProviderWithoutBaseUrlIsAvailable();
+  testAnthropicProviderWithBaseUrlUsesCompatibleAdapter();
+  testAnthropicNativeRequestConvertsTools();
+  testAnthropicNativeResponseConvertsToolUse();
+  testGoogleNativeRequestConvertsTools();
+  testGoogleNativeResponseConvertsFunctionCall();
   console.log("model adapter tests passed");
 }
 
@@ -94,7 +102,7 @@ function testLocalProviderRequiresBaseUrl() {
   assert.throws(() => createModelAdapter(resolvedModel), /requires a baseURL/);
 }
 
-function testAnthropicProviderRequiresOpenAICompatibleBaseUrl() {
+function testAnthropicNativeProviderWithoutBaseUrlIsAvailable() {
   const resolvedModel = createResolvedModel({
     providerId: "anthropic",
     modelId: "claude-sonnet-4.6",
@@ -103,8 +111,139 @@ function testAnthropicProviderRequiresOpenAICompatibleBaseUrl() {
   });
   const availability = getModelAdapterAvailability(resolvedModel);
 
-  assert.equal(availability.available, false);
-  assert.match(availability.reason ?? "", /OpenAI-compatible baseURL/);
+  assert.equal(availability.available, true);
+  assert.equal(createModelAdapter(resolvedModel).kind, "anthropic");
+}
+
+function testGoogleNativeProviderWithoutBaseUrlIsAvailable() {
+  const resolvedModel = createResolvedModel({
+    providerId: "google",
+    modelId: "gemini-3-flash",
+    kind: "google",
+    apiKey: "test-key"
+  });
+  const availability = getModelAdapterAvailability(resolvedModel);
+
+  assert.equal(availability.available, true);
+  assert.equal(createModelAdapter(resolvedModel).kind, "google");
+}
+
+function testAnthropicProviderWithBaseUrlUsesCompatibleAdapter() {
+  const resolvedModel = createResolvedModel({
+    providerId: "anthropic",
+    modelId: "claude-through-gateway",
+    kind: "anthropic",
+    apiKey: "test-key",
+    baseURL: "https://gateway.example/v1"
+  });
+  const availability = getModelAdapterAvailability(resolvedModel);
+
+  assert.equal(availability.available, true);
+  assert.doesNotThrow(() => createModelAdapter(resolvedModel));
+}
+
+function testAnthropicNativeRequestConvertsTools() {
+  const request = buildAnthropicRequest({
+    model: "claude-sonnet-4.6",
+    messages: [
+      { role: "system", content: "system prompt" },
+      { role: "user", content: "hello" }
+    ],
+    tools: [createTool()],
+    tool_choice: "auto"
+  }, createResolvedModel({
+    providerId: "anthropic",
+    modelId: "claude-sonnet-4.6",
+    kind: "anthropic",
+    apiKey: "test-key",
+    maxOutputTokens: 1234
+  }));
+
+  assert.equal(request.model, "claude-sonnet-4.6");
+  assert.equal(request.max_tokens, 1234);
+  assert.equal(request.system, "system prompt");
+  assert.equal(request.messages[0]?.role, "user");
+  assert.equal(request.tools?.[0]?.name, "Read");
+}
+
+function testAnthropicNativeResponseConvertsToolUse() {
+  const response = convertAnthropicResponse({
+    id: "msg_1",
+    model: "claude-sonnet-4.6",
+    stop_reason: "tool_use",
+    content: [
+      { type: "text", text: "checking" },
+      { type: "tool_use", id: "toolu_1", name: "Read", input: { path: "README.md" } }
+    ],
+    usage: {
+      input_tokens: 10,
+      output_tokens: 5
+    }
+  }, "claude-sonnet-4.6");
+
+  assert.equal(response.choices[0]?.finish_reason, "tool_calls");
+  assert.equal(response.choices[0]?.message.tool_calls?.[0]?.function.name, "Read");
+  assert.equal(response.usage?.total_tokens, 15);
+}
+
+function testGoogleNativeRequestConvertsTools() {
+  const request = buildGoogleRequest({
+    model: "gemini-3-flash",
+    messages: [
+      { role: "system", content: "system prompt" },
+      {
+        role: "assistant",
+        content: "",
+        tool_calls: [{
+          id: "call_1",
+          type: "function",
+          function: { name: "Read", arguments: "{\"path\":\"README.md\"}" }
+        }]
+      },
+      {
+        role: "tool",
+        tool_call_id: "call_1",
+        content: "file content"
+      }
+    ],
+    tools: [createTool()],
+    tool_choice: "auto"
+  }, createResolvedModel({
+    providerId: "google",
+    modelId: "gemini-3-flash",
+    kind: "google",
+    apiKey: "test-key",
+    maxOutputTokens: 2048
+  }));
+
+  assert.equal(request.systemInstruction?.parts[0]?.text, "system prompt");
+  assert.equal(request.contents[0]?.role, "model");
+  assert.equal("functionCall" in (request.contents[0]?.parts[0] ?? {}), true);
+  assert.equal("functionResponse" in (request.contents[1]?.parts[0] ?? {}), true);
+  assert.equal(request.tools?.[0]?.functionDeclarations[0]?.name, "Read");
+  assert.equal(request.generationConfig?.maxOutputTokens, 2048);
+}
+
+function testGoogleNativeResponseConvertsFunctionCall() {
+  const response = convertGoogleResponse({
+    candidates: [{
+      finishReason: "STOP",
+      content: {
+        parts: [
+          { text: "checking" },
+          { functionCall: { name: "Read", args: { path: "README.md" } } }
+        ]
+      }
+    }],
+    usageMetadata: {
+      promptTokenCount: 10,
+      candidatesTokenCount: 5,
+      totalTokenCount: 15
+    }
+  }, "gemini-3-flash");
+
+  assert.equal(response.choices[0]?.message.tool_calls?.[0]?.function.name, "Read");
+  assert.equal(response.usage?.total_tokens, 15);
 }
 
 function createResolvedModel(
@@ -164,6 +303,23 @@ function createResponse(content: string): OpenAI.Chat.Completions.ChatCompletion
         }
       }
     ]
+  };
+}
+
+function createTool(): OpenAI.Chat.Completions.ChatCompletionTool {
+  return {
+    type: "function",
+    function: {
+      name: "Read",
+      description: "Read a file",
+      parameters: {
+        type: "object",
+        properties: {
+          path: { type: "string" }
+        },
+        required: ["path"]
+      }
+    }
   };
 }
 

@@ -62,9 +62,11 @@ function testModelContextWindowResolutionUsesLooseTokens() {
   assert.equal(resolveModelContextWindow("google/gemini2.5pro-preview").contextWindow, 1_048_576);
   assert.equal(resolveModelContextWindow("gemini_2_5_pro").contextWindow, 1_048_576);
   assert.equal(resolveModelContextWindow("anthropic.claude-sonnet-4-20250514").contextWindow, 200_000);
-  assert.equal(resolveModelContextWindow("claude3.7sonnet").contextWindow, 200_000);
-  assert.equal(resolveModelContextWindow("openai/gpt_5.2").contextWindow, 400_000);
-  assert.equal(resolveModelContextWindow("gpt5mini").contextWindow, 400_000);
+    assert.equal(resolveModelContextWindow("claude3.7sonnet").contextWindow, 200_000);
+    assert.equal(resolveModelContextWindow("claude4.5sonnet").contextWindow, 1_000_000);
+    assert.equal(resolveModelContextWindow("claude-haiku-4.5").contextWindow, 200_000);
+    assert.equal(resolveModelContextWindow("openai/gpt_5.2").contextWindow, 1_050_000);
+    assert.equal(resolveModelContextWindow("gpt5mini").contextWindow, 1_050_000);
   assert.equal(resolveModelContextWindow("moonshot/kimi-k2-0905-preview").contextWindow, 262_144);
   assert.equal(resolveModelContextWindow("deepseek-reasoner").contextWindow, 1_000_000);
   assert.equal(resolveModelContextWindow("qwen3-max-preview").contextWindow, 262_144);

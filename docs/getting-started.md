@@ -45,11 +45,13 @@ copy .env.example .env     # Windows
 # or: cp .env.example .env  # Linux / macOS
 ```
 
-Open `.env` and fill in at least these three fields:
+Open `.env` and fill in the legacy OpenAI-compatible startup defaults when you want to start from environment variables:
 
 - `OPENAI_API_KEY` — your API key
 - `OPENAI_BASE_URL` — the endpoint URL (e.g., `https://api.openai.com/v1`)
 - `OPENAI_MODEL` — the model name to use (e.g., `gpt-4o`)
+
+You can also skip editing `.env` for common providers and run `/connect` inside Alyce. The provider picker supports OpenAI, Anthropic, Google, OpenRouter, DeepSeek, Kimi, Qwen, SiliconFlow, Doubao, Ollama, LM Studio, and custom OpenAI-compatible endpoints. Secret fields are masked and saved to `~/.alyce/auth.json`.
 
 **Security Note:** Do not commit your `.env` file to Git. It is ignored by default in `.gitignore`.
 
@@ -182,10 +184,10 @@ Plan Mode keeps exploration read-only. Use `/plan exit` or `/build` to leave it 
 
 Once Alyce is running, we recommend the following steps:
 
-1. **Press `Ctrl+X`** to open the settings panel.
-2. **Verify your connection**: Ensure the API key, base URL, and model match your `.env` configuration.
-3. **Add external directories** if you need the agent to access files outside the current workspace.
-4. **Enable `Current System Time`** if you want the model to be aware of the local date and time during each turn.
+1. **Run `/connect`** to choose an AI provider and enter API key, base URL, and model fields.
+2. **Run `/models`** to verify the active provider/model and auth status, or `/model` to refresh and switch models for the current provider.
+3. **Press `Ctrl+X`** if you want to adjust session/runtime settings.
+4. **Add external directories** if you need the agent to access files outside the current workspace.
 
 ## Essential Commands
 
@@ -194,7 +196,8 @@ Once Alyce is running, we recommend the following steps:
 /doctor     — runs local health checks
 /settings   — opens settings directly
 /permissions — switches approval and access mode
-/setup      — first-run configuration wizard
+/connect    — open provider picker
+/setup      — open provider picker
 /plan       — enters read-only planning mode
 /build      — exits Plan Mode; does not run npm run build
 /context    — previews what the model will actually see next turn

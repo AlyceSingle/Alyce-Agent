@@ -26,6 +26,7 @@ async function runTests() {
   await testRipgrepUnavailableFails();
   await testSnapshotDiagnosticsWarnsWhenGitTreeUnavailable();
   await testSnapshotDiagnosticsFailsWhenGitTreeAndOverlayUnavailable();
+  await testProviderPluginDiagnosticsWarn();
   await testOldNodeVersionFails();
   testFormatDoctorReportIncludesFixes();
   console.log("doctor tests passed");
@@ -150,7 +151,7 @@ async function testMissingApiKeyFails() {
 
   const check = findCheck(report.checks, "connection.apiKey");
   assert.equal(check.status, "fail");
-  assert.ok(check.suggestion?.includes("/setup"));
+  assert.ok(check.suggestion?.includes("/connect"));
 }
 
 async function testMissingEndpointAndModelWarns() {
@@ -171,7 +172,7 @@ async function testMissingEndpointAndModelWarns() {
   assert.equal(check.status, "warn");
   assert.ok(check.details?.some((detail) => detail.includes("OPENAI_BASE_URL")));
   assert.ok(check.details?.some((detail) => detail.includes("OPENAI_MODEL")));
-  assert.ok(check.suggestion?.includes("/setup"));
+  assert.ok(check.suggestion?.includes("/connect"));
 }
 
 async function testInvalidMcpConfigFails() {
@@ -246,6 +247,31 @@ async function testOldNodeVersionFails() {
   assert.ok(check.summary.includes("below"));
 }
 
+async function testProviderPluginDiagnosticsWarn() {
+  const workspaceRoot = await createWorkspace({ includeDist: true });
+  const input = createDoctorInput(workspaceRoot, {
+    connection: createConnectionState(workspaceRoot, { apiKey: "test-key" }),
+    providerPluginDiagnostics: [{
+      severity: "warning",
+      source: "user",
+      pluginPath: path.join(workspaceRoot, "plugin"),
+      message: "Invalid manifest."
+    }]
+  });
+
+  const report = await runDoctorDiagnostics(input, {
+    env: { OPENAI_API_KEY: "test-key" },
+    nodeVersion: "20.10.0",
+    stdinIsTTY: true,
+    stdoutIsTTY: true,
+    runCommand: fakeCommandRunner
+  });
+
+  const check = findCheck(report.checks, "provider.plugins");
+  assert.equal(check.status, "warn");
+  assert.match(check.summary, /connector plugin issue/);
+}
+
 function testFormatDoctorReportIncludesFixes() {
   const content = formatDoctorReport({
     generatedAt: "2026-05-13T00:00:00.000Z",
@@ -294,6 +320,7 @@ function createDoctorInput(
   overrides: {
     connection?: ConnectionConfigState;
     settings?: SessionSettingsState;
+    providerPluginDiagnostics?: DoctorRuntimeInput["providerPluginDiagnostics"];
     snapshotDiagnostics?: DoctorRuntimeInput["snapshotDiagnostics"];
   } = {}
 ): DoctorRuntimeInput {
@@ -311,6 +338,7 @@ function createDoctorInput(
     hasConnectionConfig: connectionState.effective.apiKey.trim().length > 0,
     allowedRoots: [workspaceRoot],
     requestPatchCount: 0,
+    providerPluginDiagnostics: overrides.providerPluginDiagnostics,
     snapshotDiagnostics: overrides.snapshotDiagnostics ?? createSnapshotDiagnostics(workspaceRoot)
   };
 }

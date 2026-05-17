@@ -23,6 +23,13 @@ async function runTests() {
   testBackgroundPanelOnlyShowsRunningNonAutoReviewerTasks();
   testBackgroundProcessCountOnlyIncludesRunningProcesses();
   testParseAutoReviewDecision();
+  await testSettingsCommandOpensSessionSettings();
+  await testConnectCommandOpensInteractiveDialog();
+  await testModelCommandOpensInteractiveDialog();
+  await testConnectDialogSubmissionAppliesProviderConnection();
+  await testConnectDialogOAuthFlowAppliesProviderAuth();
+  testConnectDialogCancelClearsPendingProviderAuth();
+  await testModelDialogSelectionSwitchesModel();
   await testProcessCommandsRouteThroughController();
   await testWaitForUiPaintYieldsToMacrotask();
   console.log("sessionController tests passed");
@@ -165,6 +172,202 @@ function testParseAutoReviewDecision() {
   assert.equal(parse("not json"), null);
 }
 
+async function testSettingsCommandOpensSessionSettings() {
+  const runtime = createRuntimeStub({});
+  const store = createTerminalUiStore(createInitialState());
+  const controller = createSessionController(runtime, store);
+
+  await controller.submit("/settings");
+
+  const dialog = store.getState().dialogQueue[0];
+  assert.equal(dialog?.type, "settings");
+  assert.equal(dialog?.type === "settings" ? dialog.section : "", "session");
+}
+
+async function testConnectCommandOpensInteractiveDialog() {
+  const runtime = createRuntimeStub({});
+  const store = createTerminalUiStore(createInitialState());
+  const controller = createSessionController(runtime, store);
+
+  await controller.submit("/connect");
+
+  assert.equal(store.getState().dialogQueue[0]?.type, "connect-provider");
+}
+
+async function testModelCommandOpensInteractiveDialog() {
+  let refreshCalled = false;
+  const runtime = createRuntimeStub({
+    refreshCurrentProviderModels: async () => {
+      refreshCalled = true;
+      return {
+        providerId: "openai",
+        providerLabel: "OpenAI",
+        models: {
+          "gpt-live": { label: "GPT Live" }
+        },
+        source: "live"
+      };
+    }
+  });
+  const store = createTerminalUiStore(createInitialState());
+  const controller = createSessionController(runtime, store);
+
+  await controller.submit("/model");
+
+  const dialog = store.getState().dialogQueue[0];
+  assert.equal(refreshCalled, true);
+  assert.equal(dialog?.type, "model-picker");
+  assert.equal(dialog?.type === "model-picker" ? dialog.state.status : "", "ready");
+  assert.equal(dialog?.type === "model-picker" ? dialog.state.source : "", "live");
+}
+
+async function testConnectDialogSubmissionAppliesProviderConnection() {
+  let connectionState = createInitialState().connectionState;
+  let appliedProviderId = "";
+  const runtime = createRuntimeStub({
+    getConnectionConfigState: () => connectionState,
+    applyProviderConnection: async (plan) => {
+      appliedProviderId = plan.providerId;
+      connectionState = {
+        ...connectionState,
+        effective: {
+          ...connectionState.effective,
+          model: plan.model
+        },
+        providerProfiles: {
+          ...connectionState.providerProfiles,
+          [plan.providerId]: {
+            ...connectionState.providerProfiles[plan.providerId]!,
+            ...(plan.apiKey ? { apiKey: plan.apiKey } : {})
+          }
+        }
+      };
+    },
+    getAuthStorePath: () => "C:\\Users\\Single\\.alyce\\auth.json"
+  });
+  const store = createTerminalUiStore(createInitialState());
+  const controller = createSessionController(runtime, store);
+  await controller.submit("/connect");
+
+  const result = await controller.connectProviderFromDialog("openrouter", ["router-key"]);
+
+  assert.equal(result.ok, true);
+  assert.equal(appliedProviderId, "openrouter");
+  assert.equal(store.getState().dialogQueue.length, 0);
+  assert.match(lastMessage(store.getState().messages)?.content ?? "", /Connected OpenRouter/);
+  assert.doesNotMatch(lastMessage(store.getState().messages)?.content ?? "", /router-key/);
+}
+
+async function testConnectDialogOAuthFlowAppliesProviderAuth() {
+  let completed = false;
+  const runtime = createRuntimeStub({
+    authorizeProviderAuth: async () => ({
+      type: "flow",
+      flow: {
+        method: "auto",
+        url: "https://github.com/login/device",
+        instructions: "Enter code: ABCD-1234",
+        callback: async () => ({
+          type: "oauth",
+          accessToken: "secret-token"
+        })
+      }
+    }),
+    completeProviderAuth: async (providerId) => {
+      completed = true;
+      return {
+        providerId,
+        model: `${providerId}/gpt-5.2`
+      };
+    }
+  });
+  const store = createTerminalUiStore(createInitialState());
+  const controller = createSessionController(runtime, store);
+  await controller.submit("/connect");
+
+  const started = await controller.authorizeProviderAuthFromDialog("github-copilot", 0, {
+    deploymentType: "github.com"
+  });
+  const finished = await controller.completeProviderAuthFromDialog("github-copilot", 0);
+
+  assert.equal(started.ok, true);
+  assert.equal(started.ok ? started.type : "", "flow");
+  assert.equal(finished.ok, true);
+  assert.equal(completed, true);
+  assert.equal(store.getState().dialogQueue.length, 0);
+  assert.match(lastMessage(store.getState().messages)?.content ?? "", /Connected github-copilot/);
+  assert.doesNotMatch(lastMessage(store.getState().messages)?.content ?? "", /secret-token/);
+}
+
+function testConnectDialogCancelClearsPendingProviderAuth() {
+  let clearedProvider = "";
+  const runtime = createRuntimeStub({
+    clearProviderAuthFlow: (providerId) => {
+      clearedProvider = providerId ?? "";
+    }
+  });
+  const store = createTerminalUiStore(createInitialState());
+  const controller = createSessionController(runtime, store);
+
+  controller.cancelProviderAuthFromDialog("github-copilot", 0);
+
+  assert.equal(clearedProvider, "github-copilot");
+}
+
+async function testModelDialogSelectionSwitchesModel() {
+  let connectionState = {
+    ...createInitialState().connectionState,
+    effective: {
+      apiKey: "key",
+      baseURL: "https://api.githubcopilot.com",
+      model: "github-copilot/gpt-5.2"
+    },
+    providerProfiles: {
+      "github-copilot": {
+        id: "github-copilot",
+        label: "GitHub Copilot",
+        kind: "openai-compatible" as const,
+        apiKey: "copilot-token",
+        baseURL: "https://api.githubcopilot.com",
+        defaultModel: "gpt-5.2",
+        models: {
+          "gpt-5.2": {},
+          "claude-sonnet-4.5": {}
+        }
+      }
+    }
+  };
+  let selectedModel = "";
+  const runtime = createRuntimeStub({
+    getConnectionConfigState: () => connectionState,
+    getCurrentModel: () => connectionState.effective.model,
+    setCurrentModel: async (model) => {
+      selectedModel = model;
+      connectionState = {
+        ...connectionState,
+        effective: {
+          ...connectionState.effective,
+          model
+        }
+      };
+    }
+  });
+  const store = createTerminalUiStore({
+    ...createInitialState(),
+    connectionState,
+    connection: connectionState.effective
+  });
+  const controller = createSessionController(runtime, store);
+  await controller.submit("/model");
+
+  const result = await controller.switchModelFromDialog("github-copilot/claude-sonnet-4.5");
+
+  assert.equal(result.ok, true);
+  assert.equal(selectedModel, "github-copilot/claude-sonnet-4.5");
+  assert.equal(store.getState().dialogQueue.length, 0);
+  assert.match(lastMessage(store.getState().messages)?.content ?? "", /Switched model to: github-copilot\/claude-sonnet-4\.5/);
+}
+
 async function testProcessCommandsRouteThroughController() {
   const runningProcess = createBackgroundProcessRecord({ status: "running" });
   const startingProcess = createBackgroundProcessRecord({ id: "bg_starting", status: "starting" });
@@ -220,17 +423,73 @@ async function testWaitForUiPaintYieldsToMacrotask() {
   assert.equal(settled, true);
 }
 
-function createRuntimeStub(overrides: {
+function createRuntimeStub(overrides: Partial<{
+  getCurrentModel: SessionRuntime["getCurrentModel"];
+  getResolvedModelProfile: SessionRuntime["getResolvedModelProfile"];
+  getConnectionConfigState: SessionRuntime["getConnectionConfigState"];
+  refreshCurrentProviderModels: SessionRuntime["refreshCurrentProviderModels"];
+  setCurrentModel: SessionRuntime["setCurrentModel"];
+  applyProviderConnection: SessionRuntime["applyProviderConnection"];
+  authorizeProviderAuth: SessionRuntime["authorizeProviderAuth"];
+  completeProviderAuth: SessionRuntime["completeProviderAuth"];
+  clearProviderAuthFlow: SessionRuntime["clearProviderAuthFlow"];
+  getAuthStorePath: SessionRuntime["getAuthStorePath"];
   listBackgroundProcesses: SessionRuntime["listBackgroundProcesses"];
   stopBackgroundProcess: SessionRuntime["stopBackgroundProcess"];
-}): SessionRuntime {
+}>): SessionRuntime {
   const settings = createSettingsState().effective;
+  const connectionState = createInitialState().connectionState;
   return {
     getSettings: () => settings,
     getPlanModeState: () => ({ enabled: false }),
+    getCurrentModel: overrides.getCurrentModel ?? (() => connectionState.effective.model),
+    getResolvedModelProfile: overrides.getResolvedModelProfile ?? (() => ({
+      providerId: "openai",
+      modelId: "gpt-5.2",
+      modelRef: { providerId: "openai", modelId: "gpt-5.2" },
+      label: "gpt-5.2",
+      provider: {
+        id: "openai",
+        label: "OpenAI",
+        kind: "openai",
+        apiKey: "key",
+        baseURL: "https://api.openai.com/v1"
+      },
+      kind: "openai",
+      apiKey: "key",
+      baseURL: "https://api.openai.com/v1",
+      contextWindow: 400_000,
+      contextWindowSource: "fallback",
+      contextWindowLabel: "fallback"
+    })),
+    getConnectionConfigState: overrides.getConnectionConfigState ?? (() => connectionState),
+    refreshCurrentProviderModels: overrides.refreshCurrentProviderModels ?? (async () => ({
+      providerId: "openai",
+      providerLabel: "OpenAI",
+      models: {},
+      source: "fallback"
+    })),
+    setCurrentModel: overrides.setCurrentModel ?? (async () => undefined),
+    getProviderAuthRecords: () => ({}),
+    applyProviderConnection: overrides.applyProviderConnection ?? (async () => undefined),
+    authorizeProviderAuth: overrides.authorizeProviderAuth ?? (async (providerId) => ({
+      type: "stored",
+      providerId,
+      model: `${providerId}/model`
+    })),
+    completeProviderAuth: overrides.completeProviderAuth ?? (async (providerId) => ({
+      providerId,
+      model: `${providerId}/model`
+    })),
+    clearProviderAuthFlow: overrides.clearProviderAuthFlow ?? (() => undefined),
+    getAuthStorePath: overrides.getAuthStorePath ?? (() => "C:\\Users\\Single\\.alyce\\auth.json"),
     listSubagentTasks: () => [],
-    listBackgroundProcesses: overrides.listBackgroundProcesses,
-    stopBackgroundProcess: overrides.stopBackgroundProcess,
+    listBackgroundProcesses: overrides.listBackgroundProcesses ?? (() => []),
+    stopBackgroundProcess: overrides.stopBackgroundProcess ?? (async () => ({
+      processId: "bg_test",
+      status: "not_found",
+      message: "Background process not found."
+    })),
     stopAllBackgroundProcesses: async () => [],
     listPtySessions: () => [],
     closeAllPtySessions: () => [],

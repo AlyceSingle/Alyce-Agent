@@ -57,6 +57,14 @@ export type SettingsSection = "connection" | "session";
 
 export type RewindRestoreMode = "conversation" | "code-and-conversation";
 
+export interface ModelPickerDialogState {
+  status: "loading" | "ready";
+  providerId: string;
+  providerLabel: string;
+  source?: "live" | "fallback";
+  error?: string;
+}
+
 export interface TerminalUiRewindPoint {
   id: string;
   input: string;
@@ -85,6 +93,8 @@ export type ActiveDialog =
   | { type: "question"; layer: "overlay"; request: AskUserQuestionRequest }
   | { type: "settings"; layer: "overlay"; section: SettingsSection; reason?: string }
   | { type: "permissions"; layer: "overlay" }
+  | { type: "connect-provider"; layer: "modal" }
+  | { type: "model-picker"; layer: "modal"; state: ModelPickerDialogState }
   | { type: "session-picker"; layer: "modal"; sessions: SessionHistoryListItem[] }
   | { type: "rewind-picker"; layer: "overlay"; points: TerminalUiRewindPoint[] };
 

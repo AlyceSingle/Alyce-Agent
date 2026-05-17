@@ -1,6 +1,6 @@
 import type OpenAI from "openai";
 import type { ResolvedModelProfile } from "../providers/types.js";
-import { createOpenAICompatibleAdapter } from "./openaiCompatibleAdapter.js";
+import { resolveModelAdapterFactory } from "./adapterRegistry.js";
 
 export type ChatCreateParams = OpenAI.Chat.Completions.ChatCompletionCreateParamsNonStreaming;
 
@@ -25,47 +25,22 @@ export interface ModelAdapterAvailability {
 }
 
 export function createModelAdapter(resolvedModel: ResolvedModelProfile): ChatCompletionAdapter {
-  const availability = getModelAdapterAvailability(resolvedModel);
+  const factory = resolveModelAdapterFactory(resolvedModel);
+  const availability = factory.availability(resolvedModel);
   if (!availability.available) {
     throw new Error(
       availability.reason ?? `Provider '${resolvedModel.providerId}' is not available.`
     );
   }
 
-  return createOpenAICompatibleAdapter(resolvedModel);
+  return factory.create(resolvedModel);
 }
 
 export function getModelAdapterAvailability(
   resolvedModel: ResolvedModelProfile
 ): ModelAdapterAvailability {
-  if (resolvedModel.kind === "local" && !resolvedModel.baseURL) {
-    return {
-      available: false,
-      reason: `Provider '${resolvedModel.providerId}' is local and requires a baseURL for its OpenAI-compatible endpoint.`
-    };
-  }
-
-  if (
-    (resolvedModel.kind === "anthropic" || resolvedModel.kind === "google") &&
-    !resolvedModel.baseURL
-  ) {
-    return {
-      available: false,
-      reason: `Provider '${resolvedModel.providerId}' is configured as '${resolvedModel.kind}', but Alyce currently only supports it through an OpenAI-compatible baseURL.`
-    };
-  }
-
-  if (!resolvedModel.apiKey && resolvedModel.kind !== "local") {
-    const envHint = resolvedModel.apiKeyEnv ? ` or set ${resolvedModel.apiKeyEnv}` : "";
-    return {
-      available: false,
-      reason: `Provider '${resolvedModel.providerId}' is missing an API key. Configure apiKey${envHint}.`
-    };
-  }
-
-  return {
-    available: true
-  };
+  const factory = resolveModelAdapterFactory(resolvedModel);
+  return factory.availability(resolvedModel);
 }
 
 export function isChatCompletionAdapter(

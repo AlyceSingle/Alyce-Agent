@@ -12,15 +12,15 @@ Alyce 的配置采用分层加载机制，优先级从高到低排列如下（�
 
 ### 连接配置（API Key、Base URL、Model、Provider）
 1. **命令行参数**（启动时传入）。
-2. **环境变量**（`.env` 文件）。
+2. **用户级配置**（`~/.alyce/config.json`）。
 3. **项目级配置**（`./.alyce/config.json`）。
-4. **用户级配置**（`~/.alyce/config.json`）。
+4. **环境变量**（旧版 `OPENAI_*` 启动默认值）。
 
 ### 会话设置（角色、记忆、审批等）
 1. **命令行参数**。
 2. **环境变量**。
-3. **项目级设置**（`./.alyce/settings.json`）。
-4. **用户级设置**（`~/.alyce/settings.json`）。
+3. **用户级设置**（`~/.alyce/settings.json`）。
+4. **项目级设置**（`./.alyce/settings.json`）。
 
 ## 环境变量说明
 
@@ -41,15 +41,32 @@ Alyce 可以在不安装 VS Code 插件的情况下接收显式编辑器上下�
 - `OPENAI_BASE_URL`：API 接口地址。
 - `OPENAI_MODEL`：使用的模型标识符。
 
-保存到 `./.alyce/config.json` 或 `~/.alyce/config.json` 的连接配置会覆盖这些启动默认值。旧格式仍然有效：
+保存到 `./.alyce/config.json` 或 `~/.alyce/config.json` 的连接配置会覆盖这些启动默认值。旧版内联 `apiKey` 格式仍会兼容读取，但真实 token 优先使用 `OPENAI_API_KEY`、`/connect` 或 provider `apiKeyEnv`。
 
 ```json
 {
-  "apiKey": "sk-...",
   "baseURL": "https://api.openai.com/v1",
   "model": "gpt-5.2"
 }
 ```
+
+### AuthStore 与 `/connect`
+
+可以用 `/connect` 保存常见 provider 凭据，不必手动编辑 `.env`。无参数的 `/connect` 会打开交互式 provider 选择器和遮罩凭据表单。当前内置 preset 包括 OpenAI、Anthropic、Google、OpenRouter、DeepSeek、Kimi、Qwen/DashScope、SiliconFlow、豆包/火山 Ark、通用本地端点、Ollama 和 LM Studio。
+
+高级/脚本用法仍可用：
+
+```text
+/connect <provider> <api-key> [model] [baseURL]
+/connect <local-provider> [baseURL] [model]
+/connect custom <provider-id> <baseURL> <model> <api-key> [label]
+```
+
+API-key preset：`openai`、`anthropic`、`google`、`openrouter`、`deepseek`、`kimi`、`qwen`、`siliconflow`、`doubao`。
+
+本地 preset：`local`、`ollama`、`lmstudio`。
+
+`/connect` 保存的 API key 会写入 `~/.alyce/auth.json`。当前模型会保存到用户连接配置；custom/local provider profile 会保存为不带 `apiKey` 的配置。`/logout <provider>` 只删除 AuthStore 里的凭据，不会删除 provider profile 或当前模型。
 
 也可以在同一配置文件的 `providers` 下声明 provider profile，并使用 `provider/model` 引用模型。裸 `/model gpt-5.2` 会沿用当前 provider。
 
@@ -81,9 +98,37 @@ Alyce 可以在不安装 VS Code 插件的情况下接收显式编辑器上下�
 }
 ```
 
-在 Alyce 中运行 `/model` 或 `/models` 可以查看当前 provider/model、provider 可用性、已知模型和切换示例。目前所有已配置 provider 都通过 OpenAI-compatible adapter 发送请求；原生 Anthropic/Google adapter 还未加入，需配置兼容 `baseURL`。
+在 Alyce 中运行 `/model` 会刷新当前 provider 的模型列表，并打开该 provider 的模型选择器；运行 `/models` 或 `/model list` 可以查看当前 provider/model、provider auth 状态、provider 可用性、已知模型和切换示例。OpenAI-compatible provider 继续走共享兼容 adapter。Anthropic 和 Google 在没有配置兼容 `baseURL` 时走原生 adapter；如果提供 `baseURL`，则回退到 OpenAI-compatible adapter。
+
+内置 preset 默认值：
+
+| Provider | `apiKeyEnv` | Base URL | 默认模型 |
+|---|---|---|---|
+| `openai` | `OPENAI_API_KEY` | `https://api.openai.com/v1` | `gpt-4.1-mini` |
+| `anthropic` | `ANTHROPIC_API_KEY` | 原生 Messages API | `claude-sonnet-4.6` |
+| `google` | `GOOGLE_API_KEY` | 原生 Gemini API | `gemini-3-flash` |
+| `openrouter` | `OPENROUTER_API_KEY` | `https://openrouter.ai/api/v1` | `openai/gpt-5.2` |
+| `deepseek` | `DEEPSEEK_API_KEY` | `https://api.deepseek.com/v1` | `deepseek-chat` |
+| `kimi` | `MOONSHOT_API_KEY` | `https://api.moonshot.ai/v1` | `kimi-k2.6` |
+| `qwen` | `DASHSCOPE_API_KEY` | `https://dashscope.aliyuncs.com/compatible-mode/v1` | `qwen-plus` |
+| `siliconflow` | `SILICONFLOW_API_KEY` | `https://api.siliconflow.cn/v1` | `deepseek-ai/DeepSeek-V3` |
+| `doubao` | `ARK_API_KEY` | `https://ark.cn-beijing.volces.com/api/v3` | `doubao-seed-1-6-250615` |
+| `local` | 不需要 | 通过 `/connect` 配置 | `local-model` |
+| `ollama` | 不需要 | `http://127.0.0.1:11434/v1` | `llama3.1` |
+| `lmstudio` | 不需要 | `http://localhost:1234/v1` | `local-model` |
 
 模型可以在 `models` 里可选配置 `inputCostPerMillionTokens` 和 `outputCostPerMillionTokens`。`/usage` 只在两者都存在时估算成本；缺少价格元数据的模型只显示 tokens。
+
+### 实验连接器与 Provider 插件
+
+GitHub Copilot 和 Codex / ChatGPT 账号连接器会显示在 `/connect` 中，但仍标记为实验功能。这些连接器使用本机浏览器/device OAuth 风格流程，token 只保存在 `~/.alyce/auth.json`。不需要 Alyce 提供服务器、公网回调域名或证书。它们和稳定 API-key provider 隔离，因为账号登录流程可能随上游平台变化而失效。
+
+Alyce 也提供 JSON-only provider 插件边界：
+
+- 用户插件从 `~/.alyce/plugins/*/.alyce-plugin.json` 加载。
+- 项目插件会扫描 `./.alyce/plugins/*/.alyce-plugin.json`，但默认跳过；只有设置 `ALYCE_ENABLE_PROJECT_PROVIDER_PLUGINS=true` 才启用。
+- 插件 manifest 可以声明 provider profile，以及 API-key 或 well-known auth prompts。默认不允许执行 shell 命令。
+- 无效插件会进入 `/doctor` 诊断，不阻塞启动。
 
 ### 搜索与抓取（可选）
 - `AGENT_ADDITIONAL_DIRECTORIES`：工作区外的额外允许目录，使用系统路径分隔符分隔；Windows 是 `;`，Linux/macOS 是 `:`。
@@ -120,6 +165,9 @@ Alyce 可以在不安装 VS Code 插件的情况下接收显式编辑器上下�
 |---|---|
 | 项目连接配置 | `./.alyce/config.json` |
 | 用户连接配置 | `~/.alyce/config.json` |
+| 用户 provider 凭据 | `~/.alyce/auth.json` |
+| 用户 provider 插件 | `~/.alyce/plugins/*/.alyce-plugin.json` |
+| 项目 provider 插件 | `./.alyce/plugins/*/.alyce-plugin.json`（默认禁用） |
 | 项目会话设置 | `./.alyce/settings.json` |
 | 用户会话设置 | `~/.alyce/settings.json` |
 | 项目 MCP server | `./.alyce/mcp.json` |
@@ -127,7 +175,7 @@ Alyce 可以在不安装 VS Code 插件的情况下接收显式编辑器上下�
 | 用户技能 | `~/.alyce/skills/**/SKILL.md` |
 | MCP 二进制资源输出 | `./.alyce/mcp-output/` |
 
-`./` 开头的是项目级配置，只影响当前仓库；`~/` 开头的是用户级配置，对本机所有项目生效。请不要把包含密钥或本地运行状态的 `.alyce/` 提交到仓库。
+`./` 开头的是项目级配置，只影响当前仓库；`~/` 开头的是用户级配置，对本机所有项目生效。真实 provider token 应放在 `~/.alyce/auth.json` 或环境变量中，项目配置里优先只放 `apiKeyEnv`。
 
 也不要提交 `.env`、`~/.alyce/` 或生成的 `dist/`。`.alyce` 里可能有连接配置、权限规则、会话记录、记忆、MCP 输出和本地任务产物。
 

@@ -1,5 +1,6 @@
 import type { ConnectionConfigState, SessionSettings } from "../config/runtime.js";
 import { getModelAdapterAvailability } from "../core/api/modelAdapters.js";
+import type { ProviderAuthMap } from "../core/auth/authStore.js";
 import { formatModelRef, parseModelRef, resolveModelProfile } from "../core/providers/resolveModel.js";
 import type {
   ModelRef,
@@ -137,6 +138,7 @@ export function formatModelStatusReport(options: {
   settings: Pick<SessionSettings, "modelContextWindowOverrides">;
   currentModel: string;
   env?: NodeJS.ProcessEnv;
+  authRecords?: ProviderAuthMap;
 }): string {
   const currentDisplay = formatCurrentModelDisplay(options.currentModel);
   const lines = [
@@ -154,6 +156,7 @@ export function formatModelStatusReport(options: {
     lines.push(
       `- Provider: ${resolved.provider.label} (${resolved.providerId}, ${resolved.kind})`,
       `- Endpoint: ${resolved.baseURL ?? "OpenAI SDK default endpoint"}`,
+      `- Auth: ${formatProviderAuthStatus(resolved.provider, options)}`,
       `- Context window: ${formatTokenCount(resolved.contextWindow)} (${resolved.contextWindowSource}: ${resolved.contextWindowLabel})`,
       `- Status: ${availability.available ? "available" : availability.reason ?? "unavailable"}`
     );
@@ -170,7 +173,8 @@ export function formatModelStatusReport(options: {
       currentProviderId,
       providers: options.connectionState.providerProfiles,
       settings: options.settings,
-      env: options.env
+      env: options.env,
+      authRecords: options.authRecords
     }));
   }
 
@@ -192,6 +196,7 @@ function formatProviderLine(
     providers: ProviderProfileMap;
     settings: Pick<SessionSettings, "modelContextWindowOverrides">;
     env?: NodeJS.ProcessEnv;
+    authRecords?: ProviderAuthMap;
   }
 ): string {
   const models = Object.keys(provider.models ?? {});
@@ -209,7 +214,35 @@ function formatProviderLine(
       }, options)
     : "no default model";
 
-  return `- ${provider.id}${currentMarker}: ${provider.label} [${provider.kind}], default ${defaultModel ?? "(none)"}, ${availability}, models: ${modelSummary}`;
+  return `- ${provider.id}${currentMarker}: ${provider.label} [${provider.kind}], default ${defaultModel ?? "(none)"}, ${formatProviderAuthStatus(provider, options)}, ${availability}, models: ${modelSummary}`;
+}
+
+function formatProviderAuthStatus(
+  provider: ProviderProfile,
+  options: {
+    env?: NodeJS.ProcessEnv;
+    authRecords?: ProviderAuthMap;
+  }
+): string {
+  if (provider.kind === "local") {
+    return "auth: not required";
+  }
+
+  if (options.authRecords?.[provider.id]?.type === "api") {
+    return "auth: AuthStore";
+  }
+
+  if (provider.apiKey?.trim()) {
+    return "auth: config apiKey";
+  }
+
+  if (provider.apiKeyEnv) {
+    return options.env?.[provider.apiKeyEnv]?.trim()
+      ? `auth: env ${provider.apiKeyEnv}`
+      : `auth: missing ${provider.apiKeyEnv}`;
+  }
+
+  return "auth: missing apiKey";
 }
 
 function getModelAvailabilityLabel(

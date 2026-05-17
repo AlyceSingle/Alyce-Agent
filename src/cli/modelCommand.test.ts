@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import { buildConnectionConfigState, getRuntimePaths, type SessionSettings } from "../config/runtime.js";
+import { applyProviderAuthRecords } from "../core/auth/authStore.js";
 import type { ProviderProfileInputMap } from "../core/providers/registry.js";
 import {
   formatCurrentModelDisplay,
@@ -15,6 +16,8 @@ function runTests() {
   testUnknownProviderReportsCandidates();
   testUnavailableProviderDoesNotSwitch();
   testModelStatusReportListsProviders();
+  testModelStatusReportListsPresetFixHint();
+  testModelStatusReportShowsAuthStoreWithoutLeakingKey();
   testConnectionReadinessUsesResolvedProvider();
   testInvalidModelInputReturnsError();
   testInvalidCurrentModelDoesNotCrashStatusReport();
@@ -97,7 +100,7 @@ function testUnavailableProviderDoesNotSwitch() {
   });
 
   assert.equal(result.ok, false);
-  assert.match(result.ok ? "" : result.message, /OpenAI-compatible baseURL/);
+  assert.match(result.ok ? "" : result.message, /ANTHROPIC_API_KEY/);
 }
 
 function testModelStatusReportListsProviders() {
@@ -115,6 +118,58 @@ function testModelStatusReportListsProviders() {
   assert.match(report, /openai\/gpt-4\.1-mini/);
   assert.match(report, /Providers/);
   assert.match(report, /Switch examples/);
+}
+
+function testModelStatusReportListsPresetFixHint() {
+  const state = createConnectionState({
+    model: "deepseek/deepseek-chat"
+  });
+  const report = formatModelStatusReport({
+    connectionState: state,
+    settings: createSettings(),
+    currentModel: state.effective.model,
+    env: {}
+  });
+
+  assert.match(report, /deepseek current: DeepSeek/);
+  assert.match(report, /auth: missing DEEPSEEK_API_KEY/);
+  assert.match(report, /Configure apiKey or set DEEPSEEK_API_KEY/);
+}
+
+function testModelStatusReportShowsAuthStoreWithoutLeakingKey() {
+  const authRecords = {
+    openrouter: {
+      type: "api" as const,
+      apiKey: "secret-router-key",
+      updatedAt: new Date(0).toISOString()
+    }
+  };
+  const state = createConnectionState({
+    model: "openrouter/openai/gpt-5.2",
+    providers: {
+      openrouter: {
+        kind: "openrouter",
+        apiKeyEnv: "OPENROUTER_API_KEY",
+        baseURL: "https://openrouter.ai/api/v1",
+        defaultModel: "openai/gpt-5.2",
+        models: {
+          "openai/gpt-5.2": {}
+        }
+      }
+    }
+  });
+  const report = formatModelStatusReport({
+    connectionState: {
+      ...state,
+      providerProfiles: applyProviderAuthRecords(state.providerProfiles, authRecords)
+    },
+    settings: createSettings(),
+    currentModel: state.effective.model,
+    authRecords
+  });
+
+  assert.match(report, /auth: AuthStore/);
+  assert.doesNotMatch(report, /secret-router-key/);
 }
 
 function testConnectionReadinessUsesResolvedProvider() {

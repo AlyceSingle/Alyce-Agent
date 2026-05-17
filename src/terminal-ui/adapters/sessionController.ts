@@ -34,6 +34,10 @@ import {
   resolveModelSwitch
 } from "../../cli/modelCommand.js";
 import {
+  normalizeLogoutProvider,
+  resolveConnectProvider
+} from "../../cli/connectCommand.js";
+import {
   formatBackgroundProcessList,
   formatBackgroundProcessStopResult
 } from "../../cli/processCommand.js";
@@ -75,6 +79,8 @@ import {
   appendMessage,
   closeDialog,
   getActiveDialog,
+  openConnectProviderDialog,
+  openModelPickerDialog,
   openPermissionDialog,
   openPermissionsDialog,
   openQuestionDialog,
@@ -96,7 +102,8 @@ import {
   setSessionSettingsState,
   setStatusText,
   setTodos,
-  setTranscriptSticky
+  setTranscriptSticky,
+  updateModelPickerDialogState
 } from "../state/actions.js";
 import type { TerminalUiStore } from "../state/store.js";
 import type {
@@ -104,6 +111,7 @@ import type {
   RewindRestoreMode,
   SettingsSection,
   TerminalUiMessage,
+  ModelPickerDialogState,
   TerminalUiRewindPoint,
   TerminalUiTaskSummary
 } from "../state/types.js";
@@ -282,6 +290,24 @@ export interface SessionController {
   openSettings: (section?: SettingsSection, reason?: string) => void;
   setApprovalMode: (mode: ApprovalMode) => Promise<void>;
   closeDialog: () => void;
+  connectProviderFromDialog: (provider: string, args: string[]) => Promise<{ ok: true } | { ok: false; message: string }>;
+  switchModelFromDialog: (model: string) => Promise<{ ok: true } | { ok: false; message: string }>;
+  authorizeProviderAuthFromDialog: (
+    provider: string,
+    methodIndex: number,
+    inputs: Record<string, string>
+  ) => Promise<
+    | { ok: true; type: "stored" }
+    | { ok: true; type: "flow"; method: "auto" | "code"; url: string; instructions: string }
+    | { ok: false; message: string }
+  >;
+  completeProviderAuthFromDialog: (
+    provider: string,
+    methodIndex: number,
+    code?: string,
+    options?: { signal?: AbortSignal }
+  ) => Promise<{ ok: true } | { ok: false; message: string }>;
+  cancelProviderAuthFromDialog: (provider: string, methodIndex: number) => void;
   resumeSession: (sessionId: string) => Promise<void>;
   saveConfig: (
     connectionPatch: Partial<ConnectionConfig>,
@@ -1810,6 +1836,231 @@ export function createSessionController(
     await confirmAndRestoreLatestTurn();
   };
 
+  const applyConnectProvider = async (
+    provider: string | undefined,
+    args: string[],
+    options: {
+      closeActiveDialog: boolean;
+      appendErrorMessage: boolean;
+    }
+  ): Promise<{ ok: true } | { ok: false; message: string }> => {
+    const result = resolveConnectProvider(provider, args, {
+      connectionState: runtime.getConnectionConfigState()
+    });
+    if (!result.ok) {
+      const message = [result.message, ...result.suggestions].filter(Boolean).join("\n");
+      if (options.appendErrorMessage) {
+        appendUiMessage(createErrorMessage(message));
+      }
+      return { ok: false, message };
+    }
+
+    try {
+      await runtime.applyProviderConnection(result.plan);
+      store.updateState((state) => {
+        const nextState = setConnectionConfigState(
+          setStatusText(state, "Idle"),
+          runtime.getConnectionConfigState()
+        );
+        return options.closeActiveDialog ? closeDialog(nextState) : nextState;
+      });
+      appendUiMessage(
+        createSystemMessage(
+          [
+            result.plan.summary,
+            ...result.plan.details,
+            `Auth file: ${runtime.getAuthStorePath()}`
+          ].join("\n"),
+          "Connect"
+        )
+      );
+      return { ok: true };
+    } catch (error) {
+      const message = `Connect failed: ${getErrorMessage(error)}`;
+      if (options.appendErrorMessage) {
+        appendUiMessage(createErrorMessage(message));
+      }
+      store.updateState((state) => setStatusText(state, "Error"));
+      return { ok: false, message };
+    }
+  };
+
+  const finishProviderAuthDialogConnection = (
+    providerId: string,
+    model: string,
+    closeActiveDialog: boolean
+  ) => {
+    store.updateState((state) => {
+      const nextState = setConnectionConfigState(
+        setStatusText(state, "Idle"),
+        runtime.getConnectionConfigState()
+      );
+      return closeActiveDialog ? closeDialog(nextState) : nextState;
+    });
+    appendUiMessage(
+      createSystemMessage(
+        [
+          `Connected ${providerId}.`,
+          `Current model: ${model}`,
+          `Auth file: ${runtime.getAuthStorePath()}`
+        ].join("\n"),
+        "Connect"
+      )
+    );
+  };
+
+  const authorizeProviderAuthFromDialog = async (
+    provider: string,
+    methodIndex: number,
+    inputs: Record<string, string>
+  ): Promise<
+    | { ok: true; type: "stored" }
+    | { ok: true; type: "flow"; method: "auto" | "code"; url: string; instructions: string }
+    | { ok: false; message: string }
+  > => {
+    try {
+      const result = await runtime.authorizeProviderAuth(provider, methodIndex, inputs);
+      if (result.type === "flow") {
+        store.updateState((state) => setStatusText(state, "Waiting for provider authorization"));
+        return {
+          ok: true,
+          type: "flow",
+          method: result.flow.method,
+          url: result.flow.url,
+          instructions: result.flow.instructions
+        };
+      }
+
+      finishProviderAuthDialogConnection(result.providerId, result.model, true);
+      return { ok: true, type: "stored" };
+    } catch (error) {
+      const message = `Connect failed: ${getErrorMessage(error)}`;
+      store.updateState((state) => setStatusText(state, "Error"));
+      return { ok: false, message };
+    }
+  };
+
+  const completeProviderAuthFromDialog = async (
+    provider: string,
+    methodIndex: number,
+    code?: string,
+    options: { signal?: AbortSignal } = {}
+  ): Promise<{ ok: true } | { ok: false; message: string }> => {
+    try {
+      const result = await runtime.completeProviderAuth(provider, methodIndex, code, options);
+      finishProviderAuthDialogConnection(result.providerId, result.model, true);
+      return { ok: true };
+    } catch (error) {
+      const message = `Connect failed: ${getErrorMessage(error)}`;
+      store.updateState((state) => setStatusText(state, "Error"));
+      return { ok: false, message };
+    }
+  };
+
+  const cancelProviderAuthFromDialog = (provider: string, _methodIndex: number) => {
+    runtime.clearProviderAuthFlow(provider);
+    store.updateState((state) => setStatusText(state, "Idle"));
+  };
+
+  const switchCurrentModel = async (
+    model: string,
+    options: {
+      closeActiveDialog: boolean;
+      appendErrorMessage: boolean;
+    }
+  ): Promise<{ ok: true } | { ok: false; message: string }> => {
+    const result = resolveModelSwitch(model, {
+      currentModel: runtime.getCurrentModel(),
+      providers: runtime.getConnectionConfigState().providerProfiles,
+      settings: runtime.getSettings(),
+      env: process.env
+    });
+    if (!result.ok) {
+      const message = [result.message, ...result.suggestions].filter(Boolean).join("\n");
+      if (options.appendErrorMessage) {
+        appendUiMessage(createErrorMessage(message));
+      }
+      return { ok: false, message };
+    }
+
+    try {
+      await runtime.setCurrentModel(result.persistModel);
+      store.updateState((state) => {
+        const nextState = setConnectionConfigState(
+          setStatusText(state, "Idle"),
+          runtime.getConnectionConfigState()
+        );
+        return options.closeActiveDialog ? closeDialog(nextState) : nextState;
+      });
+      appendUiMessage(
+        createSystemMessage(
+          [
+            `Switched model to: ${result.displayModel}`,
+            ...result.warnings
+          ].join("\n"),
+          "Model"
+        )
+      );
+      return { ok: true };
+    } catch (error) {
+      const message = `Model switch failed: ${getErrorMessage(error)}`;
+      if (options.appendErrorMessage) {
+        appendUiMessage(createErrorMessage(message));
+      }
+      store.updateState((state) => setStatusText(state, "Error"));
+      return { ok: false, message };
+    }
+  };
+
+  const createModelPickerLoadingState = (): ModelPickerDialogState => {
+    try {
+      const resolved = runtime.getResolvedModelProfile();
+      return {
+        status: "loading",
+        providerId: resolved.providerId,
+        providerLabel: resolved.provider.label
+      };
+    } catch {
+      const currentModel = runtime.getCurrentModel();
+      const providerId = currentModel.includes("/")
+        ? currentModel.slice(0, currentModel.indexOf("/")).trim() || "openai"
+        : "openai";
+      return {
+        status: "loading",
+        providerId,
+        providerLabel: providerId
+      };
+    }
+  };
+
+  const openModelPicker = async () => {
+    const loadingState = createModelPickerLoadingState();
+    store.updateState((state) =>
+      openModelPickerDialog(setStatusText(state, "Refreshing models..."), loadingState)
+    );
+
+    const result = await runtime.refreshCurrentProviderModels()
+      .catch((error: unknown) => ({
+        providerId: loadingState.providerId,
+        providerLabel: loadingState.providerLabel,
+        models: {},
+        source: "fallback" as const,
+        error: getErrorMessage(error)
+      }));
+    store.updateState((state) =>
+      updateModelPickerDialogState(
+        setConnectionConfigState(setStatusText(state, "Idle"), runtime.getConnectionConfigState()),
+        {
+          status: "ready",
+          providerId: result.providerId,
+          providerLabel: result.providerLabel,
+          source: result.source,
+          ...(result.error ? { error: result.error } : {})
+        }
+      )
+    );
+  };
+
   const handleCommand = async (
     parsedCommand: ReturnType<typeof parseReplCommand>
   ): Promise<boolean> => {
@@ -1828,12 +2079,61 @@ export function createSessionController(
     }
 
     if (parsedCommand.type === "open-settings") {
+      if (parsedCommand.section === "connection") {
+        store.updateState((state) => openConnectProviderDialog(state));
+        return true;
+      }
+
       store.updateState((state) => openSettingsDialog(state, parsedCommand.section));
       return true;
     }
 
     if (parsedCommand.type === "open-permissions") {
       store.updateState((state) => openPermissionsDialog(state));
+      return true;
+    }
+
+    if (parsedCommand.type === "connect-provider") {
+      if (!parsedCommand.provider && parsedCommand.args.length === 0) {
+        store.updateState((state) => openConnectProviderDialog(state));
+        return true;
+      }
+
+      await applyConnectProvider(parsedCommand.provider, parsedCommand.args, {
+        closeActiveDialog: false,
+        appendErrorMessage: true
+      });
+      return true;
+    }
+
+    if (parsedCommand.type === "logout-provider") {
+      const providerId = normalizeLogoutProvider(parsedCommand.provider);
+      if (!providerId) {
+        appendUiMessage(createErrorMessage("Missing provider. Use /logout <provider>."));
+        return true;
+      }
+
+      try {
+        const removed = await runtime.removeProviderAuth(providerId);
+        store.updateState((state) =>
+          setConnectionConfigState(setStatusText(state, "Idle"), runtime.getConnectionConfigState())
+        );
+        appendUiMessage(
+          createSystemMessage(
+            [
+              removed
+                ? `Removed AuthStore credential for provider '${providerId}'.`
+                : `No AuthStore credential was stored for provider '${providerId}'.`,
+              "Provider profiles and selected model were not changed.",
+              "If the provider still appears available, it may be using apiKey from config or apiKeyEnv from the environment."
+            ].join("\n"),
+            "Logout"
+          )
+        );
+      } catch (error) {
+        appendUiMessage(createErrorMessage(`Logout failed: ${getErrorMessage(error)}`));
+        store.updateState((state) => setStatusText(state, "Error"));
+      }
       return true;
     }
 
@@ -1855,6 +2155,7 @@ export function createSessionController(
         hasConnectionConfig: runtime.hasConnectionConfig(),
         allowedRoots: runtime.getAllowedRoots(),
         requestPatchCount: runtime.requestPatches.length,
+        providerPluginDiagnostics: runtime.config.providerPluginDiagnostics,
         snapshotDiagnostics
       }, {
         env: process.env,
@@ -2140,6 +2441,11 @@ export function createSessionController(
       return true;
     }
 
+    if (parsedCommand.type === "open-model-picker") {
+      await openModelPicker();
+      return true;
+    }
+
     if (parsedCommand.type === "model-view") {
       appendUiMessage(
         createSystemMessage(
@@ -2147,7 +2453,8 @@ export function createSessionController(
             connectionState: runtime.getConnectionConfigState(),
             settings: runtime.getSettings(),
             currentModel: runtime.getCurrentModel(),
-            env: process.env
+            env: process.env,
+            authRecords: runtime.getProviderAuthRecords()
           }),
           "Model"
         )
@@ -2156,32 +2463,10 @@ export function createSessionController(
     }
 
     if (parsedCommand.type === "switch-model") {
-      const result = resolveModelSwitch(parsedCommand.model, {
-        currentModel: runtime.getCurrentModel(),
-        providers: runtime.getConnectionConfigState().providerProfiles,
-        settings: runtime.getSettings(),
-        env: process.env
+      await switchCurrentModel(parsedCommand.model, {
+        closeActiveDialog: false,
+        appendErrorMessage: true
       });
-      if (!result.ok) {
-        appendUiMessage(
-          createErrorMessage(
-            [result.message, ...result.suggestions].filter(Boolean).join("\n")
-          )
-        );
-        return true;
-      }
-
-      await runtime.setCurrentModel(result.persistModel);
-      store.updateState((state) => setConnectionConfigState(state, runtime.getConnectionConfigState()));
-      appendUiMessage(
-        createSystemMessage(
-          [
-            `Switched model to: ${result.displayModel}`,
-            ...result.warnings
-          ].join("\n"),
-          "Model"
-        )
-      );
       return true;
     }
 
@@ -2205,7 +2490,7 @@ export function createSessionController(
             "Approval: " + sessionApprovalMode,
             runtime.hasConnectionConfig()
               ? "Connection: ready"
-              : "Connection: provider/model unavailable, open /settings or /setup"
+              : "Connection: provider/model unavailable, open /connect"
           ].join("\n"),
           "Startup"
         )
@@ -2216,7 +2501,7 @@ export function createSessionController(
 
       if (!runtime.hasConnectionConfig()) {
         store.updateState((state) =>
-          openSettingsDialog(state, "connection", "Connection setup is required before the first model request.")
+          openConnectProviderDialog(state)
         );
       }
 
@@ -2242,10 +2527,10 @@ export function createSessionController(
 
       if (!runtime.hasConnectionConfig()) {
         store.updateState((state) =>
-          openSettingsDialog(state, "connection", "Fill API key, URL, and model before sending a prompt.")
+          openConnectProviderDialog(state)
         );
         appendUiMessage(
-          createErrorMessage("Connection is incomplete. Open settings and fill provider/model details.")
+          createErrorMessage("Connection is incomplete. Run /connect and fill provider/model details.")
         );
         return;
       }
@@ -2642,6 +2927,11 @@ export function createSessionController(
       pendingQuestionResolver?.(response);
     },
     openSettings: (section = "session", reason) => {
+      if (section === "connection") {
+        store.updateState((state) => openConnectProviderDialog(state));
+        return;
+      }
+
       store.updateState((state) => openSettingsDialog(state, section, reason));
     },
     setApprovalMode: async (mode) => {
@@ -2662,6 +2952,19 @@ export function createSessionController(
 
       setDialogClosed();
     },
+    connectProviderFromDialog: async (provider, args) =>
+      applyConnectProvider(provider, args, {
+        closeActiveDialog: true,
+        appendErrorMessage: false
+      }),
+    switchModelFromDialog: async (model) =>
+      switchCurrentModel(model, {
+        closeActiveDialog: true,
+        appendErrorMessage: false
+      }),
+    authorizeProviderAuthFromDialog,
+    completeProviderAuthFromDialog,
+    cancelProviderAuthFromDialog,
     resumeSession: async (sessionId) => {
       await resumeSessionById(sessionId);
     },

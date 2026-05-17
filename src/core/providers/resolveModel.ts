@@ -97,6 +97,7 @@ export function resolveModelProfile(
     ...(apiKey ? { apiKey } : {}),
     ...(provider.apiKeyEnv ? { apiKeyEnv: provider.apiKeyEnv } : {}),
     ...(provider.baseURL ? { baseURL: provider.baseURL } : {}),
+    ...(provider.headers ? { headers: { ...provider.headers } } : {}),
     contextWindow: resolvedContextWindow.contextWindow,
     contextWindowSource: resolvedContextWindow.source,
     contextWindowLabel: resolvedContextWindow.label,

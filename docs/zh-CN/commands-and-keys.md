@@ -15,10 +15,10 @@
 | 命令 | 说明 |
 |---|---|
 | `/help` | 列出所有可用命令。 |
-| `/doctor` | 运行本地健康检查，包括 Node、TTY、工作区、连接配置、审批风险、MCP、技能、`rg`、`git`、`.alyce` 存储、snapshot 存储和请求 patch。 |
+| `/doctor` | 运行本地健康检查，包括 Node、TTY、工作区、连接配置、审批风险、MCP、技能、provider 插件、`rg`、`git`、`.alyce` 存储、snapshot 存储和请求 patch。 |
 | `/settings` | 打开设置面板。 |
 | `/permissions` | 打开四档审批和访问模式切换面板。 |
-| `/setup` | 启动首次配置引导。 |
+| `/setup` | `/connect` 的别名；打开 provider 选择器。 |
 | `/clear` | 清空当前对话上下文。 |
 | `/rewind` | 打开回退选择器，恢复到之前的输入状态。 |
 | `/exit` | 退出 Alyce。 |
@@ -70,9 +70,14 @@ Revert 的边界会明确显示：文件恢复只覆盖 Alyce 在写工具执行
 |---|---|
 | `/context` | 预览模型在下一轮对话中实际接收到的完整 Payload。 |
 | `/context <内容>` | 预览 Payload，并临时追加一段自定义上下文。 |
-| `/model` 或 `/models` | 查看当前 provider/model、已配置 provider、已知模型和切换示例。 |
+| `/connect` | 打开交互式 provider 选择器，再按步骤输入 API key、baseURL 和 model。secret 字段会遮罩。内置 preset 包括 OpenAI、Anthropic、Google、OpenRouter、DeepSeek、Kimi、Qwen、SiliconFlow、豆包、Ollama 和 LM Studio。 |
+| `/logout <provider>` | 删除 `~/.alyce/auth.json` 中的 provider 凭据，不删除 provider profile。 |
+| `/model` | 刷新当前 provider 的模型列表，并打开该 provider 的模型选择器。 |
+| `/models` 或 `/model list` | 查看当前 provider/model、已配置 provider、已知模型和切换示例。 |
 | `/model <名称>` | 在当前 provider 下切换模型（例如 `/model gpt-5.2`）。 |
 | `/model <provider>/<model>` | 切换到带 provider 的模型引用（例如 `/model openrouter/openai/gpt-5.2`）。 |
+
+高级/脚本用法仍可用：`/connect <provider> <api-key> [model] [baseURL]` 用于 API-key preset，`/connect <local-provider> [baseURL] [model]` 用于本地 preset，`/connect custom <provider-id> <baseURL> <model> <api-key> [label]` 用于自定义兼容端点。
 
 ### Usage
 
@@ -141,12 +146,10 @@ StatusBar 也会显示紧凑的后台任务计数：running、未读取的 compl
 
 按 `Ctrl+X` 进入设置界面后的操作方式：
 
-- **`Left` / `Right`**：在“连接”和“会话”标签页间切换。
 - **`Up` / `Down`**：在各配置项间移动。
 - **`Enter`**：编辑字段、切换开关或循环选择选项。
 - **`S`**：保存并应用所有更改。
 - **`Esc`**：放弃更改并退出设置。
-- **`P`**（仅限连接页）：切换保存范围（项目级 `./.alyce/` 或用户级 `~/.alyce/`）。
 
 ---
 

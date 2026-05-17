@@ -2,8 +2,11 @@ import assert from "node:assert/strict";
 import type { SessionSettingsState } from "../../config/runtime.js";
 import {
   createInitialTerminalUiState,
+  openConnectProviderDialog,
+  openModelPickerDialog,
   prependMessages,
-  setPlanModeEnabled
+  setPlanModeEnabled,
+  updateModelPickerDialogState
 } from "./actions.js";
 import type { TerminalUiMessage } from "./types.js";
 
@@ -95,6 +98,9 @@ function runTests() {
   testInitialStateDisablesPlanMode();
   testInitialStateUsesConnectionReadyOverride();
   testSetPlanModeEnabled();
+  testOpenConnectProviderDialog();
+  testOpenModelPickerDialog();
+  testUpdateModelPickerDialogState();
   testPrependMessagesAddsUniqueMessagesAtTop();
   testPrependMessagesPreservesSelectedMessage();
   console.log("actions tests passed");
@@ -163,6 +169,45 @@ function testSetPlanModeEnabled() {
 
   assert.equal(next.planModeEnabled, true);
   assert.equal(setPlanModeEnabled(next, true), next);
+}
+
+function testOpenConnectProviderDialog() {
+  const initial = createInitialState();
+  const next = openConnectProviderDialog(initial);
+
+  assert.equal(next.dialogQueue[0]?.type, "connect-provider");
+  assert.equal(next.dialogQueue[0]?.layer, "modal");
+}
+
+function testOpenModelPickerDialog() {
+  const initial = createInitialState();
+  const next = openModelPickerDialog(initial, {
+    status: "loading",
+    providerId: "openai",
+    providerLabel: "OpenAI"
+  });
+
+  assert.equal(next.dialogQueue[0]?.type, "model-picker");
+  assert.equal(next.dialogQueue[0]?.layer, "modal");
+  assert.equal(next.dialogQueue[0]?.type === "model-picker" ? next.dialogQueue[0].state.status : "", "loading");
+}
+
+function testUpdateModelPickerDialogState() {
+  const initial = openModelPickerDialog(createInitialState(), {
+    status: "loading",
+    providerId: "openai",
+    providerLabel: "OpenAI"
+  });
+
+  const next = updateModelPickerDialogState(initial, {
+    status: "ready",
+    providerId: "openai",
+    providerLabel: "OpenAI",
+    source: "live"
+  });
+
+  assert.equal(next.dialogQueue[0]?.type === "model-picker" ? next.dialogQueue[0].state.status : "", "ready");
+  assert.equal(next.dialogQueue[0]?.type === "model-picker" ? next.dialogQueue[0].state.source : "", "live");
 }
 
 function testPrependMessagesAddsUniqueMessagesAtTop() {

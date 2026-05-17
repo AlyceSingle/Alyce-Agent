@@ -13,6 +13,7 @@ async function runTests() {
   testSessionSettingsDefaultsIncludeScrollPerformanceSettings();
   testSessionSettingsNormalizesApprovalModes();
   testSessionSettingsClampsScrollSpeed();
+  await testRuntimeConfigLoadsUserConnectorPlugin();
   await testRuntimeConfigReadsScrollPerformanceEnv();
   await testRuntimeConfigReadsLegacyApprovalModes();
   await testRuntimeConfigMapsYoloToFullAccess();
@@ -40,12 +41,12 @@ async function loadRuntimeConfigForTest(
   return withTemporaryHome(() => loadRuntimeConfig(argv, env));
 }
 
-async function withTemporaryHome<T>(callback: () => Promise<T>): Promise<T> {
+async function withTemporaryHome<T>(callback: (homeDirectory: string) => Promise<T>): Promise<T> {
   const originalHomedir = os.homedir;
   const homeDirectory = await fs.mkdtemp(path.join(os.tmpdir(), "alyce-runtime-home-"));
   os.homedir = () => homeDirectory;
   try {
-    return await callback();
+    return await callback(homeDirectory);
   } finally {
     os.homedir = originalHomedir;
   }
@@ -100,6 +101,39 @@ function testSessionSettingsClampsScrollSpeed() {
 
   assert.equal(low.effective.scrollSpeed, 1);
   assert.equal(high.effective.scrollSpeed, 8);
+}
+
+async function testRuntimeConfigLoadsUserConnectorPlugin() {
+  const workspaceRoot = await fs.mkdtemp(path.join(os.tmpdir(), "alyce-runtime-config-plugin-"));
+  const config = await withTemporaryHome(async (homeDirectory) => {
+    const pluginDirectory = path.join(homeDirectory, ".alyce", "plugins", "acme");
+    await fs.mkdir(pluginDirectory, { recursive: true });
+    await fs.writeFile(
+      path.join(pluginDirectory, ".alyce-plugin.json"),
+      JSON.stringify({
+        version: 1,
+        id: "acme",
+        label: "Acme AI",
+        provider: {
+          baseURL: "https://api.acme.example/v1",
+          defaultModel: "acme-large",
+          models: {
+            "acme-large": {}
+          }
+        }
+      }),
+      "utf8"
+    );
+
+    return loadRuntimeConfig([], {
+      ...process.env,
+      AGENT_WORKSPACE: workspaceRoot
+    });
+  });
+
+  assert.ok(config.providerConnectors.some((connector) => connector.id === "acme"));
+  assert.equal(config.connectionState.providerProfiles.acme?.baseURL, "https://api.acme.example/v1");
+  assert.equal(config.providerPluginDiagnostics.length, 0);
 }
 
 async function testRuntimeConfigReadsScrollPerformanceEnv() {
@@ -225,9 +259,11 @@ async function testSessionSettingsSerializationIncludesScrollPerformanceSettings
     alyceDirectory: path.join(workspaceRoot, ".alyce"),
     connectionConfigPath: path.join(workspaceRoot, ".alyce", "config.json"),
     settingsConfigPath: path.join(workspaceRoot, ".alyce", "settings.json"),
+    projectPluginsDirectory: path.join(workspaceRoot, ".alyce", "plugins"),
     userAlyceDirectory: path.join(workspaceRoot, "user"),
     userConnectionConfigPath: path.join(workspaceRoot, "user", "config.json"),
-    userSettingsConfigPath: path.join(workspaceRoot, "user", "settings.json")
+    userSettingsConfigPath: path.join(workspaceRoot, "user", "settings.json"),
+    userPluginsDirectory: path.join(workspaceRoot, "user", "plugins")
   };
 
   await saveUserSessionSettings(paths, {

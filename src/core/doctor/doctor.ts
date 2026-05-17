@@ -10,6 +10,7 @@ import type {
   SessionSettingsState
 } from "../../config/runtime.js";
 import { getModelAdapterAvailability } from "../api/modelAdapters.js";
+import type { ConnectorPluginDiagnostic } from "../providers/pluginConnectors.js";
 import { resolveModelProfile } from "../providers/resolveModel.js";
 import type { ResolvedModelProfile } from "../providers/types.js";
 import { runNativeCommandWithTimeout } from "../../tools/internal/nativeCommandRunner.js";
@@ -42,6 +43,7 @@ export interface DoctorRuntimeInput {
   hasConnectionConfig: boolean;
   allowedRoots: string[];
   requestPatchCount: number;
+  providerPluginDiagnostics?: ConnectorPluginDiagnostic[];
   snapshotDiagnostics: DoctorSnapshotDiagnostics;
 }
 
@@ -104,6 +106,7 @@ export async function runDoctorDiagnostics(
   checks.push(checkApprovalRisk(input.settings, input.allowedRoots));
   checks.push(await checkMcpConfig(input.workspaceRoot));
   checks.push(await checkSkills(input.workspaceRoot));
+  checks.push(checkProviderPlugins(input.providerPluginDiagnostics ?? []));
   checks.push(await checkExecutable("rg", ["--version"], "ripgrep", "Install ripgrep and ensure rg is on PATH.", runCommand, "fail"));
   checks.push(await checkExecutable("git", ["--version"], "git", "Install Git and ensure git is on PATH.", runCommand, "warn"));
   checks.push(await checkAlyceDirectoryWritable(input.paths.alyceDirectory));
@@ -116,6 +119,41 @@ export async function runDoctorDiagnostics(
     checks,
     summary: summarizeChecks(checks)
   };
+}
+
+function checkProviderPlugins(diagnostics: ConnectorPluginDiagnostic[]): DoctorCheck {
+  const warnings = diagnostics.filter((diagnostic) => diagnostic.severity === "warning");
+  if (warnings.length > 0) {
+    return {
+      id: "provider.plugins",
+      title: "Provider plugins",
+      status: "warn",
+      summary: `${warnings.length} connector plugin issue(s) were found.`,
+      details: diagnostics.map(formatPluginDiagnostic),
+      suggestion: "Fix or remove invalid connector plugin manifests under ~/.alyce/plugins."
+    };
+  }
+
+  if (diagnostics.length > 0) {
+    return {
+      id: "provider.plugins",
+      title: "Provider plugins",
+      status: "skipped",
+      summary: "Connector plugins are present but no blocking issues were found.",
+      details: diagnostics.map(formatPluginDiagnostic)
+    };
+  }
+
+  return {
+    id: "provider.plugins",
+    title: "Provider plugins",
+    status: "ok",
+    summary: "No connector plugin issues found."
+  };
+}
+
+function formatPluginDiagnostic(diagnostic: ConnectorPluginDiagnostic): string {
+  return `${diagnostic.source}: ${diagnostic.pluginPath}: ${diagnostic.message}`;
 }
 
 export function formatDoctorReport(report: DoctorReport): string {
@@ -307,7 +345,7 @@ function checkConnection(
         `Effective model: ${connectionState.effective.model}`,
         `Configured providers: ${Object.keys(connectionState.providerProfiles).join(", ") || "(none)"}`
       ],
-      suggestion: "Run /setup or fix the provider profile in .alyce/config.json."
+      suggestion: "Run /connect or fix the provider profile in .alyce/config.json."
     };
   }
 
@@ -325,7 +363,7 @@ function checkConnection(
         `${apiKeyEnv} present: ${formatBoolean(Boolean(env[apiKeyEnv]?.trim()))}`,
         `Legacy API key source: ${connectionState.sources.apiKey}`
       ],
-      suggestion: "Run /setup, set the provider API key/baseURL, or save provider settings in .alyce/config.json."
+      suggestion: "Run /connect, set the provider API key/baseURL, or save provider settings in .alyce/config.json."
     };
   }
 
@@ -420,7 +458,7 @@ function checkEndpointAndModel(
         `Model source: ${connectionState.sources.model}`,
         `Base URL source: ${connectionState.sources.baseURL}`
       ],
-      suggestion: "Run /setup, set OPENAI_BASE_URL and OPENAI_MODEL, or save baseURL/model in Alyce connection settings."
+      suggestion: "Run /connect, set OPENAI_BASE_URL and OPENAI_MODEL, or save baseURL/model in a provider profile."
     };
   }
 

@@ -57,9 +57,8 @@ function testVisibleSlashSuggestionsAreCappedAndScrollable() {
 
 function testSlashCompletionRules() {
   const model = getSlashCommandSuggestions("/model")[0];
-  assert.equal(model?.completion, "/model ");
-  assert.equal(model ? shouldCompleteSlashCommandInput("/model", model) : false, true);
-  assert.equal(model ? shouldCompleteSlashCommandInput("/model ", model) : true, false);
+  assert.equal(model?.completion, "/model");
+  assert.equal(model ? shouldCompleteSlashCommandInput("/model", model) : true, false);
 
   const help = getSlashCommandSuggestions("/help")[0];
   assert.equal(help?.completion, "/help");
