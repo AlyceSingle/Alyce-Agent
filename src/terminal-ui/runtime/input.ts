@@ -1,4 +1,4 @@
-import { useEffect } from "react";
+import { useEffect, useLayoutEffect, useRef } from "react";
 import { useStdin } from "./ink.js";
 
 type InkInputEvent = {
@@ -50,9 +50,19 @@ type Options = {
 
 export function useTerminalInput(inputHandler: InputHandler, options: Options = {}) {
   const { setRawMode, internal_eventEmitter, internal_exitOnCtrlC } = useStdin();
+  const isActive = options.isActive !== false;
+  const inputHandlerRef = useRef(inputHandler);
+  const isActiveRef = useRef(isActive);
+  const exitOnCtrlCRef = useRef(internal_exitOnCtrlC);
 
-  useEffect(() => {
-    if (options.isActive === false) {
+  useLayoutEffect(() => {
+    inputHandlerRef.current = inputHandler;
+    isActiveRef.current = isActive;
+    exitOnCtrlCRef.current = internal_exitOnCtrlC;
+  });
+
+  useLayoutEffect(() => {
+    if (!isActive) {
       return;
     }
 
@@ -60,14 +70,14 @@ export function useTerminalInput(inputHandler: InputHandler, options: Options = 
     return () => {
       setRawMode(false);
     };
-  }, [options.isActive, setRawMode]);
+  }, [isActive, setRawMode]);
 
   useEffect(() => {
-    if (options.isActive === false) {
-      return;
-    }
-
     const handleData = (event: InkInputEvent) => {
+      if (!isActiveRef.current) {
+        return;
+      }
+
       const keypress = event.keypress;
       const parsedKey = event.key;
       const key: TerminalKey = {
@@ -97,8 +107,8 @@ export function useTerminalInput(inputHandler: InputHandler, options: Options = 
 
       const input = event.input;
 
-      if (!(input === "c" && key.ctrl) || !internal_exitOnCtrlC) {
-        inputHandler(input, key);
+      if (!(input === "c" && key.ctrl) || !exitOnCtrlCRef.current) {
+        inputHandlerRef.current(input, key);
       }
     };
 
@@ -106,5 +116,5 @@ export function useTerminalInput(inputHandler: InputHandler, options: Options = 
     return () => {
       internal_eventEmitter.removeListener("input", handleData);
     };
-  }, [internal_eventEmitter, internal_exitOnCtrlC, inputHandler, options.isActive]);
+  }, [internal_eventEmitter]);
 }
