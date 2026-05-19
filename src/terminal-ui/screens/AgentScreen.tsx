@@ -62,6 +62,9 @@ const ConversationPane = React.memo(React.forwardRef<MessageListHandle, {
   const markdownRenderMaxChars = useTerminalUiSelector(
     (value) => value.settings.markdownRenderMaxChars
   );
+  const thinkingMessagesExpandedByDefault = useTerminalUiSelector(
+    (value) => value.settings.thinkingMessagesExpandedByDefault
+  );
   const assistantLabel = useTerminalUiSelector(
     (value) => resolveAssistantLabel(value.settings.personaPreset)
   );
@@ -75,6 +78,7 @@ const ConversationPane = React.memo(React.forwardRef<MessageListHandle, {
       markdownEnabled={markdownEnabled}
       markdownToolMessageRenderingEnabled={markdownToolMessageRenderingEnabled}
       markdownRenderMaxChars={markdownRenderMaxChars}
+      thinkingMessagesExpandedByDefault={thinkingMessagesExpandedByDefault}
       maxMessagesWithoutVirtualization={props.maxMessagesWithoutVirtualization}
       isLoading={props.isLoading}
       assistantLabel={assistantLabel}

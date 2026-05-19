@@ -29,6 +29,8 @@ function createTestContext(
 async function runTests() {
   await testInterruptedToolCallDoesNotLeaveUnansweredAssistantMessage();
   await testRejectedToolApprovalReturnsToolResultAndContinues();
+  await testToolCallAssistantContentIsNotThinking();
+  await testExplicitReasoningFieldIsThinking();
   await testUsageCallbackIncludesTurnMetadata();
   await testMcpStatusRefreshesToolsBeforeNextStep();
   await testToolSchemaRefreshFailureContinuesWithWarning();
@@ -102,6 +104,116 @@ async function testInterruptedToolCallDoesNotLeaveUnansweredAssistantMessage() {
   );
 
   assert.deepEqual(messages.map((message) => message.role), ["system", "user"]);
+}
+
+async function testToolCallAssistantContentIsNotThinking() {
+  const controller = new AbortController();
+  const messages: OpenAI.Chat.Completions.ChatCompletionMessageParam[] = [
+    {
+      role: "system",
+      content: "system"
+    },
+    {
+      role: "user",
+      content: "ask"
+    }
+  ];
+  let requestCount = 0;
+  const client = {
+    chat: {
+      completions: {
+        create: async () => {
+          requestCount += 1;
+          if (requestCount === 1) {
+            return {
+              choices: [{
+                message: {
+                  role: "assistant",
+                  content: "I will inspect package.json.",
+                  tool_calls: [{
+                    id: "call_1",
+                    type: "function",
+                    function: {
+                      name: "Read",
+                      arguments: JSON.stringify({ file_path: "package.json", limit: 1 })
+                    }
+                  }]
+                }
+              }]
+            };
+          }
+
+          return {
+            choices: [{
+              message: {
+                role: "assistant",
+                content: "done"
+              }
+            }]
+          };
+        }
+      }
+    }
+  } as unknown as OpenAI;
+  const thinkingEvents: string[] = [];
+
+  const reply = await runAgentTurn(client, messages, {
+    model: "gpt-test",
+    maxSteps: 2,
+    tools: [],
+    abortSignal: controller.signal,
+    context: createTestContext(controller.signal),
+    onThinking: (content) => {
+      thinkingEvents.push(content);
+    }
+  });
+
+  assert.equal(reply, "done");
+  assert.deepEqual(thinkingEvents, []);
+}
+
+async function testExplicitReasoningFieldIsThinking() {
+  const controller = new AbortController();
+  const messages: OpenAI.Chat.Completions.ChatCompletionMessageParam[] = [
+    {
+      role: "system",
+      content: "system"
+    },
+    {
+      role: "user",
+      content: "ask"
+    }
+  ];
+  const client = {
+    chat: {
+      completions: {
+        create: async () => ({
+          choices: [{
+            message: {
+              role: "assistant",
+              content: "answer",
+              reasoning_content: "reasoning summary"
+            }
+          }]
+        })
+      }
+    }
+  } as unknown as OpenAI;
+  const thinkingEvents: string[] = [];
+
+  const reply = await runAgentTurn(client, messages, {
+    model: "gpt-test",
+    maxSteps: 1,
+    tools: [],
+    abortSignal: controller.signal,
+    context: createTestContext(controller.signal),
+    onThinking: (content) => {
+      thinkingEvents.push(content);
+    }
+  });
+
+  assert.equal(reply, "answer");
+  assert.deepEqual(thinkingEvents, ["reasoning summary"]);
 }
 
 async function testUsageCallbackIncludesTurnMetadata() {

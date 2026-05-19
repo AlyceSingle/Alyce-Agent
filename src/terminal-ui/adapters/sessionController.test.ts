@@ -195,30 +195,32 @@ async function testConnectCommandOpensInteractiveDialog() {
 }
 
 async function testModelCommandOpensInteractiveDialog() {
-  let refreshCalled = false;
-  const runtime = createRuntimeStub({
-    refreshCurrentProviderModels: async () => {
-      refreshCalled = true;
-      return {
-        providerId: "openai",
-        providerLabel: "OpenAI",
-        models: {
-          "gpt-live": { label: "GPT Live" }
-        },
-        source: "live"
-      };
-    }
-  });
-  const store = createTerminalUiStore(createInitialState());
-  const controller = createSessionController(runtime, store);
+  for (const command of ["/model", "/models"]) {
+    let refreshCalled = false;
+    const runtime = createRuntimeStub({
+      refreshCurrentProviderModels: async () => {
+        refreshCalled = true;
+        return {
+          providerId: "openai",
+          providerLabel: "OpenAI",
+          models: {
+            "gpt-live": { label: "GPT Live" }
+          },
+          source: "live"
+        };
+      }
+    });
+    const store = createTerminalUiStore(createInitialState());
+    const controller = createSessionController(runtime, store);
 
-  await controller.submit("/model");
+    await controller.submit(command);
 
-  const dialog = store.getState().dialogQueue[0];
-  assert.equal(refreshCalled, true);
-  assert.equal(dialog?.type, "model-picker");
-  assert.equal(dialog?.type === "model-picker" ? dialog.state.status : "", "ready");
-  assert.equal(dialog?.type === "model-picker" ? dialog.state.source : "", "live");
+    const dialog = store.getState().dialogQueue[0];
+    assert.equal(refreshCalled, true);
+    assert.equal(dialog?.type, "model-picker");
+    assert.equal(dialog?.type === "model-picker" ? dialog.state.status : "", "ready");
+    assert.equal(dialog?.type === "model-picker" ? dialog.state.source : "", "live");
+  }
 }
 
 async function testConnectDialogSubmissionAppliesProviderConnection() {
@@ -562,6 +564,7 @@ function createSettingsState(): SessionSettingsState {
       markdownMessageRenderingEnabled: true,
       markdownToolMessageRenderingEnabled: true,
       markdownRenderMaxChars: 32_000,
+      thinkingMessagesExpandedByDefault: false,
       diagnosticsPendingTimeoutMs: 120_000,
       diagnosticsFailureThreshold: 3,
       diagnosticsFailureCooldownMs: 300_000,
@@ -598,6 +601,7 @@ function createSettingsState(): SessionSettingsState {
       markdownMessageRenderingEnabled: "default",
       markdownToolMessageRenderingEnabled: "default",
       markdownRenderMaxChars: "default",
+      thinkingMessagesExpandedByDefault: "default",
       diagnosticsPendingTimeoutMs: "default",
       diagnosticsFailureThreshold: "default",
       diagnosticsFailureCooldownMs: "default",

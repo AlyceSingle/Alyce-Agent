@@ -27,7 +27,11 @@ type UnknownRecord = Record<string, unknown>;
 const ASSISTANT_HISTORY_EXTENSION_KEYS = [
   "reasoning_content",
   "reasoning_text",
-  "reasoning"
+  "reasoning",
+  "reasoning_details",
+  "thinking_content",
+  "thinking_text",
+  "thinking"
 ] as const;
 
 // 单轮 Agent 执行采用“模型回复 -> 运行工具 -> 回填结果 -> 再次请求模型”的闭环。
@@ -119,7 +123,7 @@ export async function runAgentTurn(
       }
 
       const toolCalls = next.tool_calls ?? [];
-      const thinkingChunks = extractThinkingChunks(next, toolCalls.length > 0);
+      const thinkingChunks = extractThinkingChunks(next);
       for (const chunk of thinkingChunks) {
         options.onThinking?.(chunk);
       }
@@ -457,33 +461,30 @@ function extractAssistantReplyText(
 }
 
 function extractThinkingChunks(
-  message: OpenAI.Chat.Completions.ChatCompletionMessage,
-  hasToolCalls: boolean
+  message: OpenAI.Chat.Completions.ChatCompletionMessage
 ): string[] {
   const chunks: string[] = [];
-
-  // 部分模型会把“思考”混在 content、reasoning 或扩展字段里，这里统一兜底提取。
-  if (hasToolCalls && typeof message.content === "string") {
-    pushUniqueChunk(chunks, message.content);
-  }
 
   const extended = message as unknown as UnknownRecord;
   pushUniqueChunk(chunks, extended.reasoning_content);
   pushUniqueChunk(chunks, extended.reasoning_text);
-  pushUniqueChunk(chunks, extractReasoningFromObject(extended.reasoning));
+  pushUniqueChunk(chunks, extended.thinking_content);
+  pushUniqueChunk(chunks, extended.thinking_text);
+  collectReasoningChunks(chunks, extended.reasoning);
+  collectReasoningChunks(chunks, extended.reasoning_details);
+  collectReasoningChunks(chunks, extended.thinking);
 
   if (Array.isArray(extended.content)) {
-    // 兼容结构化 content block，把 reasoning/thinking block 内的文本统一抽出来。
+    // 兼容结构化 content block，只提取上游明确标记为 reasoning/thinking 的文本。
     for (const block of extended.content) {
       if (!block || typeof block !== "object") {
         continue;
       }
 
       const record = block as UnknownRecord;
-      const type = asString(record.type);
-      if (type === "reasoning" || type === "thinking") {
-        pushUniqueChunk(chunks, record.text);
-        pushUniqueChunk(chunks, record.content);
+      const type = asString(record.type)?.toLowerCase();
+      if (isReasoningBlockType(type) || record.thought === true) {
+        collectReasoningChunks(chunks, record);
       }
     }
   }
@@ -491,34 +492,45 @@ function extractThinkingChunks(
   return chunks;
 }
 
-function extractReasoningFromObject(value: unknown): string | undefined {
+function collectReasoningChunks(chunks: string[], value: unknown) {
+  if (typeof value === "string") {
+    pushUniqueChunk(chunks, value);
+    return;
+  }
+
+  if (Array.isArray(value)) {
+    for (const item of value) {
+      collectReasoningChunks(chunks, item);
+    }
+    return;
+  }
+
   if (!value || typeof value !== "object") {
-    return undefined;
+    return;
   }
 
   const record = value as UnknownRecord;
-  const direct = asString(record.content) ?? asString(record.text) ?? asString(record.summary);
-  if (direct) {
-    return direct;
-  }
+  pushUniqueChunk(chunks, record.text);
+  pushUniqueChunk(chunks, record.content);
+  pushUniqueChunk(chunks, record.summary);
+  pushUniqueChunk(chunks, record.thinking);
+  pushUniqueChunk(chunks, record.reasoning_content);
+  pushUniqueChunk(chunks, record.reasoning_text);
+  pushUniqueChunk(chunks, record.thinking_content);
+  pushUniqueChunk(chunks, record.thinking_text);
 
   if (Array.isArray(record.content)) {
-    const merged = record.content
-      .map((item) => {
-        if (!item || typeof item !== "object") {
-          return "";
-        }
-
-        const itemRecord = item as UnknownRecord;
-        return asString(itemRecord.text) ?? asString(itemRecord.content) ?? "";
-      })
-      .filter(Boolean)
-      .join("\n");
-
-    return merged.length > 0 ? merged : undefined;
+    collectReasoningChunks(chunks, record.content);
   }
+}
 
-  return undefined;
+function isReasoningBlockType(type: string | undefined) {
+  return type === "reasoning" ||
+    type === "thinking" ||
+    type === "reasoning_content" ||
+    type === "thinking_content" ||
+    type === "reasoning_summary" ||
+    type === "thinking_summary";
 }
 
 function pushUniqueChunk(chunks: string[], value: unknown) {

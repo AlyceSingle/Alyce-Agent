@@ -47,10 +47,24 @@ export function createChatCompletionResponse(options: {
   id: string;
   model: string;
   content: string;
+  reasoningContent?: string;
   finishReason: OpenAI.Chat.Completions.ChatCompletion.Choice["finish_reason"];
   toolCalls?: OpenAI.Chat.Completions.ChatCompletionMessageToolCall[];
   usage?: OpenAI.Completions.CompletionUsage;
 }): OpenAI.Chat.Completions.ChatCompletion {
+  const message: OpenAI.Chat.Completions.ChatCompletionMessage & Record<string, unknown> = {
+    role: "assistant",
+    content: options.content,
+    refusal: null,
+    ...(options.toolCalls && options.toolCalls.length > 0
+      ? { tool_calls: options.toolCalls }
+      : {})
+  };
+  const reasoningContent = options.reasoningContent?.trim();
+  if (reasoningContent) {
+    message.reasoning_content = reasoningContent;
+  }
+
   return {
     id: options.id,
     object: "chat.completion",
@@ -61,14 +75,7 @@ export function createChatCompletionResponse(options: {
         index: 0,
         finish_reason: options.finishReason,
         logprobs: null,
-        message: {
-          role: "assistant",
-          content: options.content,
-          refusal: null,
-          ...(options.toolCalls && options.toolCalls.length > 0
-            ? { tool_calls: options.toolCalls }
-            : {})
-        }
+        message
       }
     ],
     ...(options.usage ? { usage: options.usage } : {})

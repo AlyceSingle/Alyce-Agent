@@ -128,7 +128,7 @@ Provider profiles can be stored in `./.alyce/config.json` or `~/.alyce/config.js
 }
 ```
 
-Use `/model` to refresh the current provider's model list and open its model picker, or `/models`/`/model list` to see the current provider/model, provider auth status, provider availability, known models, and switch examples. OpenAI-compatible providers continue through the shared compatible adapter. Anthropic and Google use native adapters when no compatible `baseURL` is configured, and fall back to the compatible adapter when a `baseURL` is present.
+Use `/model` or `/models` to refresh the current provider's model list and open its model picker, or `/model list` to see the current provider/model, provider auth status, provider availability, known models, and switch examples. OpenAI-compatible providers continue through the shared compatible adapter. Anthropic and Google use native adapters when no compatible `baseURL` is configured, and fall back to the compatible adapter when a `baseURL` is present.
 
 Built-in preset defaults:
 

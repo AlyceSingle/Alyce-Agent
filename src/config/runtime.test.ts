@@ -60,6 +60,7 @@ function testSessionSettingsDefaultsIncludeScrollPerformanceSettings() {
   assert.equal(state.effective.scrollAccelerationEnabled, false);
   assert.equal(state.effective.historyPagingEnabled, false);
   assert.equal(state.effective.maxMessagesWithoutVirtualization, 200);
+  assert.equal(state.effective.thinkingMessagesExpandedByDefault, false);
   assert.equal(state.effective.diagnosticsPendingTimeoutMs, 120_000);
   assert.equal(state.effective.diagnosticsFailureThreshold, 3);
   assert.equal(state.effective.diagnosticsFailureCooldownMs, 300_000);
@@ -272,6 +273,7 @@ async function testSessionSettingsSerializationIncludesScrollPerformanceSettings
     scrollAccelerationEnabled: true,
     historyPagingEnabled: true,
     maxMessagesWithoutVirtualization: 90,
+    thinkingMessagesExpandedByDefault: true,
     diagnosticsPendingTimeoutMs: 50_000,
     diagnosticsFailureThreshold: 4,
     diagnosticsFailureCooldownMs: 70_000,
@@ -301,6 +303,7 @@ async function testSessionSettingsSerializationIncludesScrollPerformanceSettings
   assert.equal(raw.scrollAccelerationEnabled, true);
   assert.equal(raw.historyPagingEnabled, true);
   assert.equal(raw.maxMessagesWithoutVirtualization, 90);
+  assert.equal(raw.thinkingMessagesExpandedByDefault, true);
   assert.equal(raw.diagnosticsPendingTimeoutMs, 50_000);
   assert.equal(raw.diagnosticsFailureThreshold, 4);
   assert.equal(raw.diagnosticsFailureCooldownMs, 70_000);

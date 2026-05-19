@@ -10,7 +10,7 @@ import {
 } from "./nativeAdapterUtils.js";
 
 type GeminiPart =
-  | { text: string }
+  | { text: string; thought?: boolean }
   | { functionCall: { name: string; args: JsonRecord } }
   | { functionResponse: { name: string; response: JsonRecord } };
 
@@ -171,12 +171,17 @@ export function convertGoogleResponse(
   const content = asRecord(firstCandidate.content);
   const parts = Array.isArray(content.parts) ? content.parts : [];
   const textParts: string[] = [];
+  const reasoningParts: string[] = [];
   const toolCalls: OpenAI.Chat.Completions.ChatCompletionMessageToolCall[] = [];
 
   for (const [index, part] of parts.entries()) {
     const partRecord = asRecord(part);
     if (typeof partRecord.text === "string") {
-      textParts.push(partRecord.text);
+      if (partRecord.thought === true) {
+        reasoningParts.push(partRecord.text);
+      } else {
+        textParts.push(partRecord.text);
+      }
       continue;
     }
 
@@ -201,6 +206,7 @@ export function convertGoogleResponse(
     id: "gemini-generate-content",
     model: modelId,
     content: textParts.join("\n"),
+    reasoningContent: reasoningParts.join("\n"),
     finishReason: mapGoogleFinishReason(firstCandidate.finishReason),
     toolCalls,
     ...(inputTokens > 0 || outputTokens > 0 || totalTokens > 0

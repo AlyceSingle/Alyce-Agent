@@ -161,7 +161,7 @@ function testParserHandlesRepresentedCommands() {
   });
   assert.deepEqual(parseReplCommand("/model"), { type: "open-model-picker" });
   assert.deepEqual(parseReplCommand("/model list"), { type: "model-view" });
-  assert.deepEqual(parseReplCommand("/models"), { type: "model-view" });
+  assert.deepEqual(parseReplCommand("/models"), { type: "open-model-picker" });
   assert.deepEqual(parseReplCommand("/model openrouter/openai/gpt-5.2"), {
     type: "switch-model",
     model: "openrouter/openai/gpt-5.2"

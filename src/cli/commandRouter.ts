@@ -231,7 +231,7 @@ export const REPL_COMMAND_DEFINITIONS: ReplCommandDefinition[] = [
   {
     command: "/models",
     usage: "/models",
-    description: "List configured providers and models",
+    description: "Open model picker",
     completion: "/models"
   },
   {
@@ -568,11 +568,11 @@ export function parseReplCommand(input: string): ParsedCommand {
     };
   }
 
-  if (input === "/model") {
+  if (input === "/model" || input === "/models") {
     return { type: "open-model-picker" };
   }
 
-  if (input === "/model list" || input === "/models") {
+  if (input === "/model list") {
     return { type: "model-view" };
   }
 

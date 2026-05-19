@@ -87,6 +87,14 @@ export function resolveMessageRenderDecision(options: {
   }
 
   if (options.policy.markdownMessageKinds.has(options.message.kind)) {
+    if (!options.expanded && options.hasExpandablePreview) {
+      return {
+        mode: "sections",
+        live: false,
+        fallbackReason: "collapsed-preview"
+      };
+    }
+
     if (!isMarkdownWithinBudget(options.policy, options.markdownSource)) {
       return {
         mode: "sections",

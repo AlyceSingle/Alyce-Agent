@@ -51,16 +51,18 @@ async function testUpdateStructuredPatchUsesChangedFileLineNumbers() {
 
     assert.equal(result.structuredPatch.length, 1);
     assert.deepEqual(result.structuredPatch[0], {
-      oldStart: 3,
-      oldLines: 1,
-      newStart: 3,
-      newLines: 1,
+      oldStart: 2,
+      oldLines: 3,
+      newStart: 2,
+      newLines: 3,
       lines: [
         "--- notes.txt",
         "+++ notes.txt",
-        "@@ -3,1 +3,1 @@",
+        "@@ -2,3 +2,3 @@",
+        " two",
         "-three",
-        "+THREE"
+        "+THREE",
+        " four"
       ]
     });
   } finally {

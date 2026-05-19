@@ -96,6 +96,7 @@ export interface SessionSettings extends PromptOverrideConfig {
   markdownMessageRenderingEnabled: boolean;
   markdownToolMessageRenderingEnabled: boolean;
   markdownRenderMaxChars: number;
+  thinkingMessagesExpandedByDefault: boolean;
   diagnosticsPendingTimeoutMs: number;
   diagnosticsFailureThreshold: number;
   diagnosticsFailureCooldownMs: number;
@@ -224,6 +225,7 @@ const SessionSettingsFileSchema: z.ZodType<SessionSettingsFile> = z
     markdownMessageRenderingEnabled: z.boolean().optional(),
     markdownToolMessageRenderingEnabled: z.boolean().optional(),
     markdownRenderMaxChars: z.number().int().positive().optional(),
+    thinkingMessagesExpandedByDefault: z.boolean().optional(),
     // Accept and discard the removed status-bar usage setting.
     statusUsageDisplayEnabled: z.boolean().optional(),
     diagnosticsPendingTimeoutMs: z.number().int().positive().optional(),
@@ -769,6 +771,7 @@ function normalizeSessionSettings(
     markdownMessageRenderingEnabled: input.markdownMessageRenderingEnabled ?? true,
     markdownToolMessageRenderingEnabled: input.markdownToolMessageRenderingEnabled ?? true,
     markdownRenderMaxChars: clampPositiveInt(input.markdownRenderMaxChars, 32_000),
+    thinkingMessagesExpandedByDefault: input.thinkingMessagesExpandedByDefault ?? false,
     diagnosticsPendingTimeoutMs: clampPositiveInt(input.diagnosticsPendingTimeoutMs, 120_000),
     diagnosticsFailureThreshold: clampPositiveInt(input.diagnosticsFailureThreshold, 3),
     diagnosticsFailureCooldownMs: clampPositiveInt(input.diagnosticsFailureCooldownMs, 300_000),
@@ -817,6 +820,10 @@ function serializeSessionSettings(
         : undefined,
     markdownRenderMaxChars:
       "markdownRenderMaxChars" in settings ? settings.markdownRenderMaxChars : undefined,
+    thinkingMessagesExpandedByDefault:
+      "thinkingMessagesExpandedByDefault" in settings
+        ? settings.thinkingMessagesExpandedByDefault
+        : undefined,
     diagnosticsPendingTimeoutMs:
       "diagnosticsPendingTimeoutMs" in settings
         ? settings.diagnosticsPendingTimeoutMs

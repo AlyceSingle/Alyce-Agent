@@ -20,7 +20,7 @@ export function extractAssistantTextContent(value: unknown): string | undefined 
     }
 
     const record = part as UnknownRecord;
-    if (isReasoningBlockType(asString(record.type))) {
+    if (isReasoningBlockType(asString(record.type)) || record.thought === true) {
       return [];
     }
 
@@ -48,7 +48,13 @@ function normalizeAssistantText(value: string | undefined): string | undefined {
 }
 
 function isReasoningBlockType(type: string | undefined): boolean {
-  return type === "reasoning" || type === "thinking";
+  const normalized = type?.toLowerCase();
+  return normalized === "reasoning" ||
+    normalized === "thinking" ||
+    normalized === "reasoning_content" ||
+    normalized === "thinking_content" ||
+    normalized === "reasoning_summary" ||
+    normalized === "thinking_summary";
 }
 
 function asString(value: unknown): string | undefined {

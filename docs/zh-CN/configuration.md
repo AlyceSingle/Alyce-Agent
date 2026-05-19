@@ -98,7 +98,7 @@ API-key preset：`openai`、`anthropic`、`google`、`openrouter`、`deepseek`�
 }
 ```
 
-在 Alyce 中运行 `/model` 会刷新当前 provider 的模型列表，并打开该 provider 的模型选择器；运行 `/models` 或 `/model list` 可以查看当前 provider/model、provider auth 状态、provider 可用性、已知模型和切换示例。OpenAI-compatible provider 继续走共享兼容 adapter。Anthropic 和 Google 在没有配置兼容 `baseURL` 时走原生 adapter；如果提供 `baseURL`，则回退到 OpenAI-compatible adapter。
+在 Alyce 中运行 `/model` 或 `/models` 会刷新当前 provider 的模型列表，并打开该 provider 的模型选择器；运行 `/model list` 可以查看当前 provider/model、provider auth 状态、provider 可用性、已知模型和切换示例。OpenAI-compatible provider 继续走共享兼容 adapter。Anthropic 和 Google 在没有配置兼容 `baseURL` 时走原生 adapter；如果提供 `baseURL`，则回退到 OpenAI-compatible adapter。
 
 内置 preset 默认值：
 

@@ -70,7 +70,7 @@ copy .env.example .env
 - `OPENAI_BASE_URL`
 - `OPENAI_MODEL`
 
-You can also run `/connect` inside Alyce to open a provider picker and enter credentials in a masked form. Built-in presets cover OpenAI, Anthropic, Google, OpenRouter, DeepSeek, Kimi, Qwen, SiliconFlow, Doubao, Ollama, LM Studio, and custom OpenAI-compatible endpoints. `/connect` stores real provider tokens in `~/.alyce/auth.json`; provider profiles in `.alyce/config.json` or `~/.alyce/config.json` should normally use `apiKeyEnv` rather than inline keys. Switch models with `/model`; it refreshes and shows models for the current provider only. Run `/models` to inspect configured providers and auth status. `/model provider/model` still works as a quick text switch.
+You can also run `/connect` inside Alyce to open a provider picker and enter credentials in a masked form. Built-in presets cover OpenAI, Anthropic, Google, OpenRouter, DeepSeek, Kimi, Qwen, SiliconFlow, Doubao, Ollama, LM Studio, and custom OpenAI-compatible endpoints. `/connect` stores real provider tokens in `~/.alyce/auth.json`; provider profiles in `.alyce/config.json` or `~/.alyce/config.json` should normally use `apiKeyEnv` rather than inline keys. Switch models with `/model` or `/models`; both refresh and show models for the current provider only. Run `/model list` to inspect configured providers and auth status. `/model provider/model` still works as a quick text switch.
 
 Optional tuning includes `ALYCE_WEB_FETCH_CACHE_MAX_BYTES` (WebFetch cache budget), `AGENT_MARKDOWN_TOOL_RENDERING_ENABLED`, `AGENT_MARKDOWN_RENDER_MAX_CHARS`, `AGENT_SCROLL_SPEED`, and `AGENT_HISTORY_PAGING_ENABLED`; see [Configuration](https://github.com/AlyceSingle/Alyce-Agent/blob/master/docs/configuration.md) for the full list.
 

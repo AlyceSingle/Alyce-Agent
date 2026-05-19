@@ -12,6 +12,8 @@ import {
 
 type AnthropicContentBlock =
   | { type: "text"; text: string }
+  | { type: "thinking"; thinking: string }
+  | { type: "redacted_thinking"; data: string }
   | { type: "tool_use"; id: string; name: string; input: JsonRecord }
   | { type: "tool_result"; tool_use_id: string; content: string };
 
@@ -156,12 +158,18 @@ export function convertAnthropicResponse(
   const record = asRecord(value);
   const content = Array.isArray(record.content) ? record.content : [];
   const textBlocks: string[] = [];
+  const reasoningBlocks: string[] = [];
   const toolCalls: OpenAI.Chat.Completions.ChatCompletionMessageToolCall[] = [];
 
   for (const block of content) {
     const blockRecord = asRecord(block);
     if (blockRecord.type === "text" && typeof blockRecord.text === "string") {
       textBlocks.push(blockRecord.text);
+      continue;
+    }
+
+    if (blockRecord.type === "thinking" && typeof blockRecord.thinking === "string") {
+      reasoningBlocks.push(blockRecord.thinking);
       continue;
     }
 
@@ -186,6 +194,7 @@ export function convertAnthropicResponse(
     id: typeof record.id === "string" ? record.id : "anthropic-message",
     model: typeof record.model === "string" ? record.model : modelId,
     content: textBlocks.join("\n"),
+    reasoningContent: reasoningBlocks.join("\n"),
     finishReason: mapAnthropicStopReason(record.stop_reason),
     toolCalls,
     ...(inputTokens > 0 || outputTokens > 0

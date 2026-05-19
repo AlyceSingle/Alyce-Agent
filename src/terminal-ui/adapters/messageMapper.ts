@@ -11,6 +11,14 @@ import type {
   TerminalUiToolShellResult,
   TerminalUiToolWriteResult
 } from "../state/types.js";
+import {
+  advanceDiffPatchHunkTracker,
+  countDiffPatchFileHeaders,
+  createDiffPatchHunkTracker,
+  isInsideDiffPatchHunk,
+  parseDiffPatchHunkHeader,
+  setDiffPatchHunkTracker
+} from "../utils/diffPatchParsing.js";
 import { serializeMessageBlocks } from "../utils/messageBlocks.js";
 import type { LspDiagnosticCompletedEvent } from "../../services/lsp/LspDiagnosticRegistry.js";
 
@@ -1121,26 +1129,47 @@ function toImageDimensions(value: unknown) {
   return { width, height };
 }
 
-function extractStructuredPatchText(value: unknown) {
+function extractStructuredPatchDisplayText(value: unknown) {
   const record = asRecord(value);
   if (!record) {
     return "";
   }
 
-  return extractStructuredPatchLines(record).join("\n");
-}
-
-function extractStructuredPatchDisplayText(value: unknown) {
-  const rawPatchText = extractStructuredPatchText(value);
-  if (!rawPatchText) {
+  const rawLines = extractStructuredPatchLines(record);
+  if (rawLines.length === 0) {
     return "";
   }
 
-  const filteredLines = rawPatchText
-    .split("\n")
-    .filter((line) => !line.startsWith("--- ") && !line.startsWith("+++ "));
+  return filterStructuredPatchDisplayLines(rawLines).join("\n");
+}
 
-  return filteredLines.join("\n");
+function filterStructuredPatchDisplayLines(lines: string[]) {
+  const showFileHeaders = countDiffPatchFileHeaders(lines) > 1;
+  const filteredLines: string[] = [];
+  const hunkTracker = createDiffPatchHunkTracker();
+
+  for (const line of lines) {
+    const insideParsedHunk = isInsideDiffPatchHunk(hunkTracker);
+
+    if (!insideParsedHunk && (line.startsWith("--- ") || line.startsWith("+++ "))) {
+      if (showFileHeaders) {
+        filteredLines.push(line);
+      }
+      continue;
+    }
+
+    filteredLines.push(line);
+
+    const hunk = parseDiffPatchHunkHeader(line);
+    if (hunk) {
+      setDiffPatchHunkTracker(hunkTracker, hunk);
+      continue;
+    }
+
+    advanceDiffPatchHunkTracker(hunkTracker, line);
+  }
+
+  return filteredLines;
 }
 
 function extractStructuredPatchLines(record: Record<string, unknown>) {

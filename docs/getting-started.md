@@ -185,7 +185,7 @@ Plan Mode keeps exploration read-only. Use `/plan exit` or `/build` to leave it 
 Once Alyce is running, we recommend the following steps:
 
 1. **Run `/connect`** to choose an AI provider and enter API key, base URL, and model fields.
-2. **Run `/models`** to verify the active provider/model and auth status, or `/model` to refresh and switch models for the current provider.
+2. **Run `/model list`** to verify the active provider/model and auth status, or `/model`/`/models` to refresh and switch models for the current provider.
 3. **Press `Ctrl+X`** if you want to adjust session/runtime settings.
 4. **Add external directories** if you need the agent to access files outside the current workspace.
 

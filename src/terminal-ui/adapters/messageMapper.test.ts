@@ -32,6 +32,9 @@ function runTests() {
   testPtyListResultUsesReadableBlocks();
   testApplyPatchResultSynthesizesStructuredPatchHunkHeader();
   testWriteResultKeepsStructuredPatchHunkHeaderAndFiltersFileMetadata();
+  testWriteResultKeepsPlusMinusPatchContentLinesAndFiltersFileHeaders();
+  testPatchResultKeepsMultiFileStructuredPatchHeaders();
+  testPatchResultKeepsMultiDeletedFileStructuredPatchHeaders();
   testDiagnosticsFollowUpIncludesPhase5Metadata();
   console.log("messageMapper tests passed");
 }
@@ -263,6 +266,198 @@ function testWriteResultKeepsStructuredPatchHunkHeaderAndFiltersFileMetadata() {
   assert.equal(
     patchBlock?.content,
     "@@ -10,1 +10,2 @@\n-old line\n+new line\n+another line"
+  );
+}
+
+function testWriteResultKeepsPlusMinusPatchContentLinesAndFiltersFileHeaders() {
+  const message = createToolResultMessage(
+    "Write",
+    JSON.stringify({
+      ok: true,
+      status: "success",
+      tool: "Write",
+      result: {
+        filePath: "src/demo.ts",
+        type: "update",
+        bytes: 32,
+        lineCount: 1,
+        structuredPatch: [
+          {
+            oldStart: 1,
+            oldLines: 1,
+            newStart: 1,
+            newLines: 1,
+            lines: [
+              "--- src/demo.ts",
+              "+++ src/demo.ts",
+              "@@ -1,1 +1,1 @@",
+              "--- removed heading",
+              "+++ added heading"
+            ]
+          }
+        ],
+        formatter: { status: "skipped" },
+        diagnostics: {
+          status: "skipped",
+          issues: [],
+          totalIssueCount: 0,
+          truncated: false
+        }
+      }
+    }),
+    JSON.stringify({ file_path: "src/demo.ts" })
+  );
+
+  const patchBlock = message.blocks.find((block) => block.label === "Patch");
+  assert.equal(
+    patchBlock?.content,
+    "@@ -1,1 +1,1 @@\n--- removed heading\n+++ added heading"
+  );
+}
+
+function testPatchResultKeepsMultiFileStructuredPatchHeaders() {
+  const message = createToolResultMessage(
+    "apply_patch",
+    JSON.stringify({
+      ok: true,
+      status: "success",
+      tool: "apply_patch",
+      result: {
+        filePath: "2 files",
+        operationCount: 2,
+        additions: 2,
+        deletions: 2,
+        files: [
+          {
+            type: "update",
+            filePath: "src/one.ts",
+            additions: 1,
+            deletions: 1,
+            matchStrategies: []
+          },
+          {
+            type: "update",
+            filePath: "src/two.ts",
+            additions: 1,
+            deletions: 1,
+            matchStrategies: []
+          }
+        ],
+        structuredPatch: [
+          {
+            oldStart: 1,
+            oldLines: 1,
+            newStart: 1,
+            newLines: 1,
+            lines: ["--- src/one.ts", "+++ src/one.ts", "@@ -1,1 +1,1 @@", "-old", "+new"]
+          },
+          {
+            oldStart: 2,
+            oldLines: 1,
+            newStart: 2,
+            newLines: 1,
+            lines: ["--- src/two.ts", "+++ src/two.ts", "@@ -2,1 +2,1 @@", "-two", "+TWO"]
+          }
+        ],
+        formatter: { status: "skipped" },
+        diagnostics: {
+          status: "skipped",
+          issues: [],
+          totalIssueCount: 0,
+          truncated: false
+        }
+      }
+    }),
+    JSON.stringify({ patchText: "patch" })
+  );
+
+  const patchBlock = message.blocks.find((block) => block.label === "Patch");
+  assert.equal(
+    patchBlock?.content,
+    [
+      "--- src/one.ts",
+      "+++ src/one.ts",
+      "@@ -1,1 +1,1 @@",
+      "-old",
+      "+new",
+      "--- src/two.ts",
+      "+++ src/two.ts",
+      "@@ -2,1 +2,1 @@",
+      "-two",
+      "+TWO"
+    ].join("\n")
+  );
+}
+
+function testPatchResultKeepsMultiDeletedFileStructuredPatchHeaders() {
+  const message = createToolResultMessage(
+    "apply_patch",
+    JSON.stringify({
+      ok: true,
+      status: "success",
+      tool: "apply_patch",
+      result: {
+        filePath: "2 files",
+        operationCount: 2,
+        additions: 0,
+        deletions: 2,
+        files: [
+          {
+            type: "delete",
+            filePath: "src/one.ts",
+            additions: 0,
+            deletions: 1,
+            matchStrategies: []
+          },
+          {
+            type: "delete",
+            filePath: "src/two.ts",
+            additions: 0,
+            deletions: 1,
+            matchStrategies: []
+          }
+        ],
+        structuredPatch: [
+          {
+            oldStart: 1,
+            oldLines: 1,
+            newStart: 0,
+            newLines: 0,
+            lines: ["--- src/one.ts", "+++ /dev/null", "@@ -1,1 +0,0 @@", "-old"]
+          },
+          {
+            oldStart: 2,
+            oldLines: 1,
+            newStart: 0,
+            newLines: 0,
+            lines: ["--- src/two.ts", "+++ /dev/null", "@@ -2,1 +0,0 @@", "-two"]
+          }
+        ],
+        formatter: { status: "skipped" },
+        diagnostics: {
+          status: "skipped",
+          issues: [],
+          totalIssueCount: 0,
+          truncated: false
+        }
+      }
+    }),
+    JSON.stringify({ patchText: "patch" })
+  );
+
+  const patchBlock = message.blocks.find((block) => block.label === "Patch");
+  assert.equal(
+    patchBlock?.content,
+    [
+      "--- src/one.ts",
+      "+++ /dev/null",
+      "@@ -1,1 +0,0 @@",
+      "-old",
+      "--- src/two.ts",
+      "+++ /dev/null",
+      "@@ -2,1 +0,0 @@",
+      "-two"
+    ].join("\n")
   );
 }
 

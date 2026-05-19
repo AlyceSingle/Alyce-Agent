@@ -184,7 +184,7 @@ Plan Mode（计划模式）保持探索过程为只读。准备好进入实现�
 程序运行后，建议您先完成以下操作：
 
 1. **运行 `/connect`** 选择 AI provider，并输入 API key、Base URL 和 Model。
-2. **运行 `/models`** 核对当前 provider/model 和 auth 状态，或运行 `/model` 刷新并切换当前 provider 的模型。
+2. **运行 `/model list`** 核对当前 provider/model 和 auth 状态，或运行 `/model`/`/models` 刷新并切换当前 provider 的模型。
 3. **按 `Ctrl+X`** 按需调整会话/运行时设置。
 4. **添加外部目录**：如果您需要助手访问当前工作区以外的文件，可以在设置中添加。
 

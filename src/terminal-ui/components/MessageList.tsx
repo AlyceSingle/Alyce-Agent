@@ -33,6 +33,15 @@ import {
 } from "../utils/messageBlocks.js";
 import { normalizeMarkdownInput } from "../utils/htmlEntities.js";
 import {
+  advanceDiffPatchHunkTracker,
+  countDiffPatchFileHeaders,
+  createDiffPatchHunkTracker,
+  isInsideDiffPatchHunk,
+  parseDiffPatchHeaderPath,
+  parseDiffPatchHunkHeader,
+  setDiffPatchHunkTracker
+} from "../utils/diffPatchParsing.js";
+import {
   createRenderPolicy,
   resolveMessageRenderDecision,
   type RenderPolicy
@@ -62,6 +71,7 @@ const SCROLL_PERF_SLOW_SYNC_THRESHOLD_MS = 8;
 const MIN_NON_VIRTUALIZED_MESSAGE_CAP = 20;
 const WINDOW_ANCHOR_HEADROOM_RATIO = 0.75;
 const DIFF_LINE_NUMBER_LEFT_PADDING = "  ";
+const DIFF_HUNK_SEPARATOR = "⋮";
 
 function isHandleAtBottom(handle: ScrollBoxHandle) {
   const scrollTop = handle.getScrollTop();
@@ -80,7 +90,7 @@ type RenderedSection = {
 };
 
 type ThemeColor = Color;
-type DiffLineKind = "meta" | "hunk" | "add" | "remove" | "context";
+type DiffLineKind = "meta" | "hunk" | "file" | "separator" | "add" | "remove" | "context";
 
 type RenderedSectionLine = {
   content: string;
@@ -106,6 +116,8 @@ type HeaderSegment = {
   text: string;
   color: ThemeColor;
 };
+
+const TOOL_TARGET_HEADER_COLOR = terminalUiTheme.colors.system;
 
 type MessagePalette = {
   headerColor: ThemeColor;
@@ -323,7 +335,7 @@ function buildToolHeaderTitleSegments(
     },
     {
       text: splitTitle.tail,
-      color: terminalUiTheme.colors.code
+      color: TOOL_TARGET_HEADER_COLOR
     }
   ];
 }
@@ -342,20 +354,34 @@ function buildShellCommandHeaderSegments(
     ];
   }
 
-  return tokens.flatMap((token, index) => [
-    ...(index === 0
+  return tokens.flatMap((token, index) => {
+    const prefix = index === 0
       ? []
       : [
           {
             text: " ",
             color: palette.mutedColor
           }
-        ]),
-    {
-      text: token,
-      color: getShellCommandTokenColor(token, index)
+        ];
+
+    if (index > 0 && isPathLikeToolTarget(token)) {
+      return [
+        ...prefix,
+        {
+          text: token,
+          color: TOOL_TARGET_HEADER_COLOR
+        }
+      ];
     }
-  ]);
+
+    return [
+      ...prefix,
+      {
+        text: token,
+        color: getShellCommandTokenColor(token, index)
+      }
+    ];
+  });
 }
 
 function getShellCommandTokenColor(token: string, index: number): ThemeColor {
@@ -372,6 +398,19 @@ function getShellCommandTokenColor(token: string, index: number): ThemeColor {
   }
 
   return terminalUiTheme.colors.code;
+}
+
+function isPathLikeToolTarget(token: string) {
+  const unquoted = token.replace(/^["']|["']$/g, "");
+  return /^[A-Za-z]:[\\/]/.test(unquoted) ||
+    unquoted.startsWith("~/") ||
+    unquoted.startsWith("~\\") ||
+    unquoted.startsWith("./") ||
+    unquoted.startsWith(".\\") ||
+    unquoted.startsWith("../") ||
+    unquoted.startsWith("..\\") ||
+    unquoted.includes("/") ||
+    unquoted.includes("\\");
 }
 
 function splitShellCommand(command: string): string[] {
@@ -477,22 +516,55 @@ type ParsedDiffLine = {
 
 function parseDiffPatchLines(content: string): ParsedDiffLine[] {
   const parsedLines: ParsedDiffLine[] = [];
+  const rawLines = content.split(/\r?\n/);
+  const showFileHeaders = countDiffPatchFileHeaders(rawLines, { stripGitPrefix: true }) > 1;
   let oldLine = 1;
   let newLine = 1;
   let hasHunk = false;
+  let renderedLinesInCurrentHunk = 0;
+  let pendingOldPath: string | undefined;
+  const hunkTracker = createDiffPatchHunkTracker();
 
-  for (const rawLine of content.split(/\r?\n/)) {
-    const diffKind = classifyDiffLine(rawLine);
+  for (const rawLine of rawLines) {
+    const insideParsedHunk = isInsideDiffPatchHunk(hunkTracker);
+
+    if (!insideParsedHunk && rawLine.startsWith("--- ")) {
+      pendingOldPath = parseDiffPatchHeaderPath(rawLine, { stripGitPrefix: true });
+      continue;
+    }
+
+    if (!insideParsedHunk && rawLine.startsWith("+++ ")) {
+      const newPath = parseDiffPatchHeaderPath(rawLine, { stripGitPrefix: true });
+      if (showFileHeaders) {
+        appendDiffFileHeader(parsedLines, newPath ?? pendingOldPath);
+        hasHunk = false;
+        renderedLinesInCurrentHunk = 0;
+        oldLine = 1;
+        newLine = 1;
+      }
+      pendingOldPath = undefined;
+      continue;
+    }
+
+    const diffKind = classifyDiffLine(rawLine, insideParsedHunk);
     if (diffKind === "meta") {
       continue;
     }
 
     if (diffKind === "hunk") {
-      const hunk = parseDiffHunkHeader(rawLine);
+      const hunk = parseDiffPatchHunkHeader(rawLine);
       if (hunk) {
+        if (renderedLinesInCurrentHunk > 0) {
+          parsedLines.push({
+            rawLine: DIFF_HUNK_SEPARATOR,
+            diffKind: "separator"
+          });
+        }
         oldLine = hunk.oldStart;
         newLine = hunk.newStart;
         hasHunk = true;
+        renderedLinesInCurrentHunk = 0;
+        setDiffPatchHunkTracker(hunkTracker, hunk);
       }
       continue;
     }
@@ -510,6 +582,8 @@ function parseDiffPatchLines(content: string): ParsedDiffLine[] {
         lineNumber: newLine
       });
       newLine += 1;
+      renderedLinesInCurrentHunk += 1;
+      advanceDiffPatchHunkTracker(hunkTracker, rawLine);
       continue;
     }
 
@@ -520,6 +594,8 @@ function parseDiffPatchLines(content: string): ParsedDiffLine[] {
         lineNumber: oldLine
       });
       oldLine += 1;
+      renderedLinesInCurrentHunk += 1;
+      advanceDiffPatchHunkTracker(hunkTracker, rawLine);
       continue;
     }
 
@@ -531,6 +607,8 @@ function parseDiffPatchLines(content: string): ParsedDiffLine[] {
       });
       oldLine += 1;
       newLine += 1;
+      renderedLinesInCurrentHunk += 1;
+      advanceDiffPatchHunkTracker(hunkTracker, rawLine);
       continue;
     }
 
@@ -543,26 +621,34 @@ function parseDiffPatchLines(content: string): ParsedDiffLine[] {
   return parsedLines;
 }
 
-function parseDiffHunkHeader(line: string): { oldStart: number; newStart: number } | null {
-  const match = /^@@\s+-(\d+)(?:,\d+)?\s+\+(\d+)(?:,\d+)?\s+@@/.exec(line);
-  if (!match) {
-    return null;
+function appendDiffFileHeader(parsedLines: ParsedDiffLine[], filePath: string | undefined) {
+  if (!filePath) {
+    return;
   }
 
-  const oldStart = Number.parseInt(match[1]!, 10);
-  const newStart = Number.parseInt(match[2]!, 10);
-  if (!Number.isFinite(oldStart) || !Number.isFinite(newStart)) {
-    return null;
+  if (parsedLines.length > 0) {
+    parsedLines.push({
+      rawLine: "",
+      diffKind: "separator"
+    });
   }
 
-  return {
-    oldStart,
-    newStart
-  };
+  parsedLines.push({
+    rawLine: filePath,
+    diffKind: "file"
+  });
 }
 
-function classifyDiffLine(line: string): DiffLineKind | undefined {
-  if (line.startsWith("+++ ") || line.startsWith("--- ")) {
+function classifyDiffLine(line: string, insideHunk = false): DiffLineKind | undefined {
+  if (
+    (!insideHunk && (line.startsWith("+++ ") || line.startsWith("--- "))) ||
+    line.startsWith("diff --git ") ||
+    line.startsWith("index ") ||
+    line.startsWith("new file mode ") ||
+    line.startsWith("deleted file mode ") ||
+    line.startsWith("rename from ") ||
+    line.startsWith("rename to ")
+  ) {
     return "meta";
   }
 
@@ -613,6 +699,14 @@ function getRenderedLineColors(
       return {
         color: terminalUiTheme.colors.diffHunk
       };
+    case "file":
+      return {
+        color: terminalUiTheme.colors.diffMeta
+      };
+    case "separator":
+      return {
+        color: terminalUiTheme.colors.subtle
+      };
     case "context":
       return {
         color: terminalUiTheme.colors.code
@@ -647,8 +741,20 @@ function isDefaultExpandedToolMessage(message: TerminalUiMessage) {
     isEditLikeToolResult(message.toolData.resultKind);
 }
 
-function isMessageExpanded(message: TerminalUiMessage, expandedMessageIds: ReadonlySet<string>) {
-  if (isDefaultExpandedToolMessage(message)) {
+function isDefaultExpandedMessage(
+  message: TerminalUiMessage,
+  thinkingMessagesExpandedByDefault: boolean
+) {
+  return isDefaultExpandedToolMessage(message) ||
+    (message.kind === "thinking" && thinkingMessagesExpandedByDefault);
+}
+
+function isMessageExpanded(
+  message: TerminalUiMessage,
+  expandedMessageIds: ReadonlySet<string>,
+  thinkingMessagesExpandedByDefault = false
+) {
+  if (isDefaultExpandedMessage(message, thinkingMessagesExpandedByDefault)) {
     return !expandedMessageIds.has(message.id);
   }
 
@@ -768,6 +874,14 @@ function renderToolMessageState(
       : getRenderableToolBlocks(message.blocks, toolData);
 
   return renderHeaderOnlyExpandableState(message.metadata, renderableBlocks, width, expanded);
+}
+
+function renderThinkingMessageState(
+  message: TerminalUiMessage,
+  width: number,
+  expanded: boolean
+): ExpandableRenderState {
+  return renderHeaderOnlyExpandableState(message.metadata, message.blocks, width, expanded);
 }
 
 function isEditLikeToolResult(resultKind: TerminalUiToolData["resultKind"]) {
@@ -1002,7 +1116,8 @@ function buildRenderedMessageEntries(
   expandedMessageIds: ReadonlySet<string>,
   assistantLabel: string,
   unseenDividerMessageId: string | null,
-  liveMarkdownMessageId: string | null
+  liveMarkdownMessageId: string | null,
+  thinkingMessagesExpandedByDefault = false
 ): RenderedMessageEntry[] {
   return messages.map((message, index) => {
     const isSelected = message.id === selectedMessageId;
@@ -1012,15 +1127,21 @@ function buildRenderedMessageEntries(
         : getMessageBadge(message.kind);
     const palette = getMessagePalette(message.kind, isSelected);
     const bodyWidth = Math.max(16, contentWidth);
-    const isExpanded = isMessageExpanded(message, expandedMessageIds);
+    const isExpanded = isMessageExpanded(
+      message,
+      expandedMessageIds,
+      thinkingMessagesExpandedByDefault
+    );
     const expandableRenderState =
       message.kind === "tool"
         ? renderToolMessageState(message, contentWidth, isExpanded)
-        : isContextPreviewMessage(message)
-          ? renderContextPreviewMessageState(message, contentWidth, isExpanded)
-          : isCollapsibleSystemMessage(message)
-            ? renderCollapsibleSystemMessageState(message, contentWidth, isExpanded)
-            : null;
+        : message.kind === "thinking"
+          ? renderThinkingMessageState(message, contentWidth, isExpanded)
+          : isContextPreviewMessage(message)
+            ? renderContextPreviewMessageState(message, contentWidth, isExpanded)
+            : isCollapsibleSystemMessage(message)
+              ? renderCollapsibleSystemMessageState(message, contentWidth, isExpanded)
+              : null;
     const resolveRenderDecision = (markdownSource: string) => resolveMessageRenderDecision({
       policy: renderPolicy,
       message,
@@ -1439,6 +1560,7 @@ const MessageListImpl = forwardRef<MessageListHandle, {
   markdownEnabled: boolean;
   markdownToolMessageRenderingEnabled: boolean;
   markdownRenderMaxChars: number;
+  thinkingMessagesExpandedByDefault: boolean;
   maxMessagesWithoutVirtualization: number;
   isLoading: boolean;
   assistantLabel: string;
@@ -1456,6 +1578,7 @@ const MessageListImpl = forwardRef<MessageListHandle, {
   const nearTopSnapshotRef = useRef(false);
   const previousMessageIdsRef = useRef<string[]>(props.messages.map((message) => message.id));
   const pendingPrependMessageIdsRef = useRef<string[]>([]);
+  const thinkingDefaultExpandedRef = useRef(props.thinkingMessagesExpandedByDefault);
   const selection = useSelection();
   const [expandedMessageIds, setExpandedMessageIds] = useState<ReadonlySet<string>>(() => new Set());
   const [scrollIndicator, setScrollIndicator] = useState<ScrollIndicatorState>({
@@ -1546,7 +1669,8 @@ const MessageListImpl = forwardRef<MessageListHandle, {
         expandedMessageIds,
         props.assistantLabel,
         props.unseenDividerMessageId,
-        liveMarkdownMessageId
+        liveMarkdownMessageId,
+        props.thinkingMessagesExpandedByDefault
       ),
     [
       contentWidth,
@@ -1556,7 +1680,8 @@ const MessageListImpl = forwardRef<MessageListHandle, {
       sourceMessages,
       renderPolicy,
       props.selectedMessageId,
-      props.unseenDividerMessageId
+      props.unseenDividerMessageId,
+      props.thinkingMessagesExpandedByDefault
     ]
   );
   const entryRowCounts = useMemo(
@@ -1839,9 +1964,13 @@ const MessageListImpl = forwardRef<MessageListHandle, {
 
       setExpandedMessageIds((previous) => {
         const next = new Set(previous);
-        const expanded = isMessageExpanded(message, previous);
+        const expanded = isMessageExpanded(
+          message,
+          previous,
+          props.thinkingMessagesExpandedByDefault
+        );
 
-        if (isDefaultExpandedToolMessage(message)) {
+        if (isDefaultExpandedMessage(message, props.thinkingMessagesExpandedByDefault)) {
           if (expanded) {
             next.add(message.id);
           } else {
@@ -1859,8 +1988,38 @@ const MessageListImpl = forwardRef<MessageListHandle, {
         return next;
       });
     },
-    []
+    [props.thinkingMessagesExpandedByDefault]
   );
+
+  useEffect(() => {
+    if (thinkingDefaultExpandedRef.current === props.thinkingMessagesExpandedByDefault) {
+      return;
+    }
+
+    thinkingDefaultExpandedRef.current = props.thinkingMessagesExpandedByDefault;
+    setExpandedMessageIds((previous) => {
+      const thinkingIds = new Set(
+        sourceMessages
+          .filter((message) => message.kind === "thinking")
+          .map((message) => message.id)
+      );
+      if (thinkingIds.size === 0) {
+        return previous;
+      }
+
+      const next = new Set<string>();
+      let changed = false;
+      for (const id of previous) {
+        if (thinkingIds.has(id)) {
+          changed = true;
+        } else {
+          next.add(id);
+        }
+      }
+
+      return changed ? next : previous;
+    });
+  }, [props.thinkingMessagesExpandedByDefault, sourceMessages]);
 
   useEffect(() => {
     setExpandedMessageIds((previous) => {
@@ -1872,6 +2031,7 @@ const MessageListImpl = forwardRef<MessageListHandle, {
         sourceMessages
           .filter((message) =>
             message.kind === "tool" ||
+            message.kind === "thinking" ||
             isContextPreviewMessage(message) ||
             isCollapsibleSystemMessage(message)
           )

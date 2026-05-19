@@ -74,8 +74,8 @@ After a turn edits files, Alyce also prints a concise diff summary with file cou
 | `/context <text>` | Same as above, but with an additional message added to the context. |
 | `/connect` | Open the interactive provider picker, then enter API key, baseURL, and model fields in a step-by-step form. Secret fields are masked. Built-in presets include OpenAI, Anthropic, Google, OpenRouter, DeepSeek, Kimi, Qwen, SiliconFlow, Doubao, Ollama, and LM Studio. |
 | `/logout <provider>` | Remove a provider credential from `~/.alyce/auth.json` without deleting provider profiles. |
-| `/model` | Refreshes the current provider's model list and opens its model picker. |
-| `/models` or `/model list` | Shows the current provider/model, configured providers, known models, and switch examples. |
+| `/model` or `/models` | Refreshes the current provider's model list and opens its model picker. |
+| `/model list` | Shows the current provider/model, configured providers, known models, and switch examples. |
 | `/model <name>` | Switches the active model on the current provider, e.g. `/model gpt-5.2`. |
 | `/model <provider>/<model>` | Switches to a provider-qualified model, e.g. `/model openrouter/openai/gpt-5.2`. |
 

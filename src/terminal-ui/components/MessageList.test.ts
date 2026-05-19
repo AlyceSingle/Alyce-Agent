@@ -65,7 +65,8 @@ const testing = __MESSAGE_LIST_TESTING__ as unknown as {
     expandedMessageIds: ReadonlySet<string>,
     assistantLabel: string,
     unseenDividerMessageId: string | null,
-    liveMarkdownMessageId: string | null
+    liveMarkdownMessageId: string | null,
+    thinkingMessagesExpandedByDefault?: boolean
   ) => TestMessageEntry[];
   sliceMessagesForNonVirtualizedList: (options: {
     messages: TerminalUiMessage[];
@@ -108,6 +109,10 @@ function runTests() {
   testRenderBlockLinesForPatchAddsHunkLineNumbers();
   testRenderBlockLinesForPatchUsesLegacyLineNumbersWithoutHunk();
   testRenderBlockLinesForPatchLeavesWrappedContinuationLineNumberBlank();
+  testRenderBlockLinesForPatchSeparatesMultipleHunks();
+  testRenderBlockLinesForPatchShowsMultiFileHeaders();
+  testRenderBlockLinesForPatchKeepsPlusMinusCodeLines();
+  testRenderBlockLinesForPatchShowsDeletedFileHeaders();
   testBuildCollapsedMessageBlocksTruncatesWithEllipsis();
   testCombineShellOutputVariants();
   testReadToolCollapsedPreviewUsesThreeLines();
@@ -116,6 +121,8 @@ function runTests() {
   testReadToolHeaderSplitsActionAndTarget(renderPolicy);
   testShellCommandHeaderHighlightsCommandFlagsAndTargets();
   testToolMessagesDefaultToHeaderAndMetadataOnly(renderPolicy);
+  testThinkingMessagesDefaultToCollapsed(renderPolicy);
+  testThinkingMessagesCanDefaultToExpanded(renderPolicy);
   testToolOutputLinesUseBodyColor();
   testSystemLinesUseSystemColor();
   testSystemPaletteUsesSystemHeaderAndRailColor();
@@ -226,6 +233,126 @@ function testRenderBlockLinesForPatchLeavesWrappedContinuationLineNumberBlank() 
   assert.equal(lines[0]?.diffKind, "add");
   assert.equal(lines[1]?.lineNumberText, "   ");
   assert.equal(lines[1]?.diffKind, "add");
+}
+
+function testRenderBlockLinesForPatchSeparatesMultipleHunks() {
+  const lines = testing.renderBlockLines(
+    {
+      label: "Patch",
+      style: "code",
+      content: [
+        "@@ -1,1 +1,1 @@",
+        "-old line",
+        "+new line",
+        "@@ -10,1 +10,1 @@",
+        "-old later",
+        "+new later"
+      ].join("\n")
+    },
+    120
+  );
+
+  assert.deepEqual(
+    lines.map((line) => [line.lineNumberText, line.content, line.diffKind ?? "none"]),
+    [
+      [" 1", "-old line", "remove"],
+      [" 1", "+new line", "add"],
+      ["  ", "⋮", "separator"],
+      ["10", "-old later", "remove"],
+      ["10", "+new later", "add"]
+    ]
+  );
+}
+
+function testRenderBlockLinesForPatchShowsMultiFileHeaders() {
+  const lines = testing.renderBlockLines(
+    {
+      label: "Patch",
+      style: "code",
+      content: [
+        "--- a/src/one.ts",
+        "+++ b/src/one.ts",
+        "@@ -1,1 +1,1 @@",
+        "-old",
+        "+new",
+        "--- a/src/two.ts",
+        "+++ b/src/two.ts",
+        "@@ -2,1 +2,1 @@",
+        "-two",
+        "+TWO"
+      ].join("\n")
+    },
+    120
+  );
+
+  assert.deepEqual(
+    lines.map((line) => [line.lineNumberText, line.content, line.diffKind ?? "none"]),
+    [
+      [" ", "src/one.ts", "file"],
+      ["1", "-old", "remove"],
+      ["1", "+new", "add"],
+      [" ", "", "separator"],
+      [" ", "src/two.ts", "file"],
+      ["2", "-two", "remove"],
+      ["2", "+TWO", "add"]
+    ]
+  );
+}
+
+function testRenderBlockLinesForPatchKeepsPlusMinusCodeLines() {
+  const lines = testing.renderBlockLines(
+    {
+      label: "Patch",
+      style: "code",
+      content: [
+        "--- a/src/demo.ts",
+        "+++ b/src/demo.ts",
+        "@@ -1,1 +1,1 @@",
+        "--- removed heading",
+        "+++ added heading"
+      ].join("\n")
+    },
+    120
+  );
+
+  assert.deepEqual(
+    lines.map((line) => [line.lineNumberText, line.content, line.diffKind ?? "none"]),
+    [
+      ["1", "--- removed heading", "remove"],
+      ["1", "+++ added heading", "add"]
+    ]
+  );
+}
+
+function testRenderBlockLinesForPatchShowsDeletedFileHeaders() {
+  const lines = testing.renderBlockLines(
+    {
+      label: "Patch",
+      style: "code",
+      content: [
+        "--- a/src/one.ts",
+        "+++ /dev/null",
+        "@@ -1,1 +0,0 @@",
+        "-old",
+        "--- a/src/two.ts",
+        "+++ /dev/null",
+        "@@ -2,1 +0,0 @@",
+        "-two"
+      ].join("\n")
+    },
+    120
+  );
+
+  assert.deepEqual(
+    lines.map((line) => [line.lineNumberText, line.content, line.diffKind ?? "none"]),
+    [
+      [" ", "src/one.ts", "file"],
+      ["1", "-old", "remove"],
+      [" ", "", "separator"],
+      [" ", "src/two.ts", "file"],
+      ["2", "-two", "remove"]
+    ]
+  );
 }
 
 function testBuildCollapsedMessageBlocksTruncatesWithEllipsis() {
@@ -414,7 +541,7 @@ function testShellToolHeaderUsesCodexStyleSegments(
   assert.equal(entry.headerSegments[2]?.color, terminalUiTheme.colors.chrome);
   assert.equal(entry.headerSegments[3]?.color, terminalUiTheme.colors.tool);
   assert.equal(entry.headerSegments[5]?.color, terminalUiTheme.colors.system);
-  assert.equal(entry.headerSegments[7]?.color, terminalUiTheme.colors.code);
+  assert.equal(entry.headerSegments[7]?.color, terminalUiTheme.colors.system);
 }
 
 function testReadToolHeaderSplitsActionAndTarget(
@@ -466,7 +593,7 @@ function testReadToolHeaderSplitsActionAndTarget(
     ["TOOL", " · ", "Read", " ", "~/Desktop/personal-website/"]
   );
   assert.equal(entry.headerSegments[2]?.color, terminalUiTheme.colors.chrome);
-  assert.equal(entry.headerSegments[4]?.color, terminalUiTheme.colors.code);
+  assert.equal(entry.headerSegments[4]?.color, terminalUiTheme.colors.system);
 }
 
 function testShellCommandHeaderHighlightsCommandFlagsAndTargets() {
@@ -481,7 +608,7 @@ function testShellCommandHeaderHighlightsCommandFlagsAndTargets() {
   );
   assert.equal(segments[0]?.color, terminalUiTheme.colors.tool);
   assert.equal(segments[2]?.color, terminalUiTheme.colors.system);
-  assert.equal(segments[4]?.color, terminalUiTheme.colors.code);
+  assert.equal(segments[4]?.color, terminalUiTheme.colors.system);
 }
 
 function testToolMessagesDefaultToHeaderAndMetadataOnly(
@@ -552,6 +679,109 @@ function testToolMessagesDefaultToHeaderAndMetadataOnly(
   assert.equal(collapsedEntry.metadataLine, "Tool result | Exit: 0 | 12 ms | Click to expand");
   assert.match(expandedEntry.metadataLine ?? "", /Click to collapse/);
   assert.deepEqual(flattenSections(expandedEntry), ["$ Get-ChildItem", "file-a", "file-b"]);
+}
+
+function testThinkingMessagesDefaultToCollapsed(
+  renderPolicy: ReturnType<typeof createRenderPolicy>
+) {
+  const sectionPolicy = {
+    ...renderPolicy,
+    markdownEnabled: false
+  };
+  const message = createMessage({
+    id: "thinking-default-collapsed",
+    kind: "thinking",
+    title: "Reasoning",
+    content: "Need to inspect the file first.",
+    metadata: [],
+    blocks: [
+      {
+        content: "Need to inspect the file first.",
+        tone: "muted"
+      }
+    ]
+  });
+
+  const collapsedEntry = testing.buildRenderedMessageEntries(
+    [message],
+    null,
+    100,
+    sectionPolicy,
+    new Set<string>(),
+    "ALYCE",
+    null,
+    null
+  )[0];
+  const expandedEntry = testing.buildRenderedMessageEntries(
+    [message],
+    null,
+    100,
+    sectionPolicy,
+    new Set<string>([message.id]),
+    "ALYCE",
+    null,
+    null
+  )[0];
+
+  assert.ok(collapsedEntry);
+  assert.ok(expandedEntry);
+  assert.equal(collapsedEntry.isExpandable, true);
+  assert.deepEqual(flattenSections(collapsedEntry), []);
+  assert.equal(collapsedEntry.metadataLine, "Click to expand");
+  assert.match(expandedEntry.metadataLine ?? "", /Click to collapse/);
+  assert.deepEqual(flattenSections(expandedEntry), ["Need to inspect the file first."]);
+}
+
+function testThinkingMessagesCanDefaultToExpanded(
+  renderPolicy: ReturnType<typeof createRenderPolicy>
+) {
+  const sectionPolicy = {
+    ...renderPolicy,
+    markdownEnabled: false
+  };
+  const message = createMessage({
+    id: "thinking-default-expanded",
+    kind: "thinking",
+    title: "Reasoning",
+    content: "Reasoning summary.",
+    metadata: [],
+    blocks: [
+      {
+        content: "Reasoning summary.",
+        tone: "muted"
+      }
+    ]
+  });
+
+  const defaultExpandedEntry = testing.buildRenderedMessageEntries(
+    [message],
+    null,
+    100,
+    sectionPolicy,
+    new Set<string>(),
+    "ALYCE",
+    null,
+    null,
+    true
+  )[0];
+  const collapsedEntry = testing.buildRenderedMessageEntries(
+    [message],
+    null,
+    100,
+    sectionPolicy,
+    new Set<string>([message.id]),
+    "ALYCE",
+    null,
+    null,
+    true
+  )[0];
+
+  assert.ok(defaultExpandedEntry);
+  assert.ok(collapsedEntry);
+  assert.match(defaultExpandedEntry.metadataLine ?? "", /Click to collapse/);
+  assert.deepEqual(flattenSections(defaultExpandedEntry), ["Reasoning summary."]);
+  assert.match(collapsedEntry.metadataLine ?? "", /Click to expand/);
+  assert.deepEqual(flattenSections(collapsedEntry), []);
 }
 
 function testToolOutputLinesUseBodyColor() {

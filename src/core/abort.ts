@@ -36,20 +36,46 @@ export function throwIfAborted(signal?: AbortSignal | null): void {
 export function isTurnInterruptedError(
   error: unknown,
   signal?: AbortSignal | null
-): error is TurnInterruptedError {
+): boolean {
   if (error instanceof TurnInterruptedError) {
     return true;
   }
 
-  if (!signal?.aborted || !(error instanceof Error)) {
+  if (!signal?.aborted) {
+    return false;
+  }
+
+  if (matchesAbortReason(error, signal)) {
+    return true;
+  }
+
+  if (!(error instanceof Error)) {
     return false;
   }
 
   // 上游库对取消的错误命名并不完全一致，这里按名称和消息做兼容判断。
   return (
     error.name === "AbortError" ||
-    /abort|aborted|interrupt|cancelled|canceled/i.test(error.message)
+    /abort|aborted|interrupt|cancel|cancelled|canceled/i.test(error.message)
   );
+}
+
+function matchesAbortReason(error: unknown, signal: AbortSignal): boolean {
+  if (error === signal.reason) {
+    return true;
+  }
+
+  const reason = getAbortReason(signal);
+  if (!reason) {
+    return false;
+  }
+
+  if (typeof error === "string") {
+    return error === reason;
+  }
+
+  return error instanceof Error &&
+    (error.message === reason || error.name === reason);
 }
 
 export function toTurnInterruptedError(

@@ -20,8 +20,10 @@ async function runTests() {
   testAnthropicProviderWithBaseUrlUsesCompatibleAdapter();
   testAnthropicNativeRequestConvertsTools();
   testAnthropicNativeResponseConvertsToolUse();
+  testAnthropicNativeResponsePreservesThinking();
   testGoogleNativeRequestConvertsTools();
   testGoogleNativeResponseConvertsFunctionCall();
+  testGoogleNativeResponsePreservesThoughtParts();
   console.log("model adapter tests passed");
 }
 
@@ -186,6 +188,22 @@ function testAnthropicNativeResponseConvertsToolUse() {
   assert.equal(response.usage?.total_tokens, 15);
 }
 
+function testAnthropicNativeResponsePreservesThinking() {
+  const response = convertAnthropicResponse({
+    id: "msg_1",
+    model: "claude-sonnet-4.6",
+    stop_reason: "end_turn",
+    content: [
+      { type: "thinking", thinking: "Need a short answer." },
+      { type: "text", text: "answer" }
+    ]
+  }, "claude-sonnet-4.6");
+  const message = response.choices[0]?.message as unknown as Record<string, unknown> | undefined;
+
+  assert.equal(response.choices[0]?.message.content, "answer");
+  assert.equal(message?.reasoning_content, "Need a short answer.");
+}
+
 function testGoogleNativeRequestConvertsTools() {
   const request = buildGoogleRequest({
     model: "gemini-3-flash",
@@ -244,6 +262,24 @@ function testGoogleNativeResponseConvertsFunctionCall() {
 
   assert.equal(response.choices[0]?.message.tool_calls?.[0]?.function.name, "Read");
   assert.equal(response.usage?.total_tokens, 15);
+}
+
+function testGoogleNativeResponsePreservesThoughtParts() {
+  const response = convertGoogleResponse({
+    candidates: [{
+      finishReason: "STOP",
+      content: {
+        parts: [
+          { text: "Need a short answer.", thought: true },
+          { text: "answer" }
+        ]
+      }
+    }]
+  }, "gemini-3-flash");
+  const message = response.choices[0]?.message as unknown as Record<string, unknown> | undefined;
+
+  assert.equal(response.choices[0]?.message.content, "answer");
+  assert.equal(message?.reasoning_content, "Need a short answer.");
 }
 
 function createResolvedModel(

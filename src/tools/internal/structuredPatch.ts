@@ -12,6 +12,7 @@ type LineDiffOp =
   | { type: "remove"; line: string };
 
 const MAX_LCS_CELLS = 250_000;
+const HUNK_CONTEXT_LINE_COUNT = 1;
 
 export function createStructuredPatch(options: {
   filePath?: string;
@@ -138,52 +139,90 @@ function buildPrefixSuffixDiff(oldLines: string[], newLines: string[]): LineDiff
 }
 
 function buildStructuredPatchHunks(ops: LineDiffOp[]): StructuredPatchHunk[] {
-  const hunks: StructuredPatchHunk[] = [];
-  let currentHunk: StructuredPatchHunk | null = null;
+  const positions = buildPatchLinePositions(ops);
+  const ranges = collectChangedLineRanges(ops);
+
+  return ranges.map((range) => {
+    const startPosition = positions[range.start] ?? { oldLine: 1, newLine: 1 };
+    let oldLines = 0;
+    let newLines = 0;
+    const lines: string[] = [];
+
+    for (let index = range.start; index < range.end; index += 1) {
+      const op = ops[index]!;
+      if (op.type === "context") {
+        oldLines += 1;
+        newLines += 1;
+        lines.push(` ${op.line}`);
+        continue;
+      }
+
+      if (op.type === "remove") {
+        oldLines += 1;
+        lines.push(`-${op.line}`);
+        continue;
+      }
+
+      newLines += 1;
+      lines.push(`+${op.line}`);
+    }
+
+    return {
+      oldStart: startPosition.oldLine,
+      oldLines,
+      newStart: startPosition.newLine,
+      newLines,
+      lines
+    };
+  });
+}
+
+function buildPatchLinePositions(ops: LineDiffOp[]) {
+  const positions: Array<{ oldLine: number; newLine: number }> = [];
   let oldLine = 1;
   let newLine = 1;
 
-  const flushHunk = () => {
-    if (!currentHunk) {
-      return;
-    }
-
-    hunks.push(currentHunk);
-    currentHunk = null;
-  };
-
   for (const op of ops) {
+    positions.push({ oldLine, newLine });
+
     if (op.type === "context") {
-      flushHunk();
       oldLine += 1;
       newLine += 1;
       continue;
     }
 
-    if (!currentHunk) {
-      currentHunk = {
-        oldStart: oldLine,
-        oldLines: 0,
-        newStart: newLine,
-        newLines: 0,
-        lines: []
-      };
-    }
-
     if (op.type === "remove") {
-      currentHunk.oldLines += 1;
-      currentHunk.lines.push(`-${op.line}`);
       oldLine += 1;
       continue;
     }
 
-    currentHunk.newLines += 1;
-    currentHunk.lines.push(`+${op.line}`);
     newLine += 1;
   }
 
-  flushHunk();
-  return hunks;
+  return positions;
+}
+
+function collectChangedLineRanges(ops: LineDiffOp[]) {
+  const ranges: Array<{ start: number; end: number }> = [];
+
+  for (let index = 0; index < ops.length; index += 1) {
+    if (ops[index]?.type === "context") {
+      continue;
+    }
+
+    const start = Math.max(0, index - HUNK_CONTEXT_LINE_COUNT);
+    const end = Math.min(ops.length, index + HUNK_CONTEXT_LINE_COUNT + 1);
+    const previous = ranges.at(-1);
+
+    if (previous && start <= previous.end) {
+      previous.end = Math.max(previous.end, end);
+      continue;
+    }
+
+    ranges.push({ start, end });
+  }
+
+  return ranges;
 }
 
 function buildTrailingNewlineOnlyHunks(

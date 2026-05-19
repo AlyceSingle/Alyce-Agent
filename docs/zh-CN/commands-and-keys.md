@@ -72,8 +72,8 @@ Revert 的边界会明确显示：文件恢复只覆盖 Alyce 在写工具执行
 | `/context <内容>` | 预览 Payload，并临时追加一段自定义上下文。 |
 | `/connect` | 打开交互式 provider 选择器，再按步骤输入 API key、baseURL 和 model。secret 字段会遮罩。内置 preset 包括 OpenAI、Anthropic、Google、OpenRouter、DeepSeek、Kimi、Qwen、SiliconFlow、豆包、Ollama 和 LM Studio。 |
 | `/logout <provider>` | 删除 `~/.alyce/auth.json` 中的 provider 凭据，不删除 provider profile。 |
-| `/model` | 刷新当前 provider 的模型列表，并打开该 provider 的模型选择器。 |
-| `/models` 或 `/model list` | 查看当前 provider/model、已配置 provider、已知模型和切换示例。 |
+| `/model` 或 `/models` | 刷新当前 provider 的模型列表，并打开该 provider 的模型选择器。 |
+| `/model list` | 查看当前 provider/model、已配置 provider、已知模型和切换示例。 |
 | `/model <名称>` | 在当前 provider 下切换模型（例如 `/model gpt-5.2`）。 |
 | `/model <provider>/<model>` | 切换到带 provider 的模型引用（例如 `/model openrouter/openai/gpt-5.2`）。 |
 
