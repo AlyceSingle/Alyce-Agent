@@ -5,6 +5,7 @@ import {
   getModelAdapterAvailability,
   type ChatCompletionAdapter
 } from "./modelAdapters.js";
+import { getFunctionToolCallName } from "./openaiFunctionTools.js";
 import { sendChatCompletion } from "./sendChatCompletion.js";
 import type { ResolvedModelProfile } from "../providers/types.js";
 import { buildAnthropicRequest, convertAnthropicResponse } from "./anthropicAdapter.js";
@@ -184,7 +185,7 @@ function testAnthropicNativeResponseConvertsToolUse() {
   }, "claude-sonnet-4.6");
 
   assert.equal(response.choices[0]?.finish_reason, "tool_calls");
-  assert.equal(response.choices[0]?.message.tool_calls?.[0]?.function.name, "Read");
+  assert.equal(getFunctionToolCallName(response.choices[0]?.message.tool_calls?.[0]), "Read");
   assert.equal(response.usage?.total_tokens, 15);
 }
 
@@ -260,7 +261,7 @@ function testGoogleNativeResponseConvertsFunctionCall() {
     }
   }, "gemini-3-flash");
 
-  assert.equal(response.choices[0]?.message.tool_calls?.[0]?.function.name, "Read");
+  assert.equal(getFunctionToolCallName(response.choices[0]?.message.tool_calls?.[0]), "Read");
   assert.equal(response.usage?.total_tokens, 15);
 }
 

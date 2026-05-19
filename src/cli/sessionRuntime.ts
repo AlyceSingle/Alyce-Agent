@@ -92,6 +92,7 @@ import {
   type ChatCompletionAdapter,
   type ChatCompletionTransport
 } from "../core/api/modelAdapters.js";
+import { getFunctionToolNames } from "../core/api/openaiFunctionTools.js";
 import { cloneJson } from "../core/json/clone.js";
 import { buildEffectiveSystemPrompt } from "../core/prompt/builder.js";
 import { PromptSectionResolver } from "../core/prompt/sectionResolver.js";
@@ -576,7 +577,7 @@ export async function createSessionRuntime(
 
   const getToolNamesFromSchemas = (
     tools: OpenAI.Chat.Completions.ChatCompletionTool[]
-  ) => tools.map((tool) => tool.function.name).sort((left, right) => left.localeCompare(right));
+  ) => getFunctionToolNames(tools).sort((left, right) => left.localeCompare(right));
 
   const getAvailableToolNamesForPrompt = (availableTools?: string[]) =>
     availableTools ?? getRegisteredToolNames();

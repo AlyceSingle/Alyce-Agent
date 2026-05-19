@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { promises as fs } from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { getFunctionToolName } from "../core/api/openaiFunctionTools.js";
 import { loadProjectMcpConfig } from "./config.js";
 import { createProjectMcpRuntime } from "./runtime.js";
 import { decodeMcpToolName, encodeMcpToolName } from "./toolNames.js";
@@ -135,7 +136,7 @@ async function testRuntimeUsesStdioServerTools() {
   const runtime = await createProjectMcpRuntime(root);
   try {
     const schemas = await runtime.getToolSchemas({ initialize: true });
-    assert.equal(schemas[0]?.function.name, "mcp__mock__echo");
+    assert.equal(getFunctionToolName(schemas[0]), "mcp__mock__echo");
 
     const result = await runtime.executeToolCall("mcp__mock__echo", { text: "hello" }, {
       requestApproval: async () => true
@@ -209,7 +210,7 @@ async function testRuntimeToolSchemasDoNotInitializeServersByDefault() {
     assert.equal((await runtime.getStatus()).servers[0]?.status, "not_initialized");
 
     const schemas = await runtime.getToolSchemas({ initialize: true });
-    assert.equal(schemas[0]?.function.name, "mcp__mock__echo");
+    assert.equal(getFunctionToolName(schemas[0]), "mcp__mock__echo");
     assert.equal((await runtime.getStatus()).servers[0]?.status, "connected");
   } finally {
     await runtime.close();
@@ -236,7 +237,10 @@ async function testRuntimeClearsToolIndexOnClose() {
 
   const runtime = await createProjectMcpRuntime(root);
   const schemas = await runtime.getToolSchemas({ initialize: true });
-  const toolName = schemas[0]?.function.name;
+  const toolName = getFunctionToolName(schemas[0]);
+  if (!toolName) {
+    throw new Error("Expected MCP runtime to expose a function tool name.");
+  }
   assert.equal(toolName, "mcp__mock__echo");
   assert.equal(runtime.canExecuteTool(toolName), true);
 
@@ -367,7 +371,7 @@ async function testRuntimeCanRetryAfterAbortedToolDiscovery() {
     );
 
     const schemas = await runtime.getToolSchemas({ initialize: true });
-    assert.equal(schemas[0]?.function.name, "mcp__mock__echo");
+    assert.equal(getFunctionToolName(schemas[0]), "mcp__mock__echo");
     const status = await runtime.getStatus();
     assert.equal(status.servers[0]?.status, "connected");
   } finally {

@@ -2,6 +2,11 @@ import type OpenAI from "openai";
 import type { ResolvedModelProfile } from "../providers/types.js";
 import type { ChatCompletionAdapter, ChatCreateParams } from "./modelAdapters.js";
 import {
+  getFunctionTools,
+  isFunctionToolCall,
+  type ChatCompletionFunctionTool
+} from "./openaiFunctionTools.js";
+import {
   createChatCompletionResponse,
   extractMessageText,
   parseJsonObject,
@@ -99,7 +104,7 @@ export function buildGoogleRequest(
       }
 
       for (const toolCall of message.tool_calls ?? []) {
-        if (toolCall.type !== "function") {
+        if (!isFunctionToolCall(toolCall)) {
           continue;
         }
 
@@ -150,8 +155,8 @@ export function buildGoogleRequest(
   return {
     contents,
     ...(systemParts.length > 0 ? { systemInstruction: { parts: systemParts } } : {}),
-    ...(request.tools && request.tools.length > 0
-      ? { tools: [{ functionDeclarations: request.tools.map(convertGoogleFunctionDeclaration) }] }
+    ...(getFunctionTools(request.tools).length > 0
+      ? { tools: [{ functionDeclarations: getFunctionTools(request.tools).map(convertGoogleFunctionDeclaration) }] }
       : {}),
     ...(request.tool_choice ? { toolConfig: convertGoogleToolConfig(request.tool_choice) } : {}),
     generationConfig: {
@@ -235,7 +240,7 @@ function appendGeminiContent(
   contents.push({ role, parts });
 }
 
-function convertGoogleFunctionDeclaration(tool: OpenAI.Chat.Completions.ChatCompletionTool) {
+function convertGoogleFunctionDeclaration(tool: ChatCompletionFunctionTool) {
   return {
     name: tool.function.name,
     ...(tool.function.description ? { description: tool.function.description } : {}),

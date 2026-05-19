@@ -1,6 +1,7 @@
 import type OpenAI from "openai";
 import { z } from "zod";
 import { zodToJsonSchema } from "zod-to-json-schema";
+import type { FunctionParameters } from "../core/api/openaiFunctionTools.js";
 import {
   AGENT_TOOL_DESCRIPTION,
   AgentToolInputSchema,
@@ -187,10 +188,6 @@ import { KNOWN_TOOL_NAMES } from "./toolNames.js";
 import type { ToolExecutionContext } from "./types.js";
 
 type AnyZodSchema = z.ZodTypeAny;
-
-type FunctionParameters = NonNullable<
-  OpenAI.Chat.Completions.ChatCompletionTool["function"]["parameters"]
->;
 
 export interface AgentTool<TInputSchema extends AnyZodSchema = AnyZodSchema> {
   name: string;
@@ -421,7 +418,7 @@ function toFunctionParameters(schema: AnyZodSchema): FunctionParameters {
   return normalized as FunctionParameters;
 }
 
-export const TOOL_SCHEMAS: OpenAI.Chat.Completions.ChatCompletionTool[] = REGISTERED_TOOLS.map((tool) => ({
+export const TOOL_SCHEMAS: OpenAI.Chat.Completions.ChatCompletionFunctionTool[] = REGISTERED_TOOLS.map((tool) => ({
   type: "function",
   function: {
     name: tool.name,
@@ -439,5 +436,5 @@ export function getToolDefinition(name: string): AgentTool | undefined {
 export function getToolSchemasByName(toolNames: readonly string[]) {
   return toolNames
     .map((name) => TOOL_SCHEMA_BY_NAME.get(name))
-    .filter((schema): schema is OpenAI.Chat.Completions.ChatCompletionTool => schema !== undefined);
+    .filter((schema): schema is OpenAI.Chat.Completions.ChatCompletionFunctionTool => schema !== undefined);
 }

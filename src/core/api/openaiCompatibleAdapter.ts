@@ -8,6 +8,8 @@ export function createOpenAICompatibleAdapter(
   const client = new OpenAI({
     apiKey: resolveOpenAICompatibleApiKey(resolvedModel),
     baseURL: resolvedModel.baseURL,
+    // Keep retry accounting in our own transport wrapper.
+    maxRetries: 0,
     ...(resolvedModel.headers ? { defaultHeaders: resolvedModel.headers } : {})
   });
 

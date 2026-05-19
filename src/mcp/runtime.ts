@@ -8,6 +8,7 @@ import { randomUUID } from "node:crypto";
 import { promises as fs } from "node:fs";
 import path from "node:path";
 import { getAbortReason, isTurnInterruptedError, throwIfAborted, TurnInterruptedError } from "../core/abort.js";
+import type { FunctionParameters } from "../core/api/openaiFunctionTools.js";
 import type { JsonRecord, ToolApprovalRequest } from "../tools/types.js";
 import { loadProjectMcpConfig } from "./config.js";
 import { encodeMcpToolName } from "./toolNames.js";
@@ -24,7 +25,6 @@ import type {
 } from "./types.js";
 
 type ChatCompletionTool = OpenAI.Chat.Completions.ChatCompletionTool;
-type FunctionParameters = NonNullable<ChatCompletionTool["function"]["parameters"]>;
 
 const DEFAULT_MCP_STARTUP_TIMEOUT_MS = 120_000;
 const DEFAULT_MCP_OPERATION_TIMEOUT_MS = 60_000;

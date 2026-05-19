@@ -65,11 +65,11 @@
     "node": ">=20.10.0"
   },
   "scripts": {
-    "dev": "npm run build && node --disable-warning=DEP0040 dist/index.js",
+    "dev": "npm run build && node dist/index.js",
     "build": "tsc -p tsconfig.json",
     "test": "node scripts/run-tests.mjs",
     "test:fail-fast": "node scripts/run-tests.mjs --fail-fast",
-    "start": "node --disable-warning=DEP0040 dist/index.js"
+    "start": "node dist/index.js"
   },
   "dependencies": {
     "@lydell/node-pty": "^1.2.0-beta.12",
@@ -87,7 +87,7 @@
     "ink": "^5.1.0",
     "lodash-es": "^4.18.1",
     "marked": "^14.1.4",
-    "openai": "^4.104.0",
+    "openai": "^6.38.0",
     "react": "^18.3.1",
     "react-reconciler": "^0.29.2",
     "ripgrep": "^0.3.1",

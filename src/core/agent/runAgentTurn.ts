@@ -4,6 +4,10 @@ import { isTurnInterruptedError, throwIfAborted, toTurnInterruptedError } from "
 import { extractAssistantTextContent } from "../api/assistantContent.js";
 import { removeGeneratedContextMessages } from "../api/generatedMessages.js";
 import {
+  isFunctionToolCall,
+  type ChatCompletionMessageFunctionToolCall
+} from "../api/openaiFunctionTools.js";
+import {
   buildPatchedChatCompletionRequest,
   sendChatCompletion,
   type ChatCompletionReconnectEvent
@@ -323,7 +327,7 @@ async function executeToolCalls(
   while (index < toolCalls.length) {
     throwIfAborted(options.abortSignal);
     const toolCall = toolCalls[index];
-    if (!toolCall || toolCall.type !== "function") {
+    if (!toolCall || !isFunctionToolCall(toolCall)) {
       index += 1;
       continue;
     }
@@ -337,12 +341,12 @@ async function executeToolCalls(
       continue;
     }
 
-    const batch: OpenAI.Chat.Completions.ChatCompletionMessageToolCall[] = [];
+    const batch: ChatCompletionMessageFunctionToolCall[] = [];
     while (index < toolCalls.length) {
       const candidate = toolCalls[index];
       if (
         !candidate ||
-        candidate.type !== "function" ||
+        !isFunctionToolCall(candidate) ||
         !PARALLEL_SAFE_TOOL_NAMES.has(candidate.function.name)
       ) {
         break;
@@ -370,7 +374,7 @@ async function executeToolCalls(
 }
 
 async function executeSingleToolCall(
-  toolCall: OpenAI.Chat.Completions.ChatCompletionMessageToolCall,
+  toolCall: ChatCompletionMessageFunctionToolCall,
   options: AgentTurnOptions
 ): Promise<{
   toolMessage: OpenAI.Chat.Completions.ChatCompletionToolMessageParam;

@@ -2,6 +2,11 @@ import type OpenAI from "openai";
 import type { ResolvedModelProfile } from "../providers/types.js";
 import type { ChatCompletionAdapter, ChatCreateParams } from "./modelAdapters.js";
 import {
+  getFunctionTools,
+  isFunctionToolCall,
+  type ChatCompletionFunctionTool
+} from "./openaiFunctionTools.js";
+import {
   createChatCompletionResponse,
   extractMessageText,
   parseJsonObject,
@@ -88,7 +93,7 @@ export function buildAnthropicRequest(
       }
 
       for (const toolCall of message.tool_calls ?? []) {
-        if (toolCall.type !== "function") {
+        if (!isFunctionToolCall(toolCall)) {
           continue;
         }
 
@@ -144,8 +149,8 @@ export function buildAnthropicRequest(
     messages,
     ...(system.length > 0 ? { system: system.join("\n\n") } : {}),
     ...(typeof request.temperature === "number" ? { temperature: request.temperature } : {}),
-    ...(request.tools && request.tools.length > 0
-      ? { tools: request.tools.map(convertAnthropicTool) }
+    ...(getFunctionTools(request.tools).length > 0
+      ? { tools: getFunctionTools(request.tools).map(convertAnthropicTool) }
       : {}),
     ...(request.tool_choice ? { tool_choice: convertAnthropicToolChoice(request.tool_choice) } : {})
   };
@@ -217,7 +222,7 @@ function appendAnthropicMessage(
   messages.push({ role, content });
 }
 
-function convertAnthropicTool(tool: OpenAI.Chat.Completions.ChatCompletionTool) {
+function convertAnthropicTool(tool: ChatCompletionFunctionTool) {
   return {
     name: tool.function.name,
     ...(tool.function.description ? { description: tool.function.description } : {}),

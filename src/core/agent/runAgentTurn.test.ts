@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import type OpenAI from "openai";
 import { TurnInterruptedError } from "../abort.js";
+import { getFunctionToolNames } from "../api/openaiFunctionTools.js";
 import { runAgentTurn } from "./runAgentTurn.js";
 import type { ToolExecutionContext } from "../../tools.js";
 import type { UsageRecordInput } from "../usage/types.js";
@@ -288,8 +289,8 @@ async function testMcpStatusRefreshesToolsBeforeNextStep() {
   const client = {
     chat: {
       completions: {
-        create: async (request: { tools?: Array<{ function: { name: string } }> }) => {
-          toolNamesByRequest.push((request.tools ?? []).map((tool) => tool.function.name));
+        create: async (request: { tools?: OpenAI.Chat.Completions.ChatCompletionTool[] }) => {
+          toolNamesByRequest.push(getFunctionToolNames(request.tools));
           if (toolNamesByRequest.length === 1) {
             return {
               choices: [{

@@ -5,6 +5,7 @@ import path from "node:path";
 import process from "node:process";
 import { runAgentTurn } from "../../agent.js";
 import { createBackgroundDiagnosticsMessage } from "../../core/api/generatedMessages.js";
+import { getFunctionToolNames } from "../../core/api/openaiFunctionTools.js";
 import { isTurnInterruptedError, throwIfAborted, TurnInterruptedError } from "../../core/abort.js";
 import { formatDoctorReport, runDoctorDiagnostics } from "../../core/doctor/doctor.js";
 import {
@@ -2589,7 +2590,7 @@ export function createSessionController(
         });
         throwIfAborted(controller.signal);
         await runtime.resetSystemMessage({
-          availableTools: tools.map((tool) => tool.function.name)
+          availableTools: getFunctionToolNames(tools)
         });
         store.updateState((state) => setStatusText(state, "Estimating context..."));
         throwIfAborted(controller.signal);
@@ -2638,8 +2639,7 @@ export function createSessionController(
               abortSignal
             });
             await runtime.resetSystemMessage({
-              availableTools: refreshedTools
-                .map((tool) => tool.function.name)
+              availableTools: getFunctionToolNames(refreshedTools)
                 .sort((left, right) => left.localeCompare(right))
             });
             return refreshedTools;

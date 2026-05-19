@@ -1,6 +1,7 @@
 import OpenAI from "openai";
 import { isTurnInterruptedError, toTurnInterruptedError } from "../abort.js";
 import { isGeneratedContextMessage } from "../api/generatedMessages.js";
+import { getFunctionToolCallNames } from "../api/openaiFunctionTools.js";
 import {
   sendChatCompletion,
   type ChatCompletionReconnectEvent
@@ -468,7 +469,7 @@ function extractMessageText(message: MessageParam) {
   }
 
   if (message.role === "assistant" && message.tool_calls && message.tool_calls.length > 0) {
-    const toolNames = message.tool_calls.map((toolCall) => toolCall.function.name).join(", ");
+    const toolNames = getFunctionToolCallNames(message.tool_calls).join(", ");
     textParts.push(`Requested tools: ${toolNames}`);
   }
 
