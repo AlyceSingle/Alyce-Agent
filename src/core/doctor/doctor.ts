@@ -1,7 +1,6 @@
 import { constants as fsConstants, promises as fs } from "node:fs";
-import os from "node:os";
 import path from "node:path";
-import { loadProjectMcpConfig } from "../../mcp/config.js";
+import { getMcpConfigPaths, loadMcpConfigState } from "../../mcp/config.js";
 import { discoverSkills } from "../../tools/SkillTool/SkillTool.js";
 import type {
   ConnectionConfigState,
@@ -104,8 +103,8 @@ export async function runDoctorDiagnostics(
   checks.push(checkEndpointAndModel(input.connectionState, input.currentModel));
   checks.push(checkSettings(input.settingsState, input.settings));
   checks.push(checkApprovalRisk(input.settings, input.allowedRoots));
-  checks.push(await checkMcpConfig(input.workspaceRoot));
-  checks.push(await checkSkills(input.workspaceRoot));
+  checks.push(await checkMcpConfig(input.workspaceRoot, input.paths));
+  checks.push(await checkSkills(input.workspaceRoot, input.paths));
   checks.push(checkProviderPlugins(input.providerPluginDiagnostics ?? []));
   checks.push(await checkExecutable("rg", ["--version"], "ripgrep", "Install ripgrep and ensure rg is on PATH.", runCommand, "fail"));
   checks.push(await checkExecutable("git", ["--version"], "git", "Install Git and ensure git is on PATH.", runCommand, "warn"));
@@ -549,58 +548,67 @@ function checkApprovalRisk(settings: SessionSettings, allowedRoots: string[]): D
   };
 }
 
-async function checkMcpConfig(workspaceRoot: string): Promise<DoctorCheck> {
-  const configPath = path.join(workspaceRoot, ".alyce", "mcp.json");
-  if (!await pathExists(configPath)) {
-    return {
-      id: "mcp.config",
-      title: "MCP config",
-      status: "skipped",
-      summary: "No project MCP config file found.",
-      details: [configPath]
-    };
-  }
+async function checkMcpConfig(
+  workspaceRoot: string,
+  paths: RuntimePaths
+): Promise<DoctorCheck> {
+  const configPaths = getMcpConfigPaths(workspaceRoot, path.dirname(paths.userAlyceDirectory));
+  const [projectFile, localFile, userFile] = await Promise.all([
+    checkFile(configPaths.project),
+    checkFile(configPaths.local),
+    checkFile(configPaths.user)
+  ]);
+  const details = [
+    formatFileStatus("Project config", projectFile),
+    formatFileStatus("Local override", localFile),
+    formatFileStatus("User config", userFile)
+  ];
+  const anyConfigExists = projectFile.exists || localFile.exists || userFile.exists;
 
   try {
-    const config = await loadProjectMcpConfig(workspaceRoot);
-    const serverNames = Object.keys(config.mcpServers);
+    const state = await loadMcpConfigState(workspaceRoot, {
+      homeDirectory: path.dirname(paths.userAlyceDirectory)
+    });
+    const serverNames = Object.keys(state.effective.mcpServers);
     return {
       id: "mcp.config",
       title: "MCP config",
       status: "ok",
-      summary: `MCP config parsed with ${serverNames.length} server(s).`,
-      details: serverNames.length > 0 ? serverNames : [configPath]
+      summary: serverNames.length > 0
+        ? `MCP config parsed with ${serverNames.length} effective server(s).`
+        : anyConfigExists
+          ? "MCP config files are valid, but no servers are configured yet."
+          : "No MCP config files found yet.",
+      details: serverNames.length > 0
+        ? [...details, ...serverNames.map((serverName) => `Server: ${serverName}`)]
+        : details,
+      ...(anyConfigExists
+        ? {}
+        : { suggestion: "Use /mcp add to create the first MCP server entry." })
     };
   } catch (error) {
     return {
       id: "mcp.config",
       title: "MCP config",
       status: "fail",
-      summary: ".alyce/mcp.json cannot be parsed or validated.",
-      details: [formatError(error)],
-      suggestion: "Fix .alyce/mcp.json before relying on MCP tools."
+      summary: "At least one MCP config file cannot be parsed or validated.",
+      details: [...details, formatError(error)],
+      suggestion: "Fix the invalid MCP config before relying on MCP tools."
     };
   }
 }
 
-async function checkSkills(workspaceRoot: string): Promise<DoctorCheck> {
+async function checkSkills(
+  workspaceRoot: string,
+  paths: RuntimePaths
+): Promise<DoctorCheck> {
   const projectRoot = path.join(workspaceRoot, ".alyce", "skills");
-  const userRoot = path.join(os.homedir(), ".alyce", "skills");
+  const userRoot = path.join(paths.userAlyceDirectory, "skills");
   const [projectAccess, userAccess] = await Promise.all([
     checkDirectory(projectRoot),
     checkDirectory(userRoot)
   ]);
   const existingRoots = [projectAccess, userAccess].filter((root) => root.exists);
-
-  if (existingRoots.length === 0) {
-    return {
-      id: "skills.discovery",
-      title: "Skills",
-      status: "skipped",
-      summary: "No skill roots found.",
-      details: [projectRoot, userRoot]
-    };
-  }
 
   const inaccessibleRoots = existingRoots.filter((root) => !root.readable);
   if (inaccessibleRoots.length > 0) {
@@ -616,8 +624,8 @@ async function checkSkills(workspaceRoot: string): Promise<DoctorCheck> {
 
   const discovery = await discoverSkills({ projectRoot, userRoot });
   const details = [
-    `Project root: ${projectRoot}`,
-    `User root: ${userRoot}`,
+    formatDirectoryStatus("Project root", projectAccess),
+    formatDirectoryStatus("User root", userAccess),
     ...discovery.duplicateWarnings
   ];
 
@@ -629,6 +637,19 @@ async function checkSkills(workspaceRoot: string): Promise<DoctorCheck> {
       summary: `Discovered ${discovery.skills.length} skill(s), with duplicate names.`,
       details,
       suggestion: "Rename or remove duplicate skills so discovery is predictable."
+    };
+  }
+
+  if (discovery.skills.length === 0) {
+    return {
+      id: "skills.discovery",
+      title: "Skills",
+      status: "ok",
+      summary: "No skills discovered yet.",
+      details: [
+        ...details,
+        "No SKILL.md files were found in the configured skill roots."
+      ]
     };
   }
 
@@ -873,6 +894,47 @@ async function pathExists(targetPath: string): Promise<boolean> {
   }
 }
 
+async function checkFile(targetPath: string): Promise<{
+  path: string;
+  exists: boolean;
+  readable: boolean;
+  error?: string;
+}> {
+  try {
+    const stat = await fs.stat(targetPath);
+    if (!stat.isFile()) {
+      return {
+        path: targetPath,
+        exists: true,
+        readable: false,
+        error: "not a file"
+      };
+    }
+
+    await fs.readFile(targetPath, "utf8");
+    return {
+      path: targetPath,
+      exists: true,
+      readable: true
+    };
+  } catch (error) {
+    if (isMissingFileError(error)) {
+      return {
+        path: targetPath,
+        exists: false,
+        readable: false
+      };
+    }
+
+    return {
+      path: targetPath,
+      exists: true,
+      readable: false,
+      error: formatError(error)
+    };
+  }
+}
+
 async function checkDirectory(targetPath: string): Promise<{
   path: string;
   exists: boolean;
@@ -941,6 +1003,36 @@ function formatBoolean(value: boolean): string {
 
 function formatError(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
+}
+
+function formatDirectoryStatus(
+  label: string,
+  directory: Awaited<ReturnType<typeof checkDirectory>>
+) {
+  if (!directory.exists) {
+    return `${label}: ${directory.path} (missing)`;
+  }
+
+  if (!directory.readable) {
+    return `${label}: ${directory.path} (${directory.error ?? "not readable"})`;
+  }
+
+  return `${label}: ${directory.path} (ready)`;
+}
+
+function formatFileStatus(
+  label: string,
+  file: Awaited<ReturnType<typeof checkFile>>
+) {
+  if (!file.exists) {
+    return `${label}: ${file.path} (missing)`;
+  }
+
+  if (!file.readable) {
+    return `${label}: ${file.path} (${file.error ?? "not readable"})`;
+  }
+
+  return `${label}: ${file.path} (present)`;
 }
 
 function isMissingFileError(error: unknown): boolean {

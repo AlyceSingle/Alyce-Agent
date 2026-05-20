@@ -31,7 +31,11 @@ function testSlashSuggestionsFilterByPrefix() {
   assert.ok(getSlashCommandSuggestions("/").length > 0);
   assert.deepEqual(
     getSlashCommandSuggestions("/memory c").map((command) => command.command),
-    ["/memory clear", "/memory clear --all"]
+    ["/memory"]
+  );
+  assert.deepEqual(
+    getSlashCommandSuggestions("/tasks cleanup").map((command) => command.command),
+    ["/tasks"]
   );
   assert.deepEqual(getSlashCommandSuggestions("/model g"), []);
 }
@@ -59,6 +63,14 @@ function testSlashCompletionRules() {
   const model = getSlashCommandSuggestions("/model")[0];
   assert.equal(model?.completion, "/model");
   assert.equal(model ? shouldCompleteSlashCommandInput("/model", model) : true, false);
+
+  const connect = getSlashCommandSuggestions("/connect")[0];
+  assert.equal(connect?.completion, "/connect");
+  assert.equal(connect ? shouldCompleteSlashCommandInput("/connect", connect) : true, false);
+
+  const stop = getSlashCommandSuggestions("/stop")[0];
+  assert.equal(stop?.completion, "/stop");
+  assert.equal(stop ? shouldCompleteSlashCommandInput("/stop", stop) : true, false);
 
   const help = getSlashCommandSuggestions("/help")[0];
   assert.equal(help?.completion, "/help");

@@ -13,6 +13,8 @@ const ORCHESTRATION_TOOL_NAMES = new Set(["AgentTool", "TaskList", "TaskGet", "T
 const MAIN_SESSION_ONLY_TOOL_NAMES = new Set([
   "SkillTool",
   "McpStatus",
+  "ListMcpTools",
+  "CallMcpTool",
   "ListMcpResources",
   "ReadMcpResource"
 ]);

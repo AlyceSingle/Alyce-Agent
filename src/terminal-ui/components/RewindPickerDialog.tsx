@@ -48,7 +48,15 @@ export function RewindPickerDialog(props: {
       options.push({
         mode: "code-and-conversation",
         label: "Restore code and conversation",
-        description: "Rewind tracked file edits and remove later messages."
+        description: "Restore tracked file edits and remove later messages."
+      });
+    }
+
+    if (confirmingPoint.canRestoreFilesOnly) {
+      options.push({
+        mode: "files-only",
+        label: "Restore code only",
+        description: "Restore tracked file edits and keep the conversation unchanged."
       });
     }
 
@@ -146,7 +154,7 @@ export function RewindPickerDialog(props: {
 
   return (
     <Pane
-      title="Rewind"
+      title="Revert"
       subtitle={`${props.points.length} restore point${props.points.length === 1 ? "" : "s"}`}
       accentColor={terminalUiTheme.colors.warning}
       footer={footer}
@@ -161,16 +169,18 @@ export function RewindPickerDialog(props: {
         ) : (
           <>
             <Text color={terminalUiTheme.colors.subtle} wrap="truncate-end">
-              Restore to the point before one of your previous prompts.
+              Choose a restore point, then decide whether to restore code, conversation, or both.
             </Text>
             {visiblePoints.map((point, index) => {
               const actualIndex = startIndex + index;
               const isSelected = actualIndex === selectedIndex;
               const codeLabel = point.hasCodeChanges
                 ? point.canRestoreCode
-                  ? "code rewind available"
-                  : "conversation only"
-                : "conversation";
+                  ? "full revert available"
+                  : point.canRestoreFilesOnly
+                    ? "code restore only"
+                    : "conversation only"
+                : "conversation restore";
 
               return (
                 <Box key={point.id} flexDirection="column" width="100%">
@@ -217,9 +227,14 @@ function ConfirmView(props: {
           {props.point.turnsRemoved === 1 ? "" : "s"}
         </Text>
       </Box>
-      {props.point.hasUnsafeToolActivity ? (
+      {props.point.hasUnsafeToolActivity && !props.point.canRestoreCode ? (
         <Text color={terminalUiTheme.colors.warning} wrap="truncate-end">
-          Tracked code rewind is disabled because some later side effects cannot be reversed or file snapshots are no longer restorable.
+          Full revert is unavailable because some later side effects cannot be reversed. You can still restore tracked files only when snapshots are available.
+        </Text>
+      ) : null}
+      {!props.point.canRestoreFilesOnly && props.point.hasCodeChanges ? (
+        <Text color={terminalUiTheme.colors.warning} wrap="truncate-end">
+          Tracked file restore is unavailable because some snapshots were already restored or pruned.
         </Text>
       ) : null}
       <Box flexDirection="column" width="100%">

@@ -2,7 +2,10 @@ import { DYNAMIC_PROMPT_SECTIONS, STATIC_PROMPT_SECTIONS, SYSTEM_PROMPT_DYNAMIC_
 import { PromptSectionResolver } from "./sectionResolver.js";
 import type { PromptBuildOptions, PromptRuntimeContext } from "./types.js";
 
-const ADDITIONAL_INSTRUCTIONS_TITLE = "# Additional Instructions";
+const ADDITIONAL_INSTRUCTIONS_SECTION_HEADER = [
+  "Additional instructions summary: extra system-level constraints follow and must be applied together with the base prompt.",
+  "# Additional Instructions"
+].join("\n\n");
 
 // 过滤空段落，避免最终提示词出现多余空块。
 function nonEmpty(value: string | null | undefined): value is string {
@@ -43,5 +46,5 @@ export async function buildEffectiveSystemPrompt(
     return primaryPrompt;
   }
 
-  return [primaryPrompt, ADDITIONAL_INSTRUCTIONS_TITLE, appendPart].join("\n\n");
+  return [primaryPrompt, ADDITIONAL_INSTRUCTIONS_SECTION_HEADER, appendPart].join("\n\n");
 }

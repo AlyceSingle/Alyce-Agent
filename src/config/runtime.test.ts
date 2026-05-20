@@ -13,6 +13,7 @@ async function runTests() {
   testSessionSettingsDefaultsIncludeScrollPerformanceSettings();
   testSessionSettingsNormalizesApprovalModes();
   testSessionSettingsClampsScrollSpeed();
+  await testRuntimeConfigBootstrapsRuntimeDirectories();
   await testRuntimeConfigLoadsUserConnectorPlugin();
   await testRuntimeConfigReadsScrollPerformanceEnv();
   await testRuntimeConfigReadsLegacyApprovalModes();
@@ -102,6 +103,44 @@ function testSessionSettingsClampsScrollSpeed() {
 
   assert.equal(low.effective.scrollSpeed, 1);
   assert.equal(high.effective.scrollSpeed, 8);
+}
+
+async function testRuntimeConfigBootstrapsRuntimeDirectories() {
+  const workspaceRoot = await fs.mkdtemp(path.join(os.tmpdir(), "alyce-runtime-bootstrap-"));
+  const config = await loadRuntimeConfigForTest([], {
+    ...process.env,
+    AGENT_WORKSPACE: workspaceRoot
+  });
+
+  const expectedDirectories = [
+    config.paths.alyceDirectory,
+    path.join(config.paths.alyceDirectory, "skills"),
+    config.paths.projectPluginsDirectory,
+    path.join(config.paths.alyceDirectory, "agents"),
+    path.join(config.paths.alyceDirectory, "memory"),
+    path.join(config.paths.alyceDirectory, "sessions"),
+    path.join(config.paths.alyceDirectory, "background-processes"),
+    path.join(config.paths.alyceDirectory, "mcp-output"),
+    path.join(config.paths.alyceDirectory, "snapshots", "git"),
+    path.join(config.paths.alyceDirectory, "file-history"),
+    path.join(config.paths.alyceDirectory, "tasks"),
+    config.paths.userAlyceDirectory,
+    path.join(config.paths.userAlyceDirectory, "skills"),
+    config.paths.userPluginsDirectory
+  ];
+
+  for (const directory of expectedDirectories) {
+    assert.equal((await fs.stat(directory)).isDirectory(), true, directory);
+  }
+
+  assert.equal(config.bootstrap.createdPaths.length >= expectedDirectories.length, true);
+  assert.equal(config.bootstrap.failedPaths.length, 0);
+  assert.equal(config.bootstrap.firstRun, true);
+
+  await assert.rejects(fs.stat(config.paths.connectionConfigPath), { code: "ENOENT" });
+  await assert.rejects(fs.stat(config.paths.settingsConfigPath), { code: "ENOENT" });
+  await assert.rejects(fs.stat(path.join(config.paths.alyceDirectory, "mcp.json")), { code: "ENOENT" });
+  await assert.rejects(fs.stat(path.join(config.paths.userAlyceDirectory, "auth.json")), { code: "ENOENT" });
 }
 
 async function testRuntimeConfigLoadsUserConnectorPlugin() {

@@ -1,8 +1,12 @@
+import type { McpConfigScope, McpServerConfig } from "../mcp/types.js";
+
 export type ReplCommandDefinition = {
   command: string;
   usage: string;
   description: string;
   completion: string;
+  searchPrefixes?: string[];
+  group: "Core" | "Session" | "Connection" | "Tasks" | "Skills & MCP";
 };
 
 export const REPL_COMMAND_DEFINITIONS: ReplCommandDefinition[] = [
@@ -10,247 +14,205 @@ export const REPL_COMMAND_DEFINITIONS: ReplCommandDefinition[] = [
     command: "/help",
     usage: "/help",
     description: "Show this help",
-    completion: "/help"
+    completion: "/help",
+    group: "Core"
   },
   {
     command: "/doctor",
     usage: "/doctor",
     description: "Run local health checks",
-    completion: "/doctor"
+    completion: "/doctor",
+    group: "Core"
   },
   {
     command: "/plan",
     usage: "/plan",
     description: "Enter read-only planning mode",
-    completion: "/plan"
-  },
-  {
-    command: "/plan exit",
-    usage: "/plan exit",
-    description: "Exit planning mode after confirmation",
-    completion: "/plan exit"
+    completion: "/plan",
+    group: "Core"
   },
   {
     command: "/build",
     usage: "/build",
     description: "Exit planning mode after confirmation",
-    completion: "/build"
+    completion: "/build",
+    group: "Core"
   },
   {
     command: "/settings",
     usage: "/settings",
     description: "Open runtime settings",
-    completion: "/settings"
+    completion: "/settings",
+    group: "Connection"
   },
   {
     command: "/permissions",
     usage: "/permissions",
     description: "Switch approval and access mode",
-    completion: "/permissions"
-  },
-  {
-    command: "/setup",
-    usage: "/setup",
-    description: "Open provider connection picker",
-    completion: "/setup"
+    completion: "/permissions",
+    group: "Connection"
   },
   {
     command: "/connect",
-    usage: "/connect",
+    usage: "/connect [provider ...]",
     description: "Open provider connection picker",
-    completion: "/connect "
+    completion: "/connect",
+    searchPrefixes: ["/connect "],
+    group: "Connection"
   },
   {
     command: "/logout",
     usage: "/logout <provider>",
     description: "Remove a provider credential",
-    completion: "/logout "
+    completion: "/logout",
+    searchPrefixes: ["/logout "],
+    group: "Connection"
   },
   {
     command: "/clear",
     usage: "/clear",
     description: "Clear chat history",
-    completion: "/clear"
-  },
-  {
-    command: "/rewind",
-    usage: "/rewind",
-    description: "Restore to a previous prompt",
-    completion: "/rewind"
+    completion: "/clear",
+    group: "Core"
   },
   {
     command: "/revert",
     usage: "/revert",
-    description: "Revert the latest Alyce turn with confirmation",
-    completion: "/revert"
-  },
-  {
-    command: "/revert --files-only",
-    usage: "/revert --files-only",
-    description: "Revert the latest Alyce turn file changes only",
-    completion: "/revert --files-only"
-  },
-  {
-    command: "/revert --conversation-only",
-    usage: "/revert --conversation-only",
-    description: "Rewind conversation to the latest Alyce turn only",
-    completion: "/revert --conversation-only"
+    description: "Open revert history and choose how to restore code or conversation",
+    completion: "/revert",
+    group: "Session"
   },
   {
     command: "/diff",
     usage: "/diff",
     description: "Show last Alyce turn and working tree diff summaries",
-    completion: "/diff"
-  },
-  {
-    command: "/diff last",
-    usage: "/diff last",
-    description: "Show the latest Alyce turn diff",
-    completion: "/diff last"
-  },
-  {
-    command: "/diff current",
-    usage: "/diff current",
-    description: "Show the current git working tree diff",
-    completion: "/diff current"
+    completion: "/diff",
+    group: "Session"
   },
   {
     command: "/resume",
     usage: "/resume [id|text]",
     description: "Resume a previous project session",
-    completion: "/resume "
+    completion: "/resume",
+    searchPrefixes: ["/resume "],
+    group: "Session"
   },
   {
     command: "/sessions",
     usage: "/sessions",
     description: "List saved project sessions",
-    completion: "/sessions"
+    completion: "/sessions",
+    group: "Session"
   },
   {
     command: "/remember",
-    usage: "/remember <text>",
-    description: "Save note to session and persistent memory",
-    completion: "/remember "
-  },
-  {
-    command: "/remember --session",
-    usage: "/remember --session <text>",
-    description: "Save note to session notes only",
-    completion: "/remember --session "
+    usage: "/remember [--session] <text>",
+    description: "Save note to session memory, optionally without persisting it",
+    completion: "/remember",
+    searchPrefixes: ["/remember ", "/remember --session"],
+    group: "Session"
   },
   {
     command: "/memory",
-    usage: "/memory",
-    description: "Show memory snapshot",
-    completion: "/memory"
-  },
-  {
-    command: "/memory clear",
-    usage: "/memory clear",
-    description: "Clear session memory",
-    completion: "/memory clear"
-  },
-  {
-    command: "/memory clear --all",
-    usage: "/memory clear --all",
-    description: "Clear session and persistent memory",
-    completion: "/memory clear --all"
+    usage: "/memory [clear [--all]]",
+    description: "Show or clear memory state",
+    completion: "/memory",
+    searchPrefixes: ["/memory clear", "/memory clear --all"],
+    group: "Session"
   },
   {
     command: "/tasks",
-    usage: "/tasks",
-    description: "List current-session background subagent tasks",
-    completion: "/tasks"
-  },
-  {
-    command: "/tasks get",
-    usage: "/tasks get <id>",
-    description: "Show background task details",
-    completion: "/tasks get "
-  },
-  {
-    command: "/tasks log",
-    usage: "/tasks log <id>",
-    description: "Alias for /tasks get <id>",
-    completion: "/tasks log "
-  },
-  {
-    command: "/tasks stop",
-    usage: "/tasks stop <id>",
-    description: "Stop a running background task",
-    completion: "/tasks stop "
-  },
-  {
-    command: "/tasks cleanup",
-    usage: "/tasks cleanup [--apply]",
-    description: "Scan or clean stale subagent storage artifacts",
-    completion: "/tasks cleanup"
-  },
-  {
-    command: "/tasks cleanup --apply",
-    usage: "/tasks cleanup --apply",
-    description: "Clean stale subagent storage artifacts",
-    completion: "/tasks cleanup --apply"
+    usage: "/tasks [get|stop <id> | cleanup [--apply]]",
+    description: "Inspect or manage background subagent tasks",
+    completion: "/tasks",
+    searchPrefixes: [
+      "/tasks get",
+      "/tasks stop",
+      "/tasks cleanup",
+      "/tasks cleanup --apply"
+    ],
+    group: "Tasks"
   },
   {
     command: "/processes",
     usage: "/processes",
     description: "List managed background processes",
-    completion: "/processes"
-  },
-  {
-    command: "/bg",
-    usage: "/bg",
-    description: "Alias for /processes",
-    completion: "/bg"
+    completion: "/processes",
+    group: "Tasks"
   },
   {
     command: "/stop",
     usage: "/stop <id>",
     description: "Stop a managed background process",
-    completion: "/stop "
+    completion: "/stop",
+    searchPrefixes: ["/stop "],
+    group: "Tasks"
   },
   {
     command: "/usage",
     usage: "/usage",
     description: "Show session token, duration, and estimated cost usage",
-    completion: "/usage"
+    completion: "/usage",
+    group: "Session"
   },
   {
     command: "/context",
     usage: "/context [text]",
     description: "Show full next-turn AI context payload",
-    completion: "/context"
+    completion: "/context",
+    searchPrefixes: ["/context "],
+    group: "Session"
+  },
+  {
+    command: "/skills",
+    usage: "/skills [<name> | enable|disable ... | refresh]",
+    description: "List, inspect, or enable local skills",
+    completion: "/skills",
+    searchPrefixes: ["/skills ", "/skills enable", "/skills disable", "/skills refresh"],
+    group: "Skills & MCP"
+  },
+  {
+    command: "/mcp",
+    usage: "/mcp <status|tools|resources|prompts|prompt|templates|login|add|remove|enable|disable> ...",
+    description: "Inspect or manage MCP servers",
+    completion: "/mcp",
+    searchPrefixes: [
+      "/mcp ",
+      "/mcp status",
+      "/mcp tools",
+      "/mcp resources",
+      "/mcp prompts",
+      "/mcp prompt",
+      "/mcp templates",
+      "/mcp login",
+      "/mcp add",
+      "/mcp remove",
+      "/mcp enable",
+      "/mcp disable"
+    ],
+    group: "Skills & MCP"
   },
   {
     command: "/model",
     usage: "/model [provider/model]",
     description: "Open model picker or switch provider/model",
-    completion: "/model"
-  },
-  {
-    command: "/models",
-    usage: "/models",
-    description: "Open model picker",
-    completion: "/models"
+    completion: "/model",
+    group: "Connection"
   },
   {
     command: "/add-dir",
-    usage: "/add-dir <path>",
+    usage: "/add-dir [--save] <path>",
     description: "Allow an extra directory for this session",
-    completion: "/add-dir "
-  },
-  {
-    command: "/add-dir --save",
-    usage: "/add-dir --save <path>",
-    description: "Allow and save an extra directory",
-    completion: "/add-dir --save "
+    completion: "/add-dir",
+    searchPrefixes: ["/add-dir ", "/add-dir --save"],
+    group: "Connection"
   },
   {
     command: "/exit",
     usage: "/exit",
     description: "Quit",
-    completion: "/exit"
+    completion: "/exit",
+    group: "Core"
   }
 ];
 
@@ -259,11 +221,32 @@ export function getReplCommandHelpLines(currentModel: string) {
     (width, command) => Math.max(width, command.usage.length),
     0
   );
+  const lines: string[] = [];
+  const groups: ReplCommandDefinition["group"][] = [
+    "Core",
+    "Session",
+    "Connection",
+    "Tasks",
+    "Skills & MCP"
+  ];
 
-  return REPL_COMMAND_DEFINITIONS.map((command) => {
-    const suffix = command.command === "/model" ? ` (current: ${currentModel})` : "";
-    return `  ${command.usage.padEnd(usageWidth)}  ${command.description}${suffix}`;
-  });
+  for (const group of groups) {
+    const commands = REPL_COMMAND_DEFINITIONS.filter((command) => command.group === group);
+    if (commands.length === 0) {
+      continue;
+    }
+
+    if (lines.length > 0) {
+      lines.push("");
+    }
+    lines.push(`${group}:`);
+    lines.push(...commands.map((command) => {
+      const suffix = command.command === "/model" ? ` (current: ${currentModel})` : "";
+      return `  ${command.usage.padEnd(usageWidth)}  ${command.description}${suffix}`;
+    }));
+  }
+
+  return lines;
 }
 
 // Normalized result for built-in REPL commands.
@@ -274,7 +257,6 @@ export type ParsedCommand =
   | { type: "plan-enter" }
   | { type: "plan-exit" }
   | { type: "clear" }
-  | { type: "rewind" }
   | { type: "exit" }
   | { type: "open-settings"; section: "connection" | "session" }
   | { type: "open-permissions" }
@@ -288,8 +270,31 @@ export type ParsedCommand =
   | { type: "memory-view" }
   | { type: "memory-clear"; clearPersistent: boolean }
   | { type: "add-directory"; directory: string; persist: boolean }
+  | { type: "skills-list" }
+  | { type: "skills-view"; name: string }
+  | {
+      type: "skills-set-enabled";
+      enabled: boolean;
+      target: "project" | "user";
+      reference:
+        | { kind: "name"; value: string }
+        | { kind: "id"; value: string }
+        | { kind: "path"; value: string }
+        | { kind: "bundled" };
+    }
+  | { type: "skills-refresh" }
+  | { type: "mcp-list" }
+  | { type: "mcp-status" }
+  | { type: "mcp-tools"; serverName?: string }
+  | { type: "mcp-resources"; serverName?: string }
+  | { type: "mcp-prompts"; serverName?: string }
+  | { type: "mcp-prompt"; serverName: string; promptName: string; args: Record<string, string> }
+  | { type: "mcp-templates"; serverName?: string }
+  | { type: "mcp-login"; serverName: string }
+  | { type: "mcp-add"; scope: McpConfigScope; name: string; config: McpServerConfig }
+  | { type: "mcp-remove"; scope: McpConfigScope; name: string }
+  | { type: "mcp-set-enabled"; enabled: boolean; scope: McpConfigScope; name: string }
   | { type: "open-model-picker" }
-  | { type: "model-view" }
   | { type: "switch-model"; model: string }
   | { type: "tasks-list" }
   | { type: "tasks-get"; taskId: string }
@@ -299,8 +304,16 @@ export type ParsedCommand =
   | { type: "process-stop"; processId: string }
   | { type: "usage-view" }
   | { type: "diff-view"; target: "overview" | "last" | "current" | { turnId: string } }
-  | { type: "revert"; mode: "prompt" | "files-only" | "conversation-only" }
+  | { type: "revert" }
   | { type: "context-preview"; nextUserInput?: string };
+
+function createMigrationCommandError(input: string, message: string): Extract<ParsedCommand, { type: "command-error" }> {
+  return {
+    type: "command-error",
+    input,
+    message
+  };
+}
 
 // Parse REPL commands in one place so the main loop stays simple.
 export function parseReplCommand(input: string): ParsedCommand {
@@ -349,8 +362,11 @@ export function parseReplCommand(input: string): ParsedCommand {
     return { type: "clear" };
   }
 
-  if (input === "/rewind") {
-    return { type: "rewind" };
+  if (input === "/rewind" || input.startsWith("/rewind ")) {
+    return createMigrationCommandError(
+      input,
+      "This command was removed. Use /revert to open revert history."
+    );
   }
 
   const revertCommand = parseRevertCommand(input);
@@ -404,8 +420,11 @@ export function parseReplCommand(input: string): ParsedCommand {
     };
   }
 
-  if (input === "/setup") {
-    return { type: "connect-provider", args: [] };
+  if (input === "/setup" || input.startsWith("/setup ")) {
+    return createMigrationCommandError(
+      input,
+      "This command was removed. Use /connect to manage provider connections."
+    );
   }
 
   if (input === "/connect") {
@@ -526,6 +545,16 @@ export function parseReplCommand(input: string): ParsedCommand {
     };
   }
 
+  const skillsCommand = parseSkillsCommand(input);
+  if (skillsCommand) {
+    return skillsCommand;
+  }
+
+  const mcpCommand = parseMcpCommand(input);
+  if (mcpCommand) {
+    return mcpCommand;
+  }
+
   if (input === "/add-dir") {
     return {
       type: "command-error",
@@ -568,12 +597,22 @@ export function parseReplCommand(input: string): ParsedCommand {
     };
   }
 
-  if (input === "/model" || input === "/models") {
+  if (input === "/models" || input.startsWith("/models ")) {
+    return createMigrationCommandError(
+      input,
+      "This command was removed. Use /model to open the model picker."
+    );
+  }
+
+  if (input === "/model") {
     return { type: "open-model-picker" };
   }
 
-  if (input === "/model list") {
-    return { type: "model-view" };
+  if (input === "/model list" || input.startsWith("/model list ")) {
+    return createMigrationCommandError(
+      input,
+      "This command was removed. Use /model to open the model picker."
+    );
   }
 
   if (input.startsWith("/model ")) {
@@ -608,30 +647,14 @@ function parseRevertCommand(
   const tokens = input.split(/\s+/).filter(Boolean);
   if (tokens.length === 1) {
     return {
-      type: "revert",
-      mode: "prompt"
+      type: "revert"
     };
   }
 
-  if (tokens.length === 2 && tokens[1] === "--files-only") {
-    return {
-      type: "revert",
-      mode: "files-only"
-    };
-  }
-
-  if (tokens.length === 2 && tokens[1] === "--conversation-only") {
-    return {
-      type: "revert",
-      mode: "conversation-only"
-    };
-  }
-
-  return {
-    type: "command-error",
+  return createMigrationCommandError(
     input,
-    message: "Unsupported /revert argument. Use /revert, /revert --files-only, or /revert --conversation-only."
-  };
+    "Revert flags were removed. Use /revert and choose an action from the revert history."
+  );
 }
 
 function parseDiffCommand(
@@ -720,6 +743,136 @@ function parseMemoryCommand(
   };
 }
 
+function parseSkillsCommand(
+  input: string
+): Extract<
+  ParsedCommand,
+  {
+    type:
+      | "skills-list"
+      | "skills-view"
+      | "skills-set-enabled"
+      | "skills-refresh"
+      | "command-error";
+  }
+> | null {
+  if (input !== "/skills" && !input.startsWith("/skills ")) {
+    return null;
+  }
+
+  const tokens = input.split(/\s+/).filter(Boolean);
+  if (tokens.length === 1) {
+    return { type: "skills-list" };
+  }
+
+  if (tokens.length === 2 && tokens[1] === "list") {
+    return createMigrationCommandError(
+      input,
+      "This command was removed. Use /skills."
+    );
+  }
+
+  if (tokens.length === 2 && tokens[1] === "refresh") {
+    return { type: "skills-refresh" };
+  }
+
+  if (tokens.length === 2 && tokens[1] === "show") {
+    return createMigrationCommandError(
+      input,
+      "This command was removed. Use /skills <name>."
+    );
+  }
+
+  if (tokens.length === 2) {
+    return {
+      type: "skills-view",
+      name: tokens[1]!
+    };
+  }
+
+  if (tokens.length === 3 && tokens[1] === "show") {
+    return createMigrationCommandError(
+      input,
+      `This command was removed. Use /skills ${tokens[2]!}.`
+    );
+  }
+
+  const toggleCommand = parseSkillsToggleCommand(input, tokens);
+  if (toggleCommand) {
+    return toggleCommand;
+  }
+
+  return {
+    type: "command-error",
+    input,
+    message: "Unsupported /skills argument. Use /skills, /skills <name>, /skills enable <name>, /skills disable <name>, or /skills refresh."
+  };
+}
+
+function parseSkillsToggleCommand(
+  input: string,
+  tokens: string[]
+): Extract<ParsedCommand, { type: "skills-set-enabled" | "command-error" }> | null {
+  const action = tokens[1];
+  if (action !== "enable" && action !== "disable") {
+    return null;
+  }
+
+  const enabled = action === "enable";
+  let target: "project" | "user" = "project";
+  const args = tokens.slice(2);
+
+  if (args[0] === "--user") {
+    target = "user";
+    args.shift();
+  } else if (args[0] === "--project") {
+    target = "project";
+    args.shift();
+  }
+
+  if (args.length === 1 && args[0] === "--bundled") {
+    return {
+      type: "skills-set-enabled",
+      enabled,
+      target,
+      reference: { kind: "bundled" }
+    };
+  }
+
+  if (args.length === 2 && args[0] === "--id") {
+    return {
+      type: "skills-set-enabled",
+      enabled,
+      target,
+      reference: { kind: "id", value: args[1]! }
+    };
+  }
+
+  if (args.length >= 2 && args[0] === "--path") {
+    return {
+      type: "skills-set-enabled",
+      enabled,
+      target,
+      reference: { kind: "path", value: args.slice(1).join(" ") }
+    };
+  }
+
+  if (args.length === 1) {
+    return {
+      type: "skills-set-enabled",
+      enabled,
+      target,
+      reference: { kind: "name", value: args[0]! }
+    };
+  }
+
+  return {
+    type: "command-error",
+    input,
+    message: "Unsupported /skills toggle argument. Use /skills enable|disable <name>, --id <id>, --path <path>, or --bundled, optionally with --user."
+  };
+}
+
 function parseTasksCommand(
   input: string
 ): Extract<ParsedCommand, { type: "tasks-list" | "tasks-get" | "tasks-stop" | "tasks-cleanup" | "command-error" }> | null {
@@ -734,12 +887,21 @@ function parseTasksCommand(
     };
   }
 
-  if (tokens[1] === "get" || tokens[1] === "log") {
+  if (tokens[1] === "log") {
+    return createMigrationCommandError(
+      input,
+      tokens.length === 3
+        ? `This command was removed. Use /tasks get ${tokens[2]!}.`
+        : "This command was removed. Use /tasks get <id>."
+    );
+  }
+
+  if (tokens[1] === "get") {
     if (tokens.length !== 3) {
       return {
         type: "command-error",
         input,
-        message: `Missing task id. Use /tasks ${tokens[1]} <id>.`
+        message: "Missing task id. Use /tasks get <id>."
       };
     }
 
@@ -804,17 +966,24 @@ function parseTasksCommand(
 function parseProcessCommand(
   input: string
 ): Extract<ParsedCommand, { type: "processes-list" | "process-stop" | "command-error" }> | null {
-  if (input === "/processes" || input === "/bg") {
+  if (input === "/bg" || input.startsWith("/bg ")) {
+    return createMigrationCommandError(
+      input,
+      "This command was removed. Use /processes."
+    );
+  }
+
+  if (input === "/processes") {
     return {
       type: "processes-list"
     };
   }
 
-  if (input.startsWith("/processes ") || input.startsWith("/bg ")) {
+  if (input.startsWith("/processes ")) {
     return {
       type: "command-error",
       input,
-      message: "Unsupported background process list argument. Use /processes or /bg."
+      message: "Unsupported background process list argument. Use /processes."
     };
   }
 
@@ -835,4 +1004,357 @@ function parseProcessCommand(
   }
 
   return null;
+}
+
+function parseMcpCommand(
+  input: string
+): Extract<
+  ParsedCommand,
+  {
+    type:
+      | "mcp-list"
+      | "mcp-status"
+      | "mcp-tools"
+      | "mcp-resources"
+      | "mcp-prompts"
+      | "mcp-prompt"
+      | "mcp-templates"
+      | "mcp-login"
+      | "mcp-add"
+      | "mcp-remove"
+      | "mcp-set-enabled"
+      | "command-error";
+  }
+> | null {
+  if (input !== "/mcp" && !input.startsWith("/mcp ")) {
+    return null;
+  }
+
+  const tokens = tokenizeReplArguments(input);
+  if (tokens.length === 1) {
+    return { type: "mcp-list" };
+  }
+
+  const subcommand = tokens[1];
+  if (subcommand === "list") {
+    return createMigrationCommandError(
+      input,
+      "This command was removed. Use /mcp."
+    );
+  }
+
+  if (subcommand === "status") {
+    if (tokens.length === 2) {
+      return { type: "mcp-status" };
+    }
+
+    return {
+      type: "command-error",
+      input,
+      message: "Unsupported /mcp status argument. Use /mcp status."
+    };
+  }
+
+  if (
+    subcommand === "tools" ||
+    subcommand === "resources" ||
+    subcommand === "prompts" ||
+    subcommand === "templates"
+  ) {
+    if (tokens.length === 2) {
+      return {
+        type:
+          subcommand === "tools"
+            ? "mcp-tools"
+            : subcommand === "resources"
+              ? "mcp-resources"
+              : subcommand === "prompts"
+                ? "mcp-prompts"
+                : "mcp-templates"
+      };
+    }
+
+    if (tokens.length === 3) {
+      return {
+        type:
+          subcommand === "tools"
+            ? "mcp-tools"
+            : subcommand === "resources"
+              ? "mcp-resources"
+              : subcommand === "prompts"
+                ? "mcp-prompts"
+                : "mcp-templates",
+        serverName: tokens[2]
+      };
+    }
+
+    return {
+      type: "command-error",
+      input,
+      message: `Unsupported /mcp ${subcommand} argument. Use /mcp ${subcommand} [server].`
+    };
+  }
+
+  if (subcommand === "prompt") {
+    if (tokens.length < 4) {
+      return {
+        type: "command-error",
+        input,
+        message: "Unsupported /mcp prompt argument. Use /mcp prompt <server> <prompt> [key=value ...]."
+      };
+    }
+
+    const serverName = tokens[2]!;
+    const promptName = tokens[3]!;
+    const args: Record<string, string> = {};
+    for (const token of tokens.slice(4)) {
+      const separatorIndex = token.indexOf("=");
+      if (separatorIndex <= 0) {
+        return {
+          type: "command-error",
+          input,
+          message: "Unsupported /mcp prompt argument. Use key=value pairs after the prompt name."
+        };
+      }
+
+      const key = token.slice(0, separatorIndex).trim();
+      const value = token.slice(separatorIndex + 1);
+      if (!key) {
+        return {
+          type: "command-error",
+          input,
+          message: "Unsupported /mcp prompt argument. Argument keys cannot be empty."
+        };
+      }
+
+      args[key] = value;
+    }
+
+    return {
+      type: "mcp-prompt",
+      serverName,
+      promptName,
+      args
+    };
+  }
+
+  if (subcommand === "login") {
+    if (tokens.length !== 3) {
+      return {
+        type: "command-error",
+        input,
+        message: "Unsupported /mcp login argument. Use /mcp login <server>."
+      };
+    }
+
+    return {
+      type: "mcp-login",
+      serverName: tokens[2]!
+    };
+  }
+
+  if (subcommand === "add") {
+    const scopeResult = parseMcpScope(tokens, 2);
+    if (scopeResult.error) {
+      return {
+        type: "command-error",
+        input,
+        message: scopeResult.error
+      };
+    }
+
+    const name = tokens[scopeResult.nextIndex];
+    const transport = tokens[scopeResult.nextIndex + 1];
+    const target = tokens[scopeResult.nextIndex + 2];
+    if (!name || !transport || !target) {
+      return {
+        type: "command-error",
+        input,
+        message: "Unsupported /mcp add argument. Use /mcp add [--user|--project|--local] <name> stdio <command> [args...], http <url>, or sse <url>."
+      };
+    }
+
+    if (transport === "stdio") {
+      return {
+        type: "mcp-add",
+        scope: scopeResult.scope,
+        name,
+        config: {
+          type: "stdio",
+          command: target,
+          ...(tokens.length > scopeResult.nextIndex + 3
+            ? { args: tokens.slice(scopeResult.nextIndex + 3) }
+            : {})
+        }
+      };
+    }
+
+    if (transport === "http" || transport === "streamable_http") {
+      if (tokens.length !== scopeResult.nextIndex + 3) {
+        return {
+          type: "command-error",
+          input,
+          message: "Unsupported /mcp add http argument. Use /mcp add [--user|--project|--local] <name> http <url>."
+        };
+      }
+
+      return {
+        type: "mcp-add",
+        scope: scopeResult.scope,
+        name,
+        config: {
+          type: "streamable_http",
+          url: target
+        }
+      };
+    }
+
+    if (transport === "sse") {
+      if (tokens.length !== scopeResult.nextIndex + 3) {
+        return {
+          type: "command-error",
+          input,
+          message: "Unsupported /mcp add sse argument. Use /mcp add [--user|--project|--local] <name> sse <url>."
+        };
+      }
+
+      return {
+        type: "mcp-add",
+        scope: scopeResult.scope,
+        name,
+        config: {
+          type: "sse",
+          url: target
+        }
+      };
+    }
+
+    return {
+      type: "command-error",
+      input,
+      message: "Unsupported /mcp add transport. Use stdio, http, or sse."
+    };
+  }
+
+  if (subcommand === "remove" || subcommand === "enable" || subcommand === "disable") {
+    const scopeResult = parseMcpScope(tokens, 2);
+    if (scopeResult.error) {
+      return {
+        type: "command-error",
+        input,
+        message: scopeResult.error
+      };
+    }
+
+    if (tokens.length !== scopeResult.nextIndex + 1) {
+      return {
+        type: "command-error",
+        input,
+        message: `Unsupported /mcp ${subcommand} argument. Use /mcp ${subcommand} [--user|--project|--local] <name>.`
+      };
+    }
+
+    const name = tokens[scopeResult.nextIndex]!;
+    if (subcommand === "remove") {
+      return {
+        type: "mcp-remove",
+        scope: scopeResult.scope,
+        name
+      };
+    }
+
+    return {
+      type: "mcp-set-enabled",
+      enabled: subcommand === "enable",
+      scope: scopeResult.scope,
+      name
+    };
+  }
+
+  return {
+    type: "command-error",
+    input,
+    message: "Unsupported /mcp argument. Use /mcp, /mcp status, /mcp add, /mcp remove, /mcp enable, /mcp disable, /mcp tools, /mcp resources, /mcp prompts, /mcp prompt, /mcp templates, or /mcp login."
+  };
+}
+
+function parseMcpScope(
+  tokens: string[],
+  startIndex: number
+): { scope: McpConfigScope; nextIndex: number; error?: string } {
+  const token = tokens[startIndex];
+  if (!token) {
+    return { scope: "project", nextIndex: startIndex };
+  }
+
+  if (token === "--project") {
+    return { scope: "project", nextIndex: startIndex + 1 };
+  }
+
+  if (token === "--user") {
+    return { scope: "user", nextIndex: startIndex + 1 };
+  }
+
+  if (token === "--local") {
+    return { scope: "local", nextIndex: startIndex + 1 };
+  }
+
+  if (token.startsWith("--")) {
+    return {
+      scope: "project",
+      nextIndex: startIndex,
+      error: "Unsupported /mcp scope flag. Use --project, --user, or --local immediately after the subcommand."
+    };
+  }
+
+  return { scope: "project", nextIndex: startIndex };
+}
+
+function tokenizeReplArguments(input: string): string[] {
+  const tokens: string[] = [];
+  let current = "";
+  let quote: "\"" | "'" | null = null;
+
+  for (let index = 0; index < input.length; index += 1) {
+    const character = input[index]!;
+    if (quote) {
+      if (character === "\\" && index + 1 < input.length) {
+        const next = input[index + 1]!;
+        if (next === quote || next === "\\") {
+          current += next;
+          index += 1;
+          continue;
+        }
+      }
+
+      if (character === quote) {
+        quote = null;
+        continue;
+      }
+
+      current += character;
+      continue;
+    }
+
+    if (character === "\"" || character === "'") {
+      quote = character;
+      continue;
+    }
+
+    if (/\s/.test(character)) {
+      if (current) {
+        tokens.push(current);
+        current = "";
+      }
+      continue;
+    }
+
+    current += character;
+  }
+
+  if (current) {
+    tokens.push(current);
+  }
+
+  return tokens;
 }

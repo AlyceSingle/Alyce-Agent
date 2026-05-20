@@ -58,12 +58,54 @@ const SCOPED_APPROVAL_OPTIONS: ApprovalOption[] = [
   }
 ];
 
+const MCP_TOOL_APPROVAL_OPTIONS: ApprovalOption[] = [
+  {
+    id: "allow-once",
+    label: "Allow once",
+    description: "Approve only this MCP tool call."
+  },
+  {
+    id: "reject-once",
+    label: "Reject once",
+    description: "Deny only this MCP tool call."
+  },
+  {
+    id: "allow-tool-session",
+    label: "Allow tool for session",
+    description: "Skip ordinary prompts for this MCP tool until restart."
+  },
+  {
+    id: "ask-tool-persistent",
+    label: "Always ask for tool",
+    description: "Persist a user rule that keeps this MCP tool on ask for future calls."
+  },
+  {
+    id: "allow-tool-persistent",
+    label: "Always allow tool",
+    description: "Persist a user rule that auto-allows this MCP tool."
+  },
+  {
+    id: "deny-tool-persistent",
+    label: "Disable tool",
+    description: "Persist a user rule that denies this MCP tool."
+  },
+  {
+    id: "full-access-session",
+    label: "Switch to Full Access",
+    description: "Use Full Access mode and approve this request."
+  }
+];
+
 export function ApprovalDialog(props: {
   request: ToolApprovalRequest | null;
   onDecision: (decision: PermissionDecision) => void;
 }) {
   const [selectedIndex, setSelectedIndex] = useState(0);
-  const approvalOptions = props.request?.scope ? SCOPED_APPROVAL_OPTIONS : APPROVAL_OPTIONS;
+  const approvalOptions = props.request?.scope
+    ? SCOPED_APPROVAL_OPTIONS
+    : props.request?.kind === "mcp" && props.request.permission?.permission === "mcp.tool"
+      ? MCP_TOOL_APPROVAL_OPTIONS
+      : APPROVAL_OPTIONS;
 
   useRegisterOverlay("permission", Boolean(props.request));
 

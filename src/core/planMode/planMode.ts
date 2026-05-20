@@ -17,6 +17,7 @@ export const PLAN_MODE_ALLOWED_TOOL_NAMES = new Set([
   "WebFetch",
   "WebSearch",
   "McpStatus",
+  "ListMcpTools",
   "ListMcpResources",
   "ReadMcpResource",
   "TaskList",
@@ -37,6 +38,7 @@ const PLAN_MODE_DENIED_TOOL_NAMES = new Set([
   "PtyResize",
   "PtyClose",
   "SkillTool",
+  "CallMcpTool",
   "Edit",
   "MultiEdit",
   "apply_patch",
@@ -44,6 +46,8 @@ const PLAN_MODE_DENIED_TOOL_NAMES = new Set([
 ]);
 
 export const PLAN_MODE_SYSTEM_INSTRUCTIONS = [
+  "Plan Mode summary: inspect safely, ask clarifying questions when needed, and produce an implementation plan without mutating the workspace.",
+  "",
   "# Plan Mode",
   "You are currently in Plan Mode. Your job is to understand the request, inspect safely, ask clarifying questions when needed, and produce a concrete implementation plan.",
   "",

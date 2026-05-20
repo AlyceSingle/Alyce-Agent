@@ -149,8 +149,21 @@ export interface RuntimePaths {
   userPluginsDirectory: string;
 }
 
+export interface RuntimeBootstrapFailure {
+  path: string;
+  error: string;
+}
+
+export interface RuntimeBootstrapReport {
+  createdPaths: string[];
+  existingPaths: string[];
+  failedPaths: RuntimeBootstrapFailure[];
+  firstRun: boolean;
+}
+
 export interface RuntimeConfig {
   paths: RuntimePaths;
+  bootstrap: RuntimeBootstrapReport;
   connection: ConnectionConfig;
   connectionState: ConnectionConfigState;
   settings: SessionSettings;
@@ -297,6 +310,7 @@ export async function loadRuntimeConfig(
 ): Promise<RuntimeConfig> {
   const workspaceRoot = path.resolve(getArgValue(argv, "--cwd") || env.AGENT_WORKSPACE || ".");
   const paths = getRuntimePaths(workspaceRoot);
+  const bootstrap = await ensureRuntimeStoragePaths(paths);
   const [projectConnection, userConnection, projectSettingsFile, userSettingsFile, pluginResult] =
     await Promise.all([
       readJsonConfig(paths.connectionConfigPath, ConnectionConfigFileSchema),
@@ -328,6 +342,7 @@ export async function loadRuntimeConfig(
 
   return {
     paths,
+    bootstrap,
     connection: connectionState.effective,
     connectionState,
     settings: settingsState.effective,
@@ -1033,6 +1048,71 @@ async function readJsonConfig<T>(
     const message = error instanceof Error ? error.message : String(error);
     throw new Error(`Failed to read config file ${filePath}: ${message}`);
   }
+}
+
+async function ensureRuntimeStoragePaths(paths: RuntimePaths): Promise<RuntimeBootstrapReport> {
+  const createdPaths: string[] = [];
+  const existingPaths: string[] = [];
+  const failedPaths: RuntimeBootstrapFailure[] = [];
+
+  for (const directory of getRuntimeBootstrapDirectories(paths)) {
+    try {
+      const stat = await fs.stat(directory);
+      if (!stat.isDirectory()) {
+        failedPaths.push({
+          path: directory,
+          error: "path exists but is not a directory"
+        });
+        continue;
+      }
+
+      existingPaths.push(directory);
+    } catch (error) {
+      if (!isMissingFileError(error)) {
+        failedPaths.push({
+          path: directory,
+          error: error instanceof Error ? error.message : String(error)
+        });
+        continue;
+      }
+
+      try {
+        await fs.mkdir(directory, { recursive: true });
+        createdPaths.push(directory);
+      } catch (mkdirError) {
+        failedPaths.push({
+          path: directory,
+          error: mkdirError instanceof Error ? mkdirError.message : String(mkdirError)
+        });
+      }
+    }
+  }
+
+  return {
+    createdPaths,
+    existingPaths,
+    failedPaths,
+    firstRun: createdPaths.includes(paths.alyceDirectory) || createdPaths.includes(paths.userAlyceDirectory)
+  };
+}
+
+function getRuntimeBootstrapDirectories(paths: RuntimePaths): string[] {
+  return [
+    paths.alyceDirectory,
+    path.join(paths.alyceDirectory, "skills"),
+    paths.projectPluginsDirectory,
+    path.join(paths.alyceDirectory, "agents"),
+    path.join(paths.alyceDirectory, "memory"),
+    path.join(paths.alyceDirectory, "sessions"),
+    path.join(paths.alyceDirectory, "background-processes"),
+    path.join(paths.alyceDirectory, "mcp-output"),
+    path.join(paths.alyceDirectory, "snapshots", "git"),
+    path.join(paths.alyceDirectory, "file-history"),
+    path.join(paths.alyceDirectory, "tasks"),
+    paths.userAlyceDirectory,
+    path.join(paths.userAlyceDirectory, "skills"),
+    paths.userPluginsDirectory
+  ];
 }
 
 async function writeJsonConfig(filePath: string, value: object): Promise<void> {

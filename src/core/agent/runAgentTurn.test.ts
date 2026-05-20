@@ -27,6 +27,113 @@ function createTestContext(
   };
 }
 
+function createMcpRuntime(patch: Partial<ToolExecutionContext["mcpRuntime"]> = {}) {
+  return {
+    getToolSchemas: async () => [],
+    canExecuteTool: () => false,
+    executeNamedToolCall: async () => undefined,
+    executeToolCall: async () => undefined,
+    getStatus: async () => ({ servers: [] }),
+    listTools: async () => ({ servers: [], toolCount: 0 }),
+    listResources: async () => ({ servers: [], resourceCount: 0 }),
+    listPrompts: async () => ({ servers: [], promptCount: 0 }),
+    getPrompt: async (serverName: string, promptName: string) => ({
+      status: "not_found" as const,
+      server: serverName,
+      name: promptName,
+      messages: [],
+      error: "not found"
+    }),
+    listResourceTemplates: async () => ({ servers: [], resourceTemplateCount: 0 }),
+    readResource: async (server: string, uri: string) => ({
+      status: "not_found" as const,
+      server,
+      uri,
+      contents: []
+    }),
+    reloadConfig: async () => undefined,
+    addServer: async (
+      name: Parameters<NonNullable<ToolExecutionContext["mcpRuntime"]>["addServer"]>[0],
+      _config: Parameters<NonNullable<ToolExecutionContext["mcpRuntime"]>["addServer"]>[1],
+      options: Parameters<NonNullable<ToolExecutionContext["mcpRuntime"]>["addServer"]>[2] = {}
+    ) => ({
+      changed: true,
+      scope: options.scope ?? "project",
+      serverName: name,
+      configPath: "C:\\workspace\\.alyce\\mcp.json",
+      state: {
+        paths: {
+          project: "C:\\workspace\\.alyce\\mcp.json",
+          local: "C:\\workspace\\.alyce\\mcp.local.json",
+          user: "C:\\Users\\Single\\.alyce\\mcp.json"
+        },
+        configs: {
+          project: { mcpServers: {} },
+          local: { mcpServers: {} },
+          user: { mcpServers: {} }
+        },
+        effective: { mcpServers: {} },
+        sources: {}
+      }
+    }),
+    removeServer: async (
+      name: Parameters<NonNullable<ToolExecutionContext["mcpRuntime"]>["removeServer"]>[0],
+      options: Parameters<NonNullable<ToolExecutionContext["mcpRuntime"]>["removeServer"]>[1] = {}
+    ) => ({
+      changed: true,
+      scope: options.scope ?? "project",
+      serverName: name,
+      configPath: "C:\\workspace\\.alyce\\mcp.json",
+      state: {
+        paths: {
+          project: "C:\\workspace\\.alyce\\mcp.json",
+          local: "C:\\workspace\\.alyce\\mcp.local.json",
+          user: "C:\\Users\\Single\\.alyce\\mcp.json"
+        },
+        configs: {
+          project: { mcpServers: {} },
+          local: { mcpServers: {} },
+          user: { mcpServers: {} }
+        },
+        effective: { mcpServers: {} },
+        sources: {}
+      }
+    }),
+    setServerEnabled: async (
+      name: Parameters<NonNullable<ToolExecutionContext["mcpRuntime"]>["setServerEnabled"]>[0],
+      _enabled: Parameters<NonNullable<ToolExecutionContext["mcpRuntime"]>["setServerEnabled"]>[1],
+      options: Parameters<NonNullable<ToolExecutionContext["mcpRuntime"]>["setServerEnabled"]>[2] = {}
+    ) => ({
+      changed: true,
+      scope: options.scope ?? "project",
+      serverName: name,
+      configPath: "C:\\workspace\\.alyce\\mcp.json",
+      state: {
+        paths: {
+          project: "C:\\workspace\\.alyce\\mcp.json",
+          local: "C:\\workspace\\.alyce\\mcp.local.json",
+          user: "C:\\Users\\Single\\.alyce\\mcp.json"
+        },
+        configs: {
+          project: { mcpServers: {} },
+          local: { mcpServers: {} },
+          user: { mcpServers: {} }
+        },
+        effective: { mcpServers: {} },
+        sources: {}
+      }
+    }),
+    loginServer: async (serverName: string) => ({
+      status: "completed" as const,
+      server: serverName,
+      message: "Logged in."
+    }),
+    setInteractionHandlers: () => undefined,
+    close: async () => undefined,
+    ...patch
+  };
+}
+
 async function runTests() {
   await testInterruptedToolCallDoesNotLeaveUnansweredAssistantMessage();
   await testRejectedToolApprovalReturnsToolResultAndContinues();
@@ -363,7 +470,7 @@ async function testMcpStatusRefreshesToolsBeforeNextStep() {
       }
     ],
     context: createTestContext(controller.signal, {
-      mcpRuntime: {
+      mcpRuntime: createMcpRuntime({
         getToolSchemas: async () => [],
         canExecuteTool: () => false,
         executeToolCall: async () => undefined,
@@ -376,7 +483,7 @@ async function testMcpStatusRefreshesToolsBeforeNextStep() {
           contents: []
         }),
         close: async () => undefined
-      }
+      })
     })
   });
 
@@ -543,7 +650,7 @@ async function testToolSchemaRefreshFailureContinuesWithWarning() {
       throw new Error("mock refresh failure");
     },
     context: createTestContext(controller.signal, {
-      mcpRuntime: {
+      mcpRuntime: createMcpRuntime({
         getToolSchemas: async () => [],
         canExecuteTool: () => false,
         executeToolCall: async () => undefined,
@@ -556,7 +663,7 @@ async function testToolSchemaRefreshFailureContinuesWithWarning() {
           contents: []
         }),
         close: async () => undefined
-      }
+      })
     })
   });
 

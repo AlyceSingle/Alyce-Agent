@@ -23,6 +23,7 @@ async function runTests() {
   await testMissingEndpointAndModelWarns();
   await testLocalProviderWithoutBaseUrlFailsProviderCheck();
   await testInvalidMcpConfigFails();
+  await testMissingMcpConfigIsReportedAsUnconfigured();
   await testRipgrepUnavailableFails();
   await testSnapshotDiagnosticsWarnsWhenGitTreeUnavailable();
   await testSnapshotDiagnosticsFailsWhenGitTreeAndOverlayUnavailable();
@@ -193,7 +194,26 @@ async function testInvalidMcpConfigFails() {
 
   const check = findCheck(report.checks, "mcp.config");
   assert.equal(check.status, "fail");
-  assert.ok(check.summary.includes("mcp.json"));
+  assert.ok(check.details?.some((detail) => detail.includes("mcp.json")));
+}
+
+async function testMissingMcpConfigIsReportedAsUnconfigured() {
+  const workspaceRoot = await createWorkspace({ includeDist: true });
+  const input = createDoctorInput(workspaceRoot, {
+    connection: createConnectionState(workspaceRoot, { apiKey: "test-key" })
+  });
+
+  const report = await runDoctorDiagnostics(input, {
+    env: { OPENAI_API_KEY: "test-key" },
+    nodeVersion: "20.10.0",
+    stdinIsTTY: true,
+    stdoutIsTTY: true,
+    runCommand: fakeCommandRunner
+  });
+
+  const check = findCheck(report.checks, "mcp.config");
+  assert.equal(check.status, "ok");
+  assert.match(check.summary, /No MCP config files found yet/);
 }
 
 async function testRipgrepUnavailableFails() {
@@ -324,7 +344,7 @@ function createDoctorInput(
     snapshotDiagnostics?: DoctorRuntimeInput["snapshotDiagnostics"];
   } = {}
 ): DoctorRuntimeInput {
-  const paths = getRuntimePaths(workspaceRoot);
+  const paths = createRuntimePathsForTest(workspaceRoot);
   const settingsState = overrides.settings ?? buildSessionSettingsState(paths, {});
   const connectionState = overrides.connection ?? createConnectionState(workspaceRoot, {});
 
@@ -366,9 +386,20 @@ function createConnectionState(
   workspaceRoot: string,
   env: Partial<{ apiKey: string; baseURL: string; model: string }>
 ): ConnectionConfigState {
-  return buildConnectionConfigState(getRuntimePaths(workspaceRoot), {
+  return buildConnectionConfigState(createRuntimePathsForTest(workspaceRoot), {
     env
   });
+}
+
+function createRuntimePathsForTest(workspaceRoot: string) {
+  const userHomeDirectory = path.join(workspaceRoot, "user-home");
+  return {
+    ...getRuntimePaths(workspaceRoot),
+    userAlyceDirectory: path.join(userHomeDirectory, ".alyce"),
+    userConnectionConfigPath: path.join(userHomeDirectory, ".alyce", "config.json"),
+    userSettingsConfigPath: path.join(userHomeDirectory, ".alyce", "settings.json"),
+    userPluginsDirectory: path.join(userHomeDirectory, ".alyce", "plugins")
+  };
 }
 
 async function fakeCommandRunner(command: string): Promise<DoctorCommandResult> {

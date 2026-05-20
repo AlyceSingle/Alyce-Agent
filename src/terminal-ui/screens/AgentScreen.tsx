@@ -9,6 +9,7 @@ import { TodoPanel } from "../components/TodoPanel.js";
 import { TaskPanel } from "../components/TaskPanel.js";
 import { ApprovalDialog } from "../components/ApprovalDialog.js";
 import { AskUserQuestionDialog } from "../components/AskUserQuestionDialog.js";
+import { McpElicitationDialog } from "../components/McpElicitationDialog.js";
 import { ConnectProviderDialog } from "../components/ConnectProviderDialog.js";
 import { ModelPickerDialog } from "../components/ModelPickerDialog.js";
 import { SettingsDialog } from "../components/SettingsDialog.js";
@@ -410,7 +411,7 @@ export function AgentScreen(props: { controller: SessionController }) {
   }, [hasDialog, messages.length, terminalHeight, terminalWidth, transcriptSticky]);
 
   const displayedStatusText =
-    copyStatusText ?? (historyEscPending ? "Press ESC again to open input history." : statusText);
+    copyStatusText ?? (historyEscPending ? "Press ESC again to open revert history." : statusText);
   const completedTodoCount = todos.filter((todo) => todo.status === "completed").length;
   const todoSummary = todos.length > 0 ? `${completedTodoCount}/${todos.length}` : undefined;
   const taskSummary = backgroundTasks.length > 0 ? `${backgroundTasks.length} run` : "";
@@ -440,6 +441,13 @@ export function AgentScreen(props: { controller: SessionController }) {
         request={activeDialog.request}
         onSubmit={(response) => props.controller.respondToQuestion(response)}
         onCancel={() => props.controller.respondToQuestion(null)}
+      />
+    ) : activeDialog?.type === "mcp-elicitation" ? (
+      <McpElicitationDialog
+        request={activeDialog.request}
+        onSubmit={(response) => props.controller.respondToMcpElicitation(response)}
+        onCancel={() => props.controller.respondToMcpElicitation({ action: "cancel" })}
+        onDecline={() => props.controller.respondToMcpElicitation({ action: "decline" })}
       />
     ) : activeDialog?.type === "settings" ? (
       <SettingsDialog

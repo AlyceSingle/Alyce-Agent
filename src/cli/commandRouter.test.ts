@@ -8,7 +8,9 @@ import {
 function runTests() {
   testHelpUsesSharedCommandDefinitions();
   testCommandMetadataCompletionsAreUnique();
+  testArgumentCommandsUseBareCompletions();
   testParserHandlesRepresentedCommands();
+  testDeprecatedCommandsAreHiddenFromHelp();
   testAdjacentCommandPrefixesRemainUnknown();
   testPlanBuildScopeDoesNotExposeDeferredModes();
   console.log("commandRouter tests passed");
@@ -32,6 +34,16 @@ function testCommandMetadataCompletionsAreUnique() {
   assert.equal(new Set(completions).size, completions.length);
 }
 
+function testArgumentCommandsUseBareCompletions() {
+  const connect = REPL_COMMAND_DEFINITIONS.find((command) => command.command === "/connect");
+  const logout = REPL_COMMAND_DEFINITIONS.find((command) => command.command === "/logout");
+  const remember = REPL_COMMAND_DEFINITIONS.find((command) => command.command === "/remember");
+
+  assert.equal(connect?.completion, "/connect");
+  assert.equal(logout?.completion, "/logout");
+  assert.equal(remember?.completion, "/remember");
+}
+
 function testParserHandlesRepresentedCommands() {
   assert.deepEqual(parseReplCommand("/help"), { type: "help" });
   assert.deepEqual(parseReplCommand("/doctor"), { type: "doctor" });
@@ -46,8 +58,9 @@ function testParserHandlesRepresentedCommands() {
     message: "Unsupported /permissions argument. Use /permissions."
   });
   assert.deepEqual(parseReplCommand("/setup"), {
-    type: "connect-provider",
-    args: []
+    type: "command-error",
+    input: "/setup",
+    message: "This command was removed. Use /connect to manage provider connections."
   });
   assert.deepEqual(parseReplCommand("/connect"), {
     type: "connect-provider",
@@ -79,8 +92,9 @@ function testParserHandlesRepresentedCommands() {
     taskId: "task-1"
   });
   assert.deepEqual(parseReplCommand("/tasks log task-1"), {
-    type: "tasks-get",
-    taskId: "task-1"
+    type: "command-error",
+    input: "/tasks log task-1",
+    message: "This command was removed. Use /tasks get task-1."
   });
   assert.deepEqual(parseReplCommand("/tasks stop task-1"), {
     type: "tasks-stop",
@@ -94,7 +108,9 @@ function testParserHandlesRepresentedCommands() {
     type: "processes-list"
   });
   assert.deepEqual(parseReplCommand("/bg"), {
-    type: "processes-list"
+    type: "command-error",
+    input: "/bg",
+    message: "This command was removed. Use /processes."
   });
   assert.deepEqual(parseReplCommand("/stop bg_test"), {
     type: "process-stop",
@@ -108,7 +124,7 @@ function testParserHandlesRepresentedCommands() {
   assert.deepEqual(parseReplCommand("/processes all"), {
     type: "command-error",
     input: "/processes all",
-    message: "Unsupported background process list argument. Use /processes or /bg."
+    message: "Unsupported background process list argument. Use /processes."
   });
   assert.deepEqual(parseReplCommand("/usage"), { type: "usage-view" });
   assert.deepEqual(parseReplCommand("/usage now"), {
@@ -116,27 +132,141 @@ function testParserHandlesRepresentedCommands() {
     input: "/usage now",
     message: "Unsupported /usage argument. Use /usage."
   });
+  assert.deepEqual(parseReplCommand("/skills"), { type: "skills-list" });
+  assert.deepEqual(parseReplCommand("/skills list"), {
+    type: "command-error",
+    input: "/skills list",
+    message: "This command was removed. Use /skills."
+  });
+  assert.deepEqual(parseReplCommand("/skills review"), {
+    type: "skills-view",
+    name: "review"
+  });
+  assert.deepEqual(parseReplCommand("/skills show review"), {
+    type: "command-error",
+    input: "/skills show review",
+    message: "This command was removed. Use /skills review."
+  });
+  assert.deepEqual(parseReplCommand("/skills show"), {
+    type: "command-error",
+    input: "/skills show",
+    message: "This command was removed. Use /skills <name>."
+  });
+  assert.deepEqual(parseReplCommand("/skills refresh"), { type: "skills-refresh" });
+  assert.deepEqual(parseReplCommand("/skills disable review"), {
+    type: "skills-set-enabled",
+    enabled: false,
+    target: "project",
+    reference: { kind: "name", value: "review" }
+  });
+  assert.deepEqual(parseReplCommand("/skills enable --user --bundled"), {
+    type: "skills-set-enabled",
+    enabled: true,
+    target: "user",
+    reference: { kind: "bundled" }
+  });
+  assert.deepEqual(parseReplCommand("/skills disable --path .alyce/skills/review/SKILL.md"), {
+    type: "skills-set-enabled",
+    enabled: false,
+    target: "project",
+    reference: { kind: "path", value: ".alyce/skills/review/SKILL.md" }
+  });
+  assert.deepEqual(parseReplCommand("/mcp"), { type: "mcp-list" });
+  assert.deepEqual(parseReplCommand("/mcp list"), {
+    type: "command-error",
+    input: "/mcp list",
+    message: "This command was removed. Use /mcp."
+  });
+  assert.deepEqual(parseReplCommand("/mcp status"), { type: "mcp-status" });
+  assert.deepEqual(parseReplCommand("/mcp tools chrome"), {
+    type: "mcp-tools",
+    serverName: "chrome"
+  });
+  assert.deepEqual(parseReplCommand("/mcp resources"), {
+    type: "mcp-resources"
+  });
+  assert.deepEqual(parseReplCommand("/mcp prompts"), {
+    type: "mcp-prompts"
+  });
+  assert.deepEqual(parseReplCommand("/mcp templates remote"), {
+    type: "mcp-templates",
+    serverName: "remote"
+  });
+  assert.deepEqual(parseReplCommand('/mcp prompt remote summarize topic="release notes" style=short'), {
+    type: "mcp-prompt",
+    serverName: "remote",
+    promptName: "summarize",
+    args: {
+      topic: "release notes",
+      style: "short"
+    }
+  });
+  assert.deepEqual(parseReplCommand("/mcp login remote"), {
+    type: "mcp-login",
+    serverName: "remote"
+  });
+  assert.deepEqual(parseReplCommand("/mcp add chrome stdio npx -y chrome-devtools-mcp@latest"), {
+    type: "mcp-add",
+    scope: "project",
+    name: "chrome",
+    config: {
+      type: "stdio",
+      command: "npx",
+      args: ["-y", "chrome-devtools-mcp@latest"]
+    }
+  });
+  assert.deepEqual(parseReplCommand('/mcp add --user remote http "https://example.com/mcp"'), {
+    type: "mcp-add",
+    scope: "user",
+    name: "remote",
+    config: {
+      type: "streamable_http",
+      url: "https://example.com/mcp"
+    }
+  });
+  assert.deepEqual(parseReplCommand("/mcp disable --local chrome"), {
+    type: "mcp-set-enabled",
+    enabled: false,
+    scope: "local",
+    name: "chrome"
+  });
+  assert.deepEqual(parseReplCommand("/mcp remove chrome extra"), {
+    type: "command-error",
+    input: "/mcp remove chrome extra",
+    message: "Unsupported /mcp remove argument. Use /mcp remove [--user|--project|--local] <name>."
+  });
+  assert.deepEqual(parseReplCommand("/mcp prompt remote summarize topic"), {
+    type: "command-error",
+    input: "/mcp prompt remote summarize topic",
+    message: "Unsupported /mcp prompt argument. Use key=value pairs after the prompt name."
+  });
   assert.deepEqual(parseReplCommand("/tasks resume task-1"), {
     type: "command-error",
     input: "/tasks resume task-1",
     message: "/tasks resume is not supported yet. Use AgentTool with an existing task_id when a resumable task model is available."
   });
+  assert.deepEqual(parseReplCommand("/rewind"), {
+    type: "command-error",
+    input: "/rewind",
+    message: "This command was removed. Use /revert to open revert history."
+  });
   assert.deepEqual(parseReplCommand("/revert"), {
-    type: "revert",
-    mode: "prompt"
+    type: "revert"
   });
   assert.deepEqual(parseReplCommand("/revert --files-only"), {
-    type: "revert",
-    mode: "files-only"
+    type: "command-error",
+    input: "/revert --files-only",
+    message: "Revert flags were removed. Use /revert and choose an action from the revert history."
   });
   assert.deepEqual(parseReplCommand("/revert --conversation-only"), {
-    type: "revert",
-    mode: "conversation-only"
+    type: "command-error",
+    input: "/revert --conversation-only",
+    message: "Revert flags were removed. Use /revert and choose an action from the revert history."
   });
   assert.deepEqual(parseReplCommand("/revert last"), {
     type: "command-error",
     input: "/revert last",
-    message: "Unsupported /revert argument. Use /revert, /revert --files-only, or /revert --conversation-only."
+    message: "Revert flags were removed. Use /revert and choose an action from the revert history."
   });
   assert.deepEqual(parseReplCommand("/diff"), {
     type: "diff-view",
@@ -160,8 +290,16 @@ function testParserHandlesRepresentedCommands() {
     message: "Unsupported /diff argument. Use /diff, /diff last, /diff current, or /diff <turn>."
   });
   assert.deepEqual(parseReplCommand("/model"), { type: "open-model-picker" });
-  assert.deepEqual(parseReplCommand("/model list"), { type: "model-view" });
-  assert.deepEqual(parseReplCommand("/models"), { type: "open-model-picker" });
+  assert.deepEqual(parseReplCommand("/model list"), {
+    type: "command-error",
+    input: "/model list",
+    message: "This command was removed. Use /model to open the model picker."
+  });
+  assert.deepEqual(parseReplCommand("/models"), {
+    type: "command-error",
+    input: "/models",
+    message: "This command was removed. Use /model to open the model picker."
+  });
   assert.deepEqual(parseReplCommand("/model openrouter/openai/gpt-5.2"), {
     type: "switch-model",
     model: "openrouter/openai/gpt-5.2"
@@ -176,6 +314,19 @@ function testParserHandlesRepresentedCommands() {
     input: "/build now",
     message: "Unsupported /build argument. In Alyce, /build only exits Plan Mode; run build commands as normal prompts or approved shell commands."
   });
+}
+
+function testDeprecatedCommandsAreHiddenFromHelp() {
+  const exposedCommands = new Set(REPL_COMMAND_DEFINITIONS.map((command) => command.command));
+
+  for (const command of [
+    "/setup",
+    "/rewind",
+    "/models",
+    "/bg"
+  ]) {
+    assert.equal(exposedCommands.has(command), false);
+  }
 }
 
 function testAdjacentCommandPrefixesRemainUnknown() {

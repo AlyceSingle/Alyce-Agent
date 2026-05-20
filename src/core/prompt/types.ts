@@ -1,4 +1,5 @@
 import type { MemoryPromptContext } from "../memory/types.js";
+import type { SkillPromptContext } from "../../skills/service.js";
 
 // 提示词运行时上下文：由当前会话状态与环境信息组成。
 export interface PromptRuntimeContext {
@@ -10,6 +11,7 @@ export interface PromptRuntimeContext {
   timeZone: string;
   platform: string;
   availableTools: string[];
+  availableSkills?: SkillPromptContext;
   memory?: MemoryPromptContext;
 }
 

@@ -4,10 +4,15 @@ interface JsonRpcMessage {
   id?: string | number | null;
   method?: string;
   params?: {
-    arguments?: {
-      text?: string;
-    };
+    name?: string;
+    arguments?: Record<string, unknown>;
     uri?: string;
+    requestedSchema?: unknown;
+    message?: string;
+  };
+  result?: {
+    action?: string;
+    content?: Record<string, unknown>;
   };
 }
 
@@ -20,8 +25,36 @@ function send(message: unknown) {
   process.stdout.write(JSON.stringify(message) + "\n");
 }
 
+let pendingToolCallId: string | number | null | undefined;
+let pendingElicitationId: string | null = null;
+
 rl.on("line", (line) => {
   const message = JSON.parse(line) as JsonRpcMessage;
+  if (!message.method && message.id === pendingElicitationId && pendingToolCallId !== undefined) {
+    const content = message.result?.content ?? {};
+    const environment = typeof content.environment === "string" ? content.environment : "unknown";
+    const includeLogs = content.include_logs === true ? "with-logs" : "without-logs";
+    send({
+      jsonrpc: "2.0",
+      id: pendingToolCallId,
+      result: {
+        content: [
+          {
+            type: "text",
+            text: `deploy:${environment}:${includeLogs}`
+          }
+        ],
+        structuredContent: {
+          environment,
+          includeLogs: content.include_logs === true
+        }
+      }
+    });
+    pendingToolCallId = undefined;
+    pendingElicitationId = null;
+    return;
+  }
+
   if (!("id" in message)) {
     return;
   }
@@ -34,7 +67,8 @@ rl.on("line", (line) => {
         protocolVersion: "2025-11-25",
         capabilities: {
           tools: {},
-          resources: {}
+          resources: {},
+          prompts: {}
         },
         serverInfo: {
           name: "alyce-mock-mcp",
@@ -63,6 +97,19 @@ rl.on("line", (line) => {
               },
               required: ["text"]
             }
+          },
+          {
+            name: "collect_deploy_info",
+            description: "Collect deploy settings through elicitation.",
+            inputSchema: {
+              type: "object",
+              properties: {
+                label: {
+                  type: "string"
+                }
+              },
+              required: ["label"]
+            }
           }
         ]
       }
@@ -71,6 +118,37 @@ rl.on("line", (line) => {
   }
 
   if (message.method === "tools/call") {
+    if (message.params?.name === "collect_deploy_info") {
+      pendingToolCallId = message.id;
+      pendingElicitationId = "mock-elicitation-1";
+      send({
+        jsonrpc: "2.0",
+        id: pendingElicitationId,
+        method: "elicitation/create",
+        params: {
+          message: "Choose a deploy target for this run.",
+          requestedSchema: {
+            type: "object",
+            properties: {
+              environment: {
+                type: "string",
+                title: "Environment",
+                enum: ["staging", "production"],
+                default: "staging"
+              },
+              include_logs: {
+                type: "boolean",
+                title: "Include Logs",
+                default: true
+              }
+            },
+            required: ["environment", "include_logs"]
+          }
+        }
+      });
+      return;
+    }
+
     const text = message.params?.arguments?.text ?? "";
     send({
       jsonrpc: "2.0",
@@ -85,6 +163,51 @@ rl.on("line", (line) => {
         structuredContent: {
           echoed: text
         }
+      }
+    });
+    return;
+  }
+
+  if (message.method === "prompts/list") {
+    send({
+      jsonrpc: "2.0",
+      id: message.id,
+      result: {
+        prompts: [
+          {
+            name: "summarize_release",
+            description: "Summarize a release topic.",
+            arguments: [
+              {
+                name: "topic",
+                required: true
+              }
+            ]
+          }
+        ]
+      }
+    });
+    return;
+  }
+
+  if (message.method === "prompts/get") {
+    const topic = typeof message.params?.arguments?.topic === "string"
+      ? message.params.arguments.topic
+      : "release notes";
+    send({
+      jsonrpc: "2.0",
+      id: message.id,
+      result: {
+        description: "Mock prompt payload.",
+        messages: [
+          {
+            role: "user",
+            content: {
+              type: "text",
+              text: `Summarize ${topic}.`
+            }
+          }
+        ]
       }
     });
     return;
@@ -109,6 +232,23 @@ rl.on("line", (line) => {
             description: "A binary fixture resource.",
             mimeType: "application/octet-stream",
             size: 4
+          }
+        ]
+      }
+    });
+    return;
+  }
+
+  if (message.method === "resources/templates/list") {
+    send({
+      jsonrpc: "2.0",
+      id: message.id,
+      result: {
+        resourceTemplates: [
+          {
+            uriTemplate: "mock://repo/{owner}/{name}",
+            name: "Repository",
+            mimeType: "application/json"
           }
         ]
       }

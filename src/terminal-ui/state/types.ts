@@ -11,6 +11,7 @@ import type {
   ToolApprovalRequest,
   ToolPermissionKind
 } from "../../tools/types.js";
+import type { McpElicitationRequest } from "../../mcp/types.js";
 import type { SessionHistoryListItem } from "../../core/session-history/types.js";
 import type { ContextBudgetSnapshot } from "../../core/context/contextBudget.js";
 import type {
@@ -55,7 +56,7 @@ export interface TerminalUiMessage {
 
 export type SettingsSection = "connection" | "session";
 
-export type RewindRestoreMode = "conversation" | "code-and-conversation";
+export type RewindRestoreMode = "files-only" | "conversation" | "code-and-conversation";
 
 export interface ModelPickerDialogState {
   status: "loading" | "ready";
@@ -70,6 +71,7 @@ export interface TerminalUiRewindPoint {
   input: string;
   createdAt: string;
   hasCodeChanges: boolean;
+  canRestoreFilesOnly: boolean;
   canRestoreCode: boolean;
   hasUnsafeToolActivity: boolean;
   turnsRemoved: number;
@@ -85,12 +87,17 @@ export type PermissionDecision =
   | "allow-once"
   | "reject-once"
   | "allow-kind-session"
+  | "allow-tool-session"
+  | "allow-tool-persistent"
+  | "ask-tool-persistent"
+  | "deny-tool-persistent"
   | "allow-scope-session"
   | "full-access-session";
 
 export type ActiveDialog =
   | { type: "permission"; layer: "overlay"; request: ToolApprovalRequest }
   | { type: "question"; layer: "overlay"; request: AskUserQuestionRequest }
+  | { type: "mcp-elicitation"; layer: "overlay"; request: McpElicitationRequest }
   | { type: "settings"; layer: "overlay"; section: SettingsSection; reason?: string }
   | { type: "permissions"; layer: "overlay" }
   | { type: "connect-provider"; layer: "modal" }
@@ -102,6 +109,7 @@ export type TerminalUiOverlayId =
   | "permission"
   | "permissions"
   | "question"
+  | "mcp-elicitation"
   | "settings"
   | "rewind-picker";
 

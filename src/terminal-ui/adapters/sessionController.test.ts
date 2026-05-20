@@ -23,9 +23,29 @@ async function runTests() {
   testBackgroundPanelOnlyShowsRunningNonAutoReviewerTasks();
   testBackgroundProcessCountOnlyIncludesRunningProcesses();
   testParseAutoReviewDecision();
+  testFormatPromptSkillSummary();
   await testSettingsCommandOpensSessionSettings();
   await testConnectCommandOpensInteractiveDialog();
   await testModelCommandOpensInteractiveDialog();
+  await testLegacyModelCommandShowsMigrationError();
+  await testSkillsCommandListsAvailableSkills();
+  await testSkillsCommandEmptyStateShowsSkillRoots();
+  await testSkillsCommandShowsSkillDetails();
+  await testLegacySkillsShowCommandShowsMigrationError();
+  await testSkillsDisableCommandUpdatesRuntime();
+  await testSkillsRefreshCommandShowsRefreshSummary();
+  await testSkillsCommandFailureShowsErrorMessage();
+  await testMcpListCommandShowsServers();
+  await testMcpStatusCommandInitializesRuntime();
+  await testMcpStatusCommandEmptyStateShowsConfigPaths();
+  await testMcpPromptsCommandShowsPromptSummary();
+  await testMcpPromptCommandShowsPromptMessages();
+  await testMcpTemplatesCommandShowsTemplates();
+  await testMcpAddCommandUpdatesRuntime();
+  await testMcpDisableCommandUpdatesRuntime();
+  await testMcpCommandFailureShowsErrorMessage();
+  await testMcpLoginCommandShowsResult();
+  testInitializeShowsRuntimeBootstrapSummary();
   await testConnectDialogSubmissionAppliesProviderConnection();
   await testConnectDialogOAuthFlowAppliesProviderAuth();
   testConnectDialogCancelClearsPendingProviderAuth();
@@ -172,6 +192,42 @@ function testParseAutoReviewDecision() {
   assert.equal(parse("not json"), null);
 }
 
+function testFormatPromptSkillSummary() {
+  const format = __SESSION_CONTROLLER_TESTING__.formatPromptSkillSummary;
+
+  assert.equal(format({
+    generatedMessages: [],
+    loadedSkillNames: [],
+    unresolvedMentions: ["HOME"],
+    disabledMentions: [],
+    duplicateWarnings: [],
+    dependencyWarnings: []
+  }), null);
+
+  assert.match(
+    format({
+      generatedMessages: [],
+      loadedSkillNames: ["code-review"],
+      unresolvedMentions: ["missing-skill"],
+      disabledMentions: ["disabled-skill"],
+      duplicateWarnings: ["Project skill 'code-review' overrides user skill."],
+      dependencyWarnings: ["Skill 'code-review' requires MCP server 'github', but it is not configured."]
+    }) ?? "",
+    /Loaded skill context from prompt mentions: code-review/
+  );
+  assert.match(
+    format({
+      generatedMessages: [],
+      loadedSkillNames: ["code-review"],
+      unresolvedMentions: ["missing-skill"],
+      disabledMentions: ["disabled-skill"],
+      duplicateWarnings: ["Project skill 'code-review' overrides user skill."],
+      dependencyWarnings: ["Skill 'code-review' requires MCP server 'github', but it is not configured."]
+    }) ?? "",
+    /requires MCP server 'github'/
+  );
+}
+
 async function testSettingsCommandOpensSessionSettings() {
   const runtime = createRuntimeStub({});
   const store = createTerminalUiStore(createInitialState());
@@ -195,32 +251,493 @@ async function testConnectCommandOpensInteractiveDialog() {
 }
 
 async function testModelCommandOpensInteractiveDialog() {
-  for (const command of ["/model", "/models"]) {
-    let refreshCalled = false;
-    const runtime = createRuntimeStub({
-      refreshCurrentProviderModels: async () => {
-        refreshCalled = true;
-        return {
-          providerId: "openai",
-          providerLabel: "OpenAI",
-          models: {
-            "gpt-live": { label: "GPT Live" }
+  let refreshCalled = false;
+  const runtime = createRuntimeStub({
+    refreshCurrentProviderModels: async () => {
+      refreshCalled = true;
+      return {
+        providerId: "openai",
+        providerLabel: "OpenAI",
+        models: {
+          "gpt-live": { label: "GPT Live" }
+        },
+        source: "live"
+      };
+    }
+  });
+  const store = createTerminalUiStore(createInitialState());
+  const controller = createSessionController(runtime, store);
+
+  await controller.submit("/model");
+
+  const dialog = store.getState().dialogQueue[0];
+  assert.equal(refreshCalled, true);
+  assert.equal(dialog?.type, "model-picker");
+  assert.equal(dialog?.type === "model-picker" ? dialog.state.status : "", "ready");
+  assert.equal(dialog?.type === "model-picker" ? dialog.state.source : "", "live");
+}
+
+async function testLegacyModelCommandShowsMigrationError() {
+  const runtime = createRuntimeStub({});
+  const store = createTerminalUiStore(createInitialState());
+  const controller = createSessionController(runtime, store);
+
+  await controller.submit("/models");
+
+  assert.match(lastMessage(store.getState().messages)?.content ?? "", /Use \/model/);
+}
+
+async function testSkillsCommandListsAvailableSkills() {
+  const runtime = createRuntimeStub({
+    listSkills: async () => ({
+      skills: [
+        {
+          id: "project:code-review:123456",
+          name: "code-review",
+          normalizedName: "code-review",
+          description: "Review code changes.",
+          shortDescription: "Review code changes.",
+          whenToUse: "Use when the user asks for a review.",
+          allowedTools: ["Read"],
+          activationPaths: [],
+          dependencies: [],
+          source: "project",
+          skillFilePath: "C:\\workspace\\.alyce\\skills\\code-review\\SKILL.md",
+          baseDirectory: "C:\\workspace\\.alyce\\skills\\code-review",
+          content: "# skill",
+          sampleFiles: [],
+          duplicatePaths: []
+        }
+      ],
+      disabledSkills: [],
+      duplicateWarnings: [],
+      disabledWarnings: [],
+      configWarnings: []
+    })
+  });
+  const store = createTerminalUiStore(createInitialState());
+  const controller = createSessionController(runtime, store);
+
+  await controller.submit("/skills");
+
+  assert.match(lastMessage(store.getState().messages)?.content ?? "", /Available skills/);
+  assert.match(lastMessage(store.getState().messages)?.content ?? "", /code-review/);
+}
+
+async function testSkillsCommandEmptyStateShowsSkillRoots() {
+  const runtime = createRuntimeStub({});
+  const store = createTerminalUiStore(createInitialState());
+  const controller = createSessionController(runtime, store);
+
+  await controller.submit("/skills");
+
+  const output = lastMessage(store.getState().messages)?.content ?? "";
+  assert.match(output, /Skill roots:/);
+  assert.match(output, /No SKILL\.md files were found/);
+  assert.match(output, /C:\\workspace\\\.alyce\\skills/);
+}
+
+async function testSkillsCommandShowsSkillDetails() {
+  const runtime = createRuntimeStub({
+    listSkills: async () => ({
+      skills: [
+        {
+          id: "project:code-review:123456",
+          name: "code-review",
+          normalizedName: "code-review",
+          description: "Review code changes.",
+          shortDescription: "Review code changes.",
+          whenToUse: "Use when the user asks for a review.",
+          allowedTools: ["Read", "Edit"],
+          activationPaths: ["src/**/*.ts"],
+          dependencies: [],
+          source: "project",
+          skillFilePath: "C:\\workspace\\.alyce\\skills\\code-review\\SKILL.md",
+          baseDirectory: "C:\\workspace\\.alyce\\skills\\code-review",
+          content: "# skill",
+          sampleFiles: ["template.md"],
+          duplicatePaths: []
+        }
+      ],
+      disabledSkills: [],
+      duplicateWarnings: [],
+      disabledWarnings: [],
+      configWarnings: []
+    })
+  });
+  const store = createTerminalUiStore(createInitialState());
+  const controller = createSessionController(runtime, store);
+
+  await controller.submit("/skills code-review");
+
+  assert.match(lastMessage(store.getState().messages)?.content ?? "", /Skill code-review/);
+  assert.match(lastMessage(store.getState().messages)?.content ?? "", /Allowed tools: Read, Edit/);
+}
+
+async function testLegacySkillsShowCommandShowsMigrationError() {
+  const runtime = createRuntimeStub({});
+  const store = createTerminalUiStore(createInitialState());
+  const controller = createSessionController(runtime, store);
+
+  await controller.submit("/skills show code-review");
+
+  assert.match(lastMessage(store.getState().messages)?.content ?? "", /Use \/skills code-review/);
+}
+
+async function testSkillsDisableCommandUpdatesRuntime() {
+  let received: { enabled: boolean; target: string; kind: string; value?: string } | null = null;
+  const runtime = createRuntimeStub({
+    setSkillEnabled: async (reference, enabled, target) => {
+      received = { enabled, target, kind: reference.kind, value: "value" in reference ? reference.value : undefined };
+      return {
+        changed: true,
+        target,
+        configPath: "C:\\workspace\\.alyce\\skills.json",
+        catalog: {
+          skills: [],
+          disabledSkills: [],
+          duplicateWarnings: [],
+          disabledWarnings: [],
+          configWarnings: []
+        },
+        message: "Disabled skill 'code-review' in project config."
+      };
+    }
+  });
+  const store = createTerminalUiStore(createInitialState());
+  const controller = createSessionController(runtime, store);
+
+  await controller.submit("/skills disable code-review");
+
+  assert.deepEqual(received, {
+    enabled: false,
+    target: "project",
+    kind: "name",
+    value: "code-review"
+  });
+  assert.match(lastMessage(store.getState().messages)?.content ?? "", /Disabled skill 'code-review'/);
+}
+
+async function testSkillsRefreshCommandShowsRefreshSummary() {
+  const runtime = createRuntimeStub({
+    refreshSkills: async () => ({
+      skills: [],
+      disabledSkills: [
+        {
+          id: "bundled:test-fix:test-fix",
+          name: "test-fix",
+          normalizedName: "test-fix",
+          description: "Fix tests.",
+          shortDescription: "Fix tests.",
+          allowedTools: [],
+          activationPaths: [],
+          dependencies: [],
+          source: "bundled",
+          skillFilePath: "bundled://test-fix/SKILL.md",
+          baseDirectory: "bundled://test-fix",
+          content: "# skill",
+          sampleFiles: [],
+          duplicatePaths: [],
+          disabledReason: "bundled skills are disabled by config"
+        }
+      ],
+      duplicateWarnings: [],
+      disabledWarnings: [],
+      configWarnings: []
+    })
+  });
+  const store = createTerminalUiStore(createInitialState());
+  const controller = createSessionController(runtime, store);
+
+  await controller.submit("/skills refresh");
+
+  assert.match(lastMessage(store.getState().messages)?.content ?? "", /Skill catalog refreshed/);
+  assert.match(lastMessage(store.getState().messages)?.content ?? "", /Disabled: 1/);
+}
+
+async function testSkillsCommandFailureShowsErrorMessage() {
+  const runtime = createRuntimeStub({
+    setSkillEnabled: async () => {
+      throw new Error("Unknown skill: missing-skill");
+    }
+  });
+  const store = createTerminalUiStore(createInitialState());
+  const controller = createSessionController(runtime, store);
+
+  await controller.submit("/skills enable missing-skill");
+
+  assert.match(lastMessage(store.getState().messages)?.content ?? "", /Command failed: Unknown skill: missing-skill/);
+  assert.equal(store.getState().statusText, "Error");
+}
+
+async function testMcpListCommandShowsServers() {
+  const runtime = createRuntimeStub({
+    getMcpStatus: async () => ({
+      servers: [{
+        name: "chrome",
+        scope: "project",
+        enabled: true,
+        required: false,
+        status: "not_initialized",
+        transport: "stdio",
+        endpoint: "npx -y chrome-devtools-mcp@latest",
+        capabilities: {
+          tools: false,
+          resources: false,
+          prompts: false
+        },
+        toolCount: 0,
+        directToolCount: 0,
+        hiddenToolCount: 0,
+        toolExposure: "direct"
+      }]
+    })
+  });
+  const store = createTerminalUiStore(createInitialState());
+  const controller = createSessionController(runtime, store);
+
+  await controller.submit("/mcp");
+
+  assert.match(lastMessage(store.getState().messages)?.content ?? "", /Configured MCP servers/);
+  assert.match(lastMessage(store.getState().messages)?.content ?? "", /chrome/);
+}
+
+async function testMcpStatusCommandInitializesRuntime() {
+  const initializeValues: Array<boolean | undefined> = [];
+  const runtime = createRuntimeStub({
+    getMcpStatus: async (options) => {
+      initializeValues.push(options?.initialize);
+      return { servers: [] };
+    }
+  });
+  const store = createTerminalUiStore(createInitialState());
+  const controller = createSessionController(runtime, store);
+
+  await controller.submit("/mcp status");
+
+  assert.deepEqual(initializeValues, [true]);
+  assert.match(lastMessage(store.getState().messages)?.content ?? "", /MCP status/);
+}
+
+async function testMcpStatusCommandEmptyStateShowsConfigPaths() {
+  const runtime = createRuntimeStub({});
+  const store = createTerminalUiStore(createInitialState());
+  const controller = createSessionController(runtime, store);
+
+  await controller.submit("/mcp status");
+
+  const output = lastMessage(store.getState().messages)?.content ?? "";
+  assert.match(output, /Config files:/);
+  assert.match(output, /No MCP config files exist yet/);
+  assert.match(output, /C:\\workspace\\\.alyce\\mcp\.json/);
+}
+
+async function testMcpPromptsCommandShowsPromptSummary() {
+  const runtime = createRuntimeStub({
+    listMcpPrompts: async () => ({
+      servers: [{
+        server: "remote",
+        status: "completed",
+        prompts: [{
+          server: "remote",
+          name: "summarize",
+          description: "Summarize a topic.",
+          arguments: [{
+            name: "topic",
+            required: true
+          }]
+        }]
+      }],
+      promptCount: 1
+    })
+  });
+  const store = createTerminalUiStore(createInitialState());
+  const controller = createSessionController(runtime, store);
+
+  await controller.submit("/mcp prompts");
+
+  assert.match(lastMessage(store.getState().messages)?.content ?? "", /MCP prompts/);
+  assert.match(lastMessage(store.getState().messages)?.content ?? "", /summarize/);
+}
+
+async function testMcpPromptCommandShowsPromptMessages() {
+  const runtime = createRuntimeStub({
+    getMcpPrompt: async () => ({
+      status: "completed",
+      server: "remote",
+      name: "summarize",
+      messages: [{
+        role: "user",
+        content: [{
+          type: "text",
+          text: "Summarize the release notes.",
+          length: 28,
+          truncated: false
+        }]
+      }]
+    })
+  });
+  const store = createTerminalUiStore(createInitialState());
+  const controller = createSessionController(runtime, store);
+
+  await controller.submit("/mcp prompt remote summarize topic=notes");
+
+  assert.match(lastMessage(store.getState().messages)?.content ?? "", /MCP prompt remote\/summarize/);
+  assert.match(lastMessage(store.getState().messages)?.content ?? "", /Summarize the release notes/);
+}
+
+async function testMcpTemplatesCommandShowsTemplates() {
+  const runtime = createRuntimeStub({
+    listMcpResourceTemplates: async () => ({
+      servers: [{
+        server: "remote",
+        status: "completed",
+        resourceTemplates: [{
+          server: "remote",
+          uriTemplate: "repo://{owner}/{name}",
+          name: "Repository",
+          mimeType: "application/json"
+        }]
+      }],
+      resourceTemplateCount: 1
+    })
+  });
+  const store = createTerminalUiStore(createInitialState());
+  const controller = createSessionController(runtime, store);
+
+  await controller.submit("/mcp templates");
+
+  assert.match(lastMessage(store.getState().messages)?.content ?? "", /MCP resource templates/);
+  assert.match(lastMessage(store.getState().messages)?.content ?? "", /repo:\/\/\{owner\}\/\{name\}/);
+}
+
+async function testMcpAddCommandUpdatesRuntime() {
+  let received: { name: string; scope?: string; type: string; command?: string } | null = null;
+  const runtime = createRuntimeStub({
+    addMcpServer: async (name, config, scope) => {
+      received = {
+        name,
+        scope,
+        type: config.type,
+        command: config.type === "stdio" ? config.command : undefined
+      };
+      return {
+        changed: true,
+        scope: scope ?? "project",
+        serverName: name,
+        configPath: "C:\\workspace\\.alyce\\mcp.json",
+        state: {
+          paths: {
+            project: "C:\\workspace\\.alyce\\mcp.json",
+            local: "C:\\workspace\\.alyce\\mcp.local.json",
+            user: "C:\\Users\\Single\\.alyce\\mcp.json"
           },
-          source: "live"
-        };
-      }
-    });
-    const store = createTerminalUiStore(createInitialState());
-    const controller = createSessionController(runtime, store);
+          configs: {
+            project: { mcpServers: {} },
+            local: { mcpServers: {} },
+            user: { mcpServers: {} }
+          },
+          effective: { mcpServers: { [name]: config } },
+          sources: { [name]: scope ?? "project" }
+        }
+      };
+    }
+  });
+  const store = createTerminalUiStore(createInitialState());
+  const controller = createSessionController(runtime, store);
 
-    await controller.submit(command);
+  await controller.submit("/mcp add chrome stdio npx -y chrome-devtools-mcp@latest");
 
-    const dialog = store.getState().dialogQueue[0];
-    assert.equal(refreshCalled, true);
-    assert.equal(dialog?.type, "model-picker");
-    assert.equal(dialog?.type === "model-picker" ? dialog.state.status : "", "ready");
-    assert.equal(dialog?.type === "model-picker" ? dialog.state.source : "", "live");
-  }
+  assert.deepEqual(received, {
+    name: "chrome",
+    scope: "project",
+    type: "stdio",
+    command: "npx"
+  });
+  assert.match(lastMessage(store.getState().messages)?.content ?? "", /Added MCP server 'chrome'/);
+}
+
+async function testMcpDisableCommandUpdatesRuntime() {
+  let received: { name: string; enabled: boolean; scope?: string } | null = null;
+  const runtime = createRuntimeStub({
+    setMcpServerEnabled: async (name, enabled, scope) => {
+      received = { name, enabled, scope };
+      return {
+        changed: true,
+        scope: scope ?? "project",
+        serverName: name,
+        configPath: "C:\\workspace\\.alyce\\mcp.json",
+        state: {
+          paths: {
+            project: "C:\\workspace\\.alyce\\mcp.json",
+            local: "C:\\workspace\\.alyce\\mcp.local.json",
+            user: "C:\\Users\\Single\\.alyce\\mcp.json"
+          },
+          configs: {
+            project: { mcpServers: {} },
+            local: { mcpServers: {} },
+            user: { mcpServers: {} }
+          },
+          effective: { mcpServers: {} },
+          sources: {}
+        }
+      };
+    }
+  });
+  const store = createTerminalUiStore(createInitialState());
+  const controller = createSessionController(runtime, store);
+
+  await controller.submit("/mcp disable --user chrome");
+
+  assert.deepEqual(received, {
+    name: "chrome",
+    enabled: false,
+    scope: "user"
+  });
+  assert.match(lastMessage(store.getState().messages)?.content ?? "", /Disabled MCP server 'chrome'/);
+}
+
+async function testMcpCommandFailureShowsErrorMessage() {
+  const runtime = createRuntimeStub({
+    setMcpServerEnabled: async () => {
+      throw new Error("Unknown MCP server: missing");
+    }
+  });
+  const store = createTerminalUiStore(createInitialState());
+  const controller = createSessionController(runtime, store);
+
+  await controller.submit("/mcp enable missing");
+
+  assert.match(lastMessage(store.getState().messages)?.content ?? "", /Command failed: Unknown MCP server: missing/);
+  assert.equal(store.getState().statusText, "Error");
+}
+
+async function testMcpLoginCommandShowsResult() {
+  let seenAuthorizationUrl = "";
+  const runtime = createRuntimeStub({
+    loginMcpServer: async (_serverName, options) => {
+      options?.onAuthorizationUrl?.({
+        server: "remote",
+        authorizationUrl: "https://example.com/auth",
+        redirectUrl: "http://127.0.0.1:4000/callback"
+      });
+      seenAuthorizationUrl = "https://example.com/auth";
+      return {
+        status: "completed",
+        server: "remote",
+        message: "Logged in."
+      };
+    }
+  });
+  const store = createTerminalUiStore(createInitialState());
+  const controller = createSessionController(runtime, store);
+
+  await controller.submit("/mcp login remote");
+
+  const combined = store.getState().messages.map((message) => message.content).join("\n");
+  assert.equal(seenAuthorizationUrl, "https://example.com/auth");
+  assert.match(combined, /https:\/\/example\.com\/auth/);
+  assert.match(combined, /Logged in/);
 }
 
 async function testConnectDialogSubmissionAppliesProviderConnection() {
@@ -425,13 +942,55 @@ async function testWaitForUiPaintYieldsToMacrotask() {
   assert.equal(settled, true);
 }
 
+function testInitializeShowsRuntimeBootstrapSummary() {
+  const runtime = createRuntimeStub({
+    config: createRuntimeConfigStub({
+      bootstrap: {
+        createdPaths: ["C:\\workspace\\.alyce", "C:\\workspace\\.alyce\\skills"],
+        existingPaths: [],
+        failedPaths: [],
+        firstRun: true
+      }
+    })
+  });
+  const store = createTerminalUiStore(createInitialState());
+  const controller = createSessionController(runtime, store);
+
+  controller.initialize();
+
+  const output = store.getState().messages.map((message) => message.content).join("\n");
+  assert.match(output, /Initialized Alyce runtime storage/);
+  assert.match(output, /Skills root: C:\\workspace\\\.alyce\\skills/);
+}
+
 function createRuntimeStub(overrides: Partial<{
+  config: SessionRuntime["config"];
+  hasConnectionConfig: SessionRuntime["hasConnectionConfig"];
+  getSettingsState: SessionRuntime["getSettingsState"];
+  setPlanModeEnabled: SessionRuntime["setPlanModeEnabled"];
+  updateConnectionConfig: SessionRuntime["updateConnectionConfig"];
+  updateSettings: SessionRuntime["updateSettings"];
   getCurrentModel: SessionRuntime["getCurrentModel"];
   getResolvedModelProfile: SessionRuntime["getResolvedModelProfile"];
   getConnectionConfigState: SessionRuntime["getConnectionConfigState"];
   refreshCurrentProviderModels: SessionRuntime["refreshCurrentProviderModels"];
   setCurrentModel: SessionRuntime["setCurrentModel"];
   applyProviderConnection: SessionRuntime["applyProviderConnection"];
+  listSkills: SessionRuntime["listSkills"];
+  setSkillEnabled: SessionRuntime["setSkillEnabled"];
+  setBundledSkillsEnabled: SessionRuntime["setBundledSkillsEnabled"];
+  refreshSkills: SessionRuntime["refreshSkills"];
+  getMcpStatus: SessionRuntime["getMcpStatus"];
+  listMcpTools: SessionRuntime["listMcpTools"];
+  listMcpResources: SessionRuntime["listMcpResources"];
+  listMcpPrompts: SessionRuntime["listMcpPrompts"];
+  getMcpPrompt: SessionRuntime["getMcpPrompt"];
+  listMcpResourceTemplates: SessionRuntime["listMcpResourceTemplates"];
+  addMcpServer: SessionRuntime["addMcpServer"];
+  removeMcpServer: SessionRuntime["removeMcpServer"];
+  setMcpServerEnabled: SessionRuntime["setMcpServerEnabled"];
+  loginMcpServer: SessionRuntime["loginMcpServer"];
+  setMcpInteractionHandlers: SessionRuntime["setMcpInteractionHandlers"];
   authorizeProviderAuth: SessionRuntime["authorizeProviderAuth"];
   completeProviderAuth: SessionRuntime["completeProviderAuth"];
   clearProviderAuthFlow: SessionRuntime["clearProviderAuthFlow"];
@@ -439,11 +998,23 @@ function createRuntimeStub(overrides: Partial<{
   listBackgroundProcesses: SessionRuntime["listBackgroundProcesses"];
   stopBackgroundProcess: SessionRuntime["stopBackgroundProcess"];
 }>): SessionRuntime {
-  const settings = createSettingsState().effective;
+  const settingsState = createSettingsState();
+  const settings = settingsState.effective;
   const connectionState = createInitialState().connectionState;
+  const config = overrides.config ?? createRuntimeConfigStub();
   return {
+    config,
+    workspaceRoot: config.paths.workspaceRoot,
+    messages: [],
+    requestPatches: config.requestPatches,
     getSettings: () => settings,
+    getSettingsState: overrides.getSettingsState ?? (() => settingsState),
     getPlanModeState: () => ({ enabled: false }),
+    setPlanModeEnabled: overrides.setPlanModeEnabled ?? (async (enabled) => ({ enabled })),
+    hasConnectionConfig:
+      overrides.hasConnectionConfig ??
+      (() => connectionState.effective.apiKey.trim().length > 0),
+    getConnectionConfig: () => connectionState.effective,
     getCurrentModel: overrides.getCurrentModel ?? (() => connectionState.effective.model),
     getResolvedModelProfile: overrides.getResolvedModelProfile ?? (() => ({
       providerId: "openai",
@@ -473,7 +1044,139 @@ function createRuntimeStub(overrides: Partial<{
     })),
     setCurrentModel: overrides.setCurrentModel ?? (async () => undefined),
     getProviderAuthRecords: () => ({}),
+    updateConnectionConfig: overrides.updateConnectionConfig ?? (async () => undefined),
+    updateSettings: overrides.updateSettings ?? (async () => undefined),
     applyProviderConnection: overrides.applyProviderConnection ?? (async () => undefined),
+    listSkills: overrides.listSkills ?? (async () => ({
+      skills: [],
+      disabledSkills: [],
+      duplicateWarnings: [],
+      disabledWarnings: [],
+      configWarnings: []
+    })),
+    getSkill: async () => undefined,
+    setSkillEnabled: overrides.setSkillEnabled ?? (async () => ({
+      changed: true,
+      target: "project",
+      configPath: "C:\\workspace\\.alyce\\skills.json",
+      catalog: {
+        skills: [],
+        disabledSkills: [],
+        duplicateWarnings: [],
+        disabledWarnings: [],
+        configWarnings: []
+      },
+      message: "Updated skill config."
+    })),
+    setBundledSkillsEnabled: overrides.setBundledSkillsEnabled ?? (async () => ({
+      changed: true,
+      target: "project",
+      configPath: "C:\\workspace\\.alyce\\skills.json",
+      catalog: {
+        skills: [],
+        disabledSkills: [],
+        duplicateWarnings: [],
+        disabledWarnings: [],
+        configWarnings: []
+      },
+      message: "Updated bundled skill config."
+    })),
+    refreshSkills: overrides.refreshSkills ?? (async () => ({
+      skills: [],
+      disabledSkills: [],
+      duplicateWarnings: [],
+      disabledWarnings: [],
+      configWarnings: []
+    })),
+    getMcpStatus: overrides.getMcpStatus ?? (async () => ({ servers: [] })),
+    listMcpTools: overrides.listMcpTools ?? (async () => ({ servers: [], toolCount: 0 })),
+    listMcpResources: overrides.listMcpResources ?? (async () => ({ servers: [], resourceCount: 0 })),
+    listMcpPrompts: overrides.listMcpPrompts ?? (async () => ({ servers: [], promptCount: 0 })),
+    getMcpPrompt: overrides.getMcpPrompt ?? (async (serverName, promptName) => ({
+      status: "not_found",
+      server: serverName,
+      name: promptName,
+      messages: [],
+      error: "not found"
+    })),
+    listMcpResourceTemplates: overrides.listMcpResourceTemplates ?? (async () => ({
+      servers: [],
+      resourceTemplateCount: 0
+    })),
+    addMcpServer: overrides.addMcpServer ?? (async (name, config, scope = "project") => ({
+      changed: true,
+      scope,
+      serverName: name,
+      configPath: "C:\\workspace\\.alyce\\mcp.json",
+      state: {
+        paths: {
+          project: "C:\\workspace\\.alyce\\mcp.json",
+          local: "C:\\workspace\\.alyce\\mcp.local.json",
+          user: "C:\\Users\\Single\\.alyce\\mcp.json"
+        },
+        configs: {
+          project: { mcpServers: {} },
+          local: { mcpServers: {} },
+          user: { mcpServers: {} }
+        },
+        effective: { mcpServers: { [name]: config } },
+        sources: { [name]: scope }
+      }
+    })),
+    removeMcpServer: overrides.removeMcpServer ?? (async (name, scope = "project") => ({
+      changed: true,
+      scope,
+      serverName: name,
+      configPath: "C:\\workspace\\.alyce\\mcp.json",
+      state: {
+        paths: {
+          project: "C:\\workspace\\.alyce\\mcp.json",
+          local: "C:\\workspace\\.alyce\\mcp.local.json",
+          user: "C:\\Users\\Single\\.alyce\\mcp.json"
+        },
+        configs: {
+          project: { mcpServers: {} },
+          local: { mcpServers: {} },
+          user: { mcpServers: {} }
+        },
+        effective: { mcpServers: {} },
+        sources: {}
+      }
+    })),
+    setMcpServerEnabled: overrides.setMcpServerEnabled ?? (async (name, _enabled, scope = "project") => ({
+      changed: true,
+      scope,
+      serverName: name,
+      configPath: "C:\\workspace\\.alyce\\mcp.json",
+      state: {
+        paths: {
+          project: "C:\\workspace\\.alyce\\mcp.json",
+          local: "C:\\workspace\\.alyce\\mcp.local.json",
+          user: "C:\\Users\\Single\\.alyce\\mcp.json"
+        },
+        configs: {
+          project: { mcpServers: {} },
+          local: { mcpServers: {} },
+          user: { mcpServers: {} }
+        },
+        effective: { mcpServers: {} },
+        sources: {}
+      }
+    })),
+    loginMcpServer: overrides.loginMcpServer ?? (async (serverName) => ({
+      status: "completed",
+      server: serverName,
+      message: "Logged in."
+    })),
+    setMcpInteractionHandlers: overrides.setMcpInteractionHandlers ?? (() => undefined),
+    preparePromptSkillContext: async () => ({
+      generatedMessages: [],
+      loadedSkillNames: [],
+      unresolvedMentions: [],
+      disabledMentions: [],
+      duplicateWarnings: [],
+      dependencyWarnings: []
+    }),
     authorizeProviderAuth: overrides.authorizeProviderAuth ?? (async (providerId) => ({
       type: "stored",
       providerId,
@@ -519,6 +1222,61 @@ function createBackgroundProcessRecord(
     detectedUrls: ["http://localhost:5173/"],
     detectedPorts: [5173],
     warnings: [],
+    ...overrides
+  };
+}
+
+function createRuntimeConfigStub(
+  overrides: Partial<SessionRuntime["config"]> = {}
+): SessionRuntime["config"] {
+  const settingsState = createSettingsState();
+  const connectionState = createInitialState().connectionState;
+
+  return {
+    paths: {
+      workspaceRoot: "C:\\workspace",
+      alyceDirectory: "C:\\workspace\\.alyce",
+      connectionConfigPath: "C:\\workspace\\.alyce\\config.json",
+      settingsConfigPath: "C:\\workspace\\.alyce\\settings.json",
+      projectPluginsDirectory: "C:\\workspace\\.alyce\\plugins",
+      userAlyceDirectory: "C:\\Users\\Single\\.alyce",
+      userConnectionConfigPath: "C:\\Users\\Single\\.alyce\\config.json",
+      userSettingsConfigPath: "C:\\Users\\Single\\.alyce\\settings.json",
+      userPluginsDirectory: "C:\\Users\\Single\\.alyce\\plugins"
+    },
+    bootstrap: {
+      createdPaths: [],
+      existingPaths: [],
+      failedPaths: [],
+      firstRun: false
+    },
+    connection: connectionState.effective,
+    connectionState,
+    settings: settingsState.effective,
+    settingsState,
+    providerConnectors: [],
+    providerPluginProfiles: {},
+    providerPluginDiagnostics: [],
+    requestPatches: [],
+    memory: {
+      directory: "C:\\workspace\\.alyce\\memory",
+      fileName: "MEMORY.md",
+      sessionMemoryFileName: "SESSION_MEMORY.md",
+      maxSessionEntries: 30,
+      maxPersistentEntries: 200,
+      maxPromptEntries: 20,
+      sessionMemory: {
+        enabled: true,
+        initialTokens: 10_000,
+        updateTokens: 5_000,
+        toolCallsBetweenUpdates: 3,
+        timeoutMs: 180_000,
+        maxFailures: 3,
+        staleMs: 60_000,
+        maxMessagesForExtraction: 80,
+        maxCharsPerMessage: 1_500
+      }
+    },
     ...overrides
   };
 }

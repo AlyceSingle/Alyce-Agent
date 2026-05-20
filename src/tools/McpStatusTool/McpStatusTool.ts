@@ -36,7 +36,7 @@ export async function executeMcpStatusTool(
       summary: "Connect configured MCP servers and refresh capabilities",
       details: [
         "Operation: initialize configured MCP servers",
-        "This may start local stdio MCP commands or connect to remote MCP endpoints from .alyce/mcp.json."
+        "This may start local stdio MCP commands or connect to remote MCP endpoints from project, local, or user MCP config."
       ]
     });
     if (!approved) {

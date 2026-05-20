@@ -125,11 +125,23 @@ import {
   ListMcpResourcesInputSchema
 } from "./ListMcpResourcesTool/ListMcpResourcesTool.js";
 import {
+  executeListMcpToolsTool,
+  LIST_MCP_TOOLS_TOOL_DESCRIPTION,
+  LIST_MCP_TOOLS_TOOL_NAME,
+  ListMcpToolsInputSchema
+} from "./ListMcpToolsTool/ListMcpToolsTool.js";
+import {
   executeMcpStatusTool,
   MCP_STATUS_TOOL_DESCRIPTION,
   MCP_STATUS_TOOL_NAME,
   McpStatusInputSchema
 } from "./McpStatusTool/McpStatusTool.js";
+import {
+  CALL_MCP_TOOL_TOOL_DESCRIPTION,
+  CALL_MCP_TOOL_TOOL_NAME,
+  CallMcpToolInputSchema,
+  executeCallMcpToolTool
+} from "./CallMcpToolTool/CallMcpToolTool.js";
 import {
   executePowerShellTool,
   POWERSHELL_TOOL_DESCRIPTION,
@@ -238,6 +250,18 @@ export const REGISTERED_TOOLS: AgentTool[] = [
     description: MCP_STATUS_TOOL_DESCRIPTION,
     inputSchema: McpStatusInputSchema,
     execute: (input, context) => executeMcpStatusTool(input, context)
+  },
+  {
+    name: LIST_MCP_TOOLS_TOOL_NAME,
+    description: LIST_MCP_TOOLS_TOOL_DESCRIPTION,
+    inputSchema: ListMcpToolsInputSchema,
+    execute: (input, context) => executeListMcpToolsTool(input, context)
+  },
+  {
+    name: CALL_MCP_TOOL_TOOL_NAME,
+    description: CALL_MCP_TOOL_TOOL_DESCRIPTION,
+    inputSchema: CallMcpToolInputSchema,
+    execute: (input, context) => executeCallMcpToolTool(input, context)
   },
   {
     name: LIST_MCP_RESOURCES_TOOL_NAME,

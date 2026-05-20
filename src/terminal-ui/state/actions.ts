@@ -9,6 +9,7 @@ import type {
   ToolApprovalRequest,
   ToolPermissionKind
 } from "../../tools/types.js";
+import type { McpElicitationRequest } from "../../mcp/types.js";
 import type {
   ActiveDialog,
   ModelPickerDialogState,
@@ -280,6 +281,17 @@ export function openQuestionDialog(
 ): TerminalUiState {
   return pushDialog(state, {
     type: "question",
+    layer: "overlay",
+    request
+  });
+}
+
+export function openMcpElicitationDialog(
+  state: TerminalUiState,
+  request: McpElicitationRequest
+): TerminalUiState {
+  return pushDialog(state, {
+    type: "mcp-elicitation",
     layer: "overlay",
     request
   });

@@ -31,7 +31,6 @@ import {
 import { parseReplCommand } from "../../cli/commandRouter.js";
 import {
   formatCurrentModelDisplay,
-  formatModelStatusReport,
   resolveModelSwitch
 } from "../../cli/modelCommand.js";
 import {
@@ -42,6 +41,21 @@ import {
   formatBackgroundProcessList,
   formatBackgroundProcessStopResult
 } from "../../cli/processCommand.js";
+import {
+  formatSkillDetails,
+  formatSkillList
+} from "../../cli/skillsCommand.js";
+import {
+  formatMcpLoginResult,
+  formatMcpPrompt,
+  formatMcpPrompts,
+  formatMcpMutation,
+  formatMcpResourceTemplates,
+  formatMcpResources,
+  formatMcpServerList,
+  formatMcpStatus,
+  formatMcpTools
+} from "../../cli/mcpCommand.js";
 import {
   formatTaskCompletionNotification,
   formatTaskDetails,
@@ -66,8 +80,14 @@ import type {
   ApprovalMode,
   ConnectionConfig,
   ConnectionConfigSaveTarget,
+  RuntimeBootstrapReport,
+  RuntimePaths,
   SessionSettings
 } from "../../config/runtime.js";
+import type {
+  McpElicitationRequest,
+  McpElicitationResponse
+} from "../../mcp/types.js";
 import type {
   AskUserQuestionRequest,
   AskUserQuestionResponse,
@@ -81,6 +101,7 @@ import {
   closeDialog,
   getActiveDialog,
   openConnectProviderDialog,
+  openMcpElicitationDialog,
   openModelPickerDialog,
   openPermissionDialog,
   openPermissionsDialog,
@@ -151,10 +172,6 @@ const MAX_REWIND_POINTS = 100;
 const PAGED_HISTORY_INITIAL_WINDOW = 240;
 const PAGED_HISTORY_CHUNK_SIZE = 120;
 const TASK_SYNC_INTERVAL_MS = 1000;
-const REVERT_FILES_ONLY_LABEL = "Files only";
-const REVERT_FILES_AND_CONVERSATION_LABEL = "Files and conversation";
-const REVERT_CONVERSATION_ONLY_LABEL = "Conversation only";
-const REVERT_CANCEL_LABEL = "Cancel";
 const AUTO_REVIEW_CONFIDENCE_THRESHOLD = 0.72;
 
 // 每轮请求在执行前都会记录一个 checkpoint，便于中断时回滚消息和文件改动。
@@ -251,6 +268,39 @@ type CompletedTurnHistoryPlan = {
   uiBaseMessageCount: number;
 };
 
+type ParsedReplCommand = ReturnType<typeof parseReplCommand>;
+type SkillsParsedCommand = Extract<
+  ParsedReplCommand,
+  {
+    type: "skills-list" | "skills-view" | "skills-set-enabled" | "skills-refresh";
+  }
+>;
+type McpParsedCommand = Extract<
+  ParsedReplCommand,
+  {
+    type:
+      | "mcp-list"
+      | "mcp-status"
+      | "mcp-tools"
+      | "mcp-resources"
+      | "mcp-prompts"
+      | "mcp-prompt"
+      | "mcp-templates"
+      | "mcp-add"
+      | "mcp-remove"
+      | "mcp-set-enabled"
+      | "mcp-login";
+  }
+>;
+
+function isSkillsParsedCommand(command: ParsedReplCommand): command is SkillsParsedCommand {
+  return command.type.startsWith("skills-");
+}
+
+function isMcpParsedCommand(command: ParsedReplCommand): command is McpParsedCommand {
+  return command.type.startsWith("mcp-");
+}
+
 function getApiMessagesSinceCheckpoint(checkpoint: TurnCheckpoint, runtime: SessionRuntime) {
   const baseLength = checkpoint.volatileSnapshot.messages.length;
   return runtime.messages.slice(Math.min(baseLength, runtime.messages.length));
@@ -288,6 +338,7 @@ export interface SessionController {
   restoreRewindPoint: (pointId: string, mode: RewindRestoreMode) => Promise<void>;
   respondToApproval: (decision: PermissionDecision) => void;
   respondToQuestion: (response: AskUserQuestionResponse | null) => void;
+  respondToMcpElicitation: (response: McpElicitationResponse) => void;
   openSettings: (section?: SettingsSection, reason?: string) => void;
   setApprovalMode: (mode: ApprovalMode) => Promise<void>;
   closeDialog: () => void;
@@ -332,6 +383,7 @@ export function createSessionController(
   let exitRequestedAfterTurn = false;
   let pendingApprovalResolver: ((decision: PermissionDecision) => void) | null = null;
   let pendingQuestionResolver: ((response: AskUserQuestionResponse | null) => void) | null = null;
+  let pendingMcpElicitationResolver: ((response: McpElicitationResponse) => void) | null = null;
   let sessionApprovalMode = runtime.getSettings().approvalMode;
   const sessionAllowedKinds = new Set<ToolPermissionKind>();
   let sessionPermissionRules: PermissionRuleInput[] = [];
@@ -638,10 +690,68 @@ export function createSessionController(
   const syncApprovalState = () => {
     store.updateState((state) =>
       setSessionAllowedKinds(
-        setSessionApprovalMode(state, sessionApprovalMode),
+        setSessionApprovalMode(
+          setSessionSettingsState(state, runtime.getSettingsState()),
+          sessionApprovalMode
+        ),
         [...sessionAllowedKinds]
       )
     );
+  };
+
+  const upsertPermissionRule = (
+    rules: PermissionRuleInput[],
+    nextRule: PermissionRuleInput
+  ) => {
+    const nextPattern = normalizePermissionPattern(nextRule.pattern);
+    return [
+      ...rules.filter((rule) =>
+        rule.permission !== nextRule.permission ||
+        normalizePermissionPattern(rule.pattern) !== nextPattern
+      ),
+      {
+        ...nextRule,
+        pattern: nextPattern
+      }
+    ];
+  };
+
+  const allowRequestPermissionForSession = async (request: ToolApprovalRequest) => {
+    const permission = getPermissionCategoryForRequest(request);
+    if (!permission) {
+      throw new Error("This request does not map to a permission category.");
+    }
+
+    sessionPermissionRules = upsertPermissionRule(sessionPermissionRules, {
+      permission,
+      pattern: getPermissionPatternForRequest(request),
+      action: "allow",
+      scope: "session",
+      reason: `User allowed ${request.summary} for this session.`
+    });
+  };
+
+  const persistRequestPermissionRule = async (
+    request: ToolApprovalRequest,
+    action: "allow" | "ask" | "deny"
+  ) => {
+    const permission = getPermissionCategoryForRequest(request);
+    if (!permission) {
+      throw new Error("This request does not map to a permission category.");
+    }
+
+    const currentUserRules = runtime.getSettingsState().user.permissionRules ?? [];
+    const nextRules = upsertPermissionRule([...currentUserRules], {
+      permission,
+      pattern: getPermissionPatternForRequest(request),
+      action,
+      scope: "persistent",
+      reason: `User set ${action} for ${request.summary}.`
+    });
+    await runtime.updateSettings({
+      permissionRules: nextRules
+    });
+    sessionApprovalMode = runtime.getSettings().approvalMode;
   };
 
   const setApprovalModeFromUi = async (
@@ -767,21 +877,18 @@ export function createSessionController(
   const toTerminalRewindPoint = (point: RewindPoint): TerminalUiRewindPoint => {
     const affected = getAffectedRewindPoints(point);
     const hasCodeChanges = affected.some((candidate) => candidate.hasFileChanges);
-    const hasUnsafeToolActivity = affected.some(
-      (candidate) =>
-        candidate.hasNonRestorableToolActivity ||
-        (candidate.hasFileChanges && !hasRestorableFileSnapshot(candidate))
-    );
-    const canRestoreCode =
+    const canRestoreFilesOnly =
       hasCodeChanges &&
-      !hasUnsafeToolActivity &&
       affected.every((candidate) => !candidate.hasFileChanges || hasRestorableFileSnapshot(candidate));
+    const hasUnsafeToolActivity = affected.some((candidate) => candidate.hasNonRestorableToolActivity);
+    const canRestoreCode = canRestoreFilesOnly && !hasUnsafeToolActivity;
 
     return {
       id: point.id,
       input: point.input,
       createdAt: point.createdAt,
       hasCodeChanges,
+      canRestoreFilesOnly,
       canRestoreCode,
       hasUnsafeToolActivity,
       turnsRemoved: affected.length
@@ -864,7 +971,7 @@ export function createSessionController(
   const openRewindSelector = () => {
     const points = buildRewindDialogPoints();
     if (points.length === 0) {
-      appendUiMessage(createSystemMessage("Nothing to rewind to yet.", "Rewind"));
+      appendUiMessage(createSystemMessage("Nothing to revert yet.", "Revert"));
       return;
     }
 
@@ -881,6 +988,30 @@ export function createSessionController(
     rewindPoints = rewindPoints.filter((point) => point.uiMessageCount < target.uiMessageCount);
   };
 
+  const restoreFilesForAffectedPoints = async (
+    affected: RewindPoint[]
+  ): Promise<Array<{ turnId: string; result: FileHistoryRestoreResult }>> => {
+    const newestFirst = [...affected].sort((a, b) => b.uiMessageCount - a.uiMessageCount);
+    const fileRestoreResults: Array<{ turnId: string; result: FileHistoryRestoreResult }> = [];
+
+    for (const point of newestFirst) {
+      if (!point.hasFileChanges || point.isRestoredFromHistory) {
+        continue;
+      }
+
+      const result = await runtime.restoreFilesForTurn(point.turnId);
+      if (result.missingSnapshot) {
+        throw new Error(`File snapshots for turn ${point.turnId} are no longer available.`);
+      }
+      if (result.alreadyRestored) {
+        throw new Error(`File snapshots for turn ${point.turnId} were already restored.`);
+      }
+      fileRestoreResults.push({ turnId: point.turnId, result });
+    }
+
+    return fileRestoreResults;
+  };
+
   const restoreRewindPointById = async (pointId: string, mode: RewindRestoreMode) => {
     const target = rewindPoints.find((point) => point.id === pointId);
     if (!target) {
@@ -890,59 +1021,62 @@ export function createSessionController(
     }
 
     const view = toTerminalRewindPoint(target);
+    if (mode === "files-only" && !view.canRestoreFilesOnly) {
+      appendUiMessage(createErrorMessage("Tracked file restore is not available for that point."));
+      setDialogClosed();
+      return;
+    }
+
     if (mode === "code-and-conversation" && !view.canRestoreCode) {
-      appendUiMessage(createErrorMessage("Code rewind is not available for that point."));
+      appendUiMessage(createErrorMessage("Full revert is not available for that point."));
       setDialogClosed();
       return;
     }
 
     const affected = getAffectedRewindPoints(target);
-    const fileRestoreResults: Array<{ turnId: string; result: FileHistoryRestoreResult }> = [];
 
     try {
-      if (mode === "code-and-conversation") {
-        const newestFirst = [...affected].sort((a, b) => b.uiMessageCount - a.uiMessageCount);
-        for (const point of newestFirst) {
-          if (!point.hasFileChanges || point.isRestoredFromHistory) {
-            continue;
-          }
+      const fileRestoreResults =
+        mode === "files-only" || mode === "code-and-conversation"
+          ? await restoreFilesForAffectedPoints(affected)
+          : [];
 
-          const result = await runtime.restoreFilesForTurn(point.turnId);
-          if (result.missingSnapshot) {
-            throw new Error(`File snapshots for turn ${point.turnId} are no longer available.`);
-          }
-          if (result.alreadyRestored) {
-            throw new Error(`File snapshots for turn ${point.turnId} were already restored.`);
-          }
-          fileRestoreResults.push({ turnId: point.turnId, result });
-        }
+      if (mode === "files-only") {
+        store.updateState((state) => setStatusText(closeDialog(state), "Reverted"));
+        await runtime.recordSessionRewind({
+          apiMessageCount: Math.max(0, runtime.messages.length - 1),
+          uiMessageCount: store.getState().messages.length,
+          sessionMemory: runtime.memoryService.getSessionMemory(),
+          restoreMode: mode
+        });
+      } else {
+        await runtime.restoreVolatileConversationSnapshot(target.volatileSnapshot);
+        const baseMessages = store.getState().messages.slice(0, target.uiMessageCount);
+        store.updateState((state) =>
+          setDraftInput(
+            setTranscriptSticky(
+              setContextBudget(
+                replaceMessages(setStatusText(closeDialog(state), "Reverted"), baseMessages),
+                null
+              ),
+              true
+            ),
+            target.input
+          )
+        );
+        resetSessionHistoryPaging();
+
+        await runtime.recordSessionRewind({
+          apiMessageCount: Math.max(0, runtime.messages.length - 1),
+          uiMessageCount: target.uiMessageCount,
+          sessionMemory: target.volatileSnapshot.memory.sessionMemory,
+          restoredInput: target.input,
+          restoreMode: mode
+        });
+
+        pruneRewindPointsFrom(target);
       }
 
-      await runtime.restoreVolatileConversationSnapshot(target.volatileSnapshot);
-      const baseMessages = store.getState().messages.slice(0, target.uiMessageCount);
-      store.updateState((state) =>
-        setDraftInput(
-          setTranscriptSticky(
-            setContextBudget(
-              replaceMessages(setStatusText(closeDialog(state), "Rewound"), baseMessages),
-              null
-            ),
-            true
-          ),
-          target.input
-        )
-      );
-      resetSessionHistoryPaging();
-
-      await runtime.recordSessionRewind({
-        apiMessageCount: Math.max(0, runtime.messages.length - 1),
-        uiMessageCount: target.uiMessageCount,
-        sessionMemory: target.volatileSnapshot.memory.sessionMemory,
-        restoredInput: target.input,
-        restoreMode: mode
-      });
-
-      pruneRewindPointsFrom(target);
       appendUiMessage(
         createSystemMessage(
           formatConversationRestoreResult({
@@ -951,12 +1085,12 @@ export function createSessionController(
             affectedTurnCount: affected.length,
             fileRestoreResults
           }),
-          mode === "conversation" ? "Rewind" : "Revert"
+          "Revert"
         )
       );
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
-      appendUiMessage(createErrorMessage(`Failed to rewind: ${message}`));
+      appendUiMessage(createErrorMessage(`Failed to revert: ${message}`));
       store.updateState((state) => setStatusText(state, "Error"));
     }
   };
@@ -983,12 +1117,18 @@ export function createSessionController(
     const lines = [
       options.mode === "code-and-conversation"
         ? fileTotals.conflicts > 0
-          ? "Reverted safe tracked files and rewound the conversation. Conflicting files were skipped."
-          : "Reverted tracked files and rewound the conversation."
-        : "Rewound the conversation only. Files on disk were left unchanged.",
+          ? "Reverted safe tracked files and conversation history. Conflicting files were skipped."
+          : "Reverted tracked files and conversation history."
+        : options.mode === "files-only"
+          ? fileTotals.conflicts > 0
+            ? "Reverted safe tracked files only. Conversation was left unchanged. Conflicting files were skipped."
+            : "Reverted tracked files only. Conversation was left unchanged."
+          : "Reverted conversation history only. Files on disk were left unchanged.",
       `Turn: ${options.target.turnId}`,
-      `Conversation turns removed: ${options.affectedTurnCount}`,
-      options.mode === "code-and-conversation"
+      options.mode === "files-only"
+        ? "Conversation: unchanged."
+        : `Conversation turns removed: ${options.affectedTurnCount}`,
+      options.mode === "code-and-conversation" || options.mode === "files-only"
         ? `Files restored: ${fileTotals.restored}; created files removed: ${fileTotals.removed}; conflicts skipped: ${fileTotals.conflicts}`
         : "Files restored: 0; created files removed: 0"
     ];
@@ -1126,6 +1266,18 @@ export function createSessionController(
           } else if (decision === "allow-kind-session") {
             approved = true;
             sessionAllowedKinds.add(request.kind);
+          } else if (decision === "allow-tool-session") {
+            approved = true;
+            await allowRequestPermissionForSession(request);
+          } else if (decision === "allow-tool-persistent") {
+            approved = true;
+            await persistRequestPermissionRule(request, "allow");
+          } else if (decision === "ask-tool-persistent") {
+            approved = true;
+            await persistRequestPermissionRule(request, "ask");
+          } else if (decision === "deny-tool-persistent") {
+            approved = false;
+            await persistRequestPermissionRule(request, "deny");
           } else if (decision === "allow-scope-session") {
             approved = true;
             await allowRequestScopeForSession(request);
@@ -1309,6 +1461,22 @@ export function createSessionController(
       return `allow ${request.kind} for session`;
     }
 
+    if (decision === "allow-tool-session") {
+      return `allow ${getPermissionPatternForRequest(request)} for session`;
+    }
+
+    if (decision === "allow-tool-persistent") {
+      return `always allow ${getPermissionPatternForRequest(request)}`;
+    }
+
+    if (decision === "ask-tool-persistent") {
+      return `always ask for ${getPermissionPatternForRequest(request)}`;
+    }
+
+    if (decision === "deny-tool-persistent") {
+      return `disable ${getPermissionPatternForRequest(request)}`;
+    }
+
     if (decision === "allow-scope-session") {
       if (request.scope?.type === "external-directory") {
         return `allow external directory for session (${request.scope.directory})`;
@@ -1480,7 +1648,7 @@ export function createSessionController(
     request: AskUserQuestionRequest,
     options: { signal?: AbortSignal } = {}
   ) => {
-    if (pendingApprovalResolver || pendingQuestionResolver) {
+    if (pendingApprovalResolver || pendingQuestionResolver || pendingMcpElicitationResolver) {
       throw new Error("Another interactive dialog is already pending.");
     }
 
@@ -1529,6 +1697,80 @@ export function createSessionController(
       options.signal?.addEventListener("abort", handleAbort, { once: true });
     });
   };
+
+  const requestMcpElicitation = async (
+    request: McpElicitationRequest,
+    options: { signal?: AbortSignal; timeoutMs?: number } = {}
+  ) => {
+    if (pendingApprovalResolver || pendingQuestionResolver || pendingMcpElicitationResolver) {
+      throw new Error("Another interactive dialog is already pending.");
+    }
+
+    store.updateState((state) => openMcpElicitationDialog(state, request));
+
+    return new Promise<McpElicitationResponse>((resolve, reject) => {
+      let timeout: NodeJS.Timeout | null = null;
+      const cleanup = () => {
+        options.signal?.removeEventListener("abort", handleAbort);
+        if (timeout) {
+          clearTimeout(timeout);
+          timeout = null;
+        }
+      };
+
+      const settle = (response: McpElicitationResponse) => {
+        pendingMcpElicitationResolver = null;
+        cleanup();
+        setDialogClosed();
+        resolve(response);
+      };
+
+      const handleAbort = () => {
+        if (!pendingMcpElicitationResolver) {
+          cleanup();
+          return;
+        }
+
+        pendingMcpElicitationResolver = null;
+        cleanup();
+        setDialogClosed();
+        reject(new TurnInterruptedError("user-cancel", "Request interrupted by user"));
+      };
+
+      if (options.timeoutMs && options.timeoutMs > 0) {
+        timeout = setTimeout(() => {
+          if (!pendingMcpElicitationResolver) {
+            return;
+          }
+
+          pendingMcpElicitationResolver = null;
+          cleanup();
+          setDialogClosed();
+          resolve({ action: "cancel" });
+        }, options.timeoutMs);
+      }
+
+      if (options.signal?.aborted) {
+        handleAbort();
+        return;
+      }
+
+      pendingMcpElicitationResolver = settle;
+      options.signal?.addEventListener("abort", handleAbort, { once: true });
+    });
+  };
+
+  runtime.setMcpInteractionHandlers({
+    requestElicitation: requestMcpElicitation,
+    onElicitationComplete: (event) => {
+      appendUiMessage(
+        createSystemMessage(
+          `MCP browser interaction completed for ${event.serverName} (${event.elicitationId}).`,
+          "MCP"
+        )
+      );
+    }
+  });
 
   const resolveAdditionalDirectory = async (directory: string): Promise<string> => {
     const normalized = directory.trim();
@@ -1640,201 +1882,6 @@ export function createSessionController(
     }
 
     return formatDiffDetails(await runtime.getTurnDiff(target.turnId));
-  };
-
-  const getLatestRevertTarget = async () => {
-    const report = await runtime.getLastAlyceTurnDiff();
-    if (!report) {
-      return null;
-    }
-
-    const point = rewindPoints.find((candidate) => candidate.turnId === report.turnId);
-    return {
-      report,
-      point,
-      view: point ? toTerminalRewindPoint(point) : null
-    };
-  };
-
-  const recordFilesOnlyRevertEvent = async () => {
-    await runtime.recordSessionRewind({
-      apiMessageCount: Math.max(0, runtime.messages.length - 1),
-      uiMessageCount: store.getState().messages.length,
-      sessionMemory: runtime.memoryService.getSessionMemory(),
-      restoreMode: "files-only"
-    });
-  };
-
-  const restoreLatestTurnFilesOnly = async (
-    target?: Awaited<ReturnType<typeof getLatestRevertTarget>>
-  ) => {
-    const resolvedTarget = target ?? (await getLatestRevertTarget());
-    if (!resolvedTarget) {
-      appendUiMessage(createSystemMessage("No Alyce turn file changes tracked yet.", "Revert"));
-      return;
-    }
-
-    if (resolvedTarget.report.summary.filesChanged === 0) {
-      appendUiMessage(
-        createSystemMessage(
-          [
-            `Turn ${resolvedTarget.report.turnId} has no tracked file changes to revert.`
-          ].join("\n"),
-          "Revert"
-        )
-      );
-      return;
-    }
-
-    const result = await runtime.restoreFilesForTurn(resolvedTarget.report.turnId);
-    if (!result.missingSnapshot && !result.alreadyRestored) {
-      await recordFilesOnlyRevertEvent();
-    }
-
-    appendUiMessage(
-      createSystemMessage(
-        formatFilesOnlyRevertResult(resolvedTarget.report, result),
-        "Revert"
-      )
-    );
-  };
-
-  const restoreLatestTurnConversationOnly = async (
-    target?: Awaited<ReturnType<typeof getLatestRevertTarget>>
-  ) => {
-    const resolvedTarget = target ?? (await getLatestRevertTarget());
-    if (!resolvedTarget) {
-      appendUiMessage(createSystemMessage("No Alyce turn file changes tracked yet.", "Revert"));
-      return;
-    }
-
-    if (!resolvedTarget.point) {
-      appendUiMessage(
-        createSystemMessage(
-          [
-            `Conversation rewind is unavailable for turn ${resolvedTarget.report.turnId}.`,
-            "This can happen after session resume, clear, or when the in-memory rewind point was pruned.",
-            "Tracked files can still be reverted with /revert --files-only if their file snapshots remain."
-          ].join("\n"),
-          "Revert"
-        )
-      );
-      return;
-    }
-
-    await restoreRewindPointById(resolvedTarget.point.id, "conversation");
-  };
-
-  const confirmAndRestoreLatestTurn = async () => {
-    const target = await getLatestRevertTarget();
-    if (!target) {
-      appendUiMessage(createSystemMessage("No Alyce turn file changes tracked yet.", "Revert"));
-      return;
-    }
-
-    if (target.report.summary.filesChanged === 0) {
-      appendUiMessage(
-        createSystemMessage(
-          [
-            `Turn ${target.report.turnId} has no tracked file changes to revert.`
-          ].join("\n"),
-          "Revert"
-        )
-      );
-      return;
-    }
-
-    if (!runtime.canRestoreFilesForTurn(target.report.turnId)) {
-      await restoreLatestTurnFilesOnly(target);
-      return;
-    }
-
-    const options = [
-      {
-        label: REVERT_FILES_ONLY_LABEL,
-        description: "Restore tracked files; keep the conversation unchanged.",
-        preview: formatRevertPreview(target.report, "files")
-      },
-      ...(target.point && target.view?.canRestoreCode
-        ? [{
-            label: REVERT_FILES_AND_CONVERSATION_LABEL,
-            description: "Restore tracked files and remove conversation turns from this point onward.",
-            preview: formatRevertPreview(target.report, "files-and-conversation")
-          }]
-        : []),
-      ...(target.point
-        ? [{
-            label: REVERT_CONVERSATION_ONLY_LABEL,
-            description: "Remove conversation turns from this point onward; keep files on disk unchanged.",
-            preview: formatRevertPreview(target.report, "conversation")
-          }]
-        : []),
-      {
-        label: REVERT_CANCEL_LABEL,
-        description: "Leave files and conversation unchanged."
-      }
-    ];
-
-    try {
-      const response = await askUserQuestions({
-        toolName: "Revert",
-        title: "Confirm revert",
-        metadata: { source: "user" },
-        questions: [
-          {
-            header: "Revert",
-            question: [
-              "How should Alyce revert the latest turn?",
-              "",
-              "Alyce can revert the latest tracked file changes.",
-              `Turn: ${target.report.turnId}`,
-              "",
-              "Files:",
-              ...formatRevertFileLines(target.report.files),
-              "",
-              "Choose whether to restore files only or also rewind the conversation."
-            ].join("\n"),
-            options
-          }
-        ]
-      });
-      const answer = Object.values(response.answers)[0] ?? "";
-
-      if (answer === REVERT_FILES_ONLY_LABEL) {
-        await restoreLatestTurnFilesOnly(target);
-        return;
-      }
-
-      if (answer === REVERT_FILES_AND_CONVERSATION_LABEL && target.point) {
-        await restoreRewindPointById(target.point.id, "code-and-conversation");
-        return;
-      }
-
-      if (answer === REVERT_CONVERSATION_ONLY_LABEL) {
-        await restoreLatestTurnConversationOnly(target);
-        return;
-      }
-
-      appendUiMessage(createSystemMessage("Revert cancelled.", "Revert"));
-    } catch (error) {
-      appendUiMessage(createSystemMessage(`Revert cancelled: ${getErrorMessage(error)}`, "Revert"));
-    }
-  };
-
-  const handleRevertCommand = async (
-    mode: Extract<ReturnType<typeof parseReplCommand>, { type: "revert" }>["mode"]
-  ) => {
-    if (mode === "files-only") {
-      await restoreLatestTurnFilesOnly();
-      return;
-    }
-
-    if (mode === "conversation-only") {
-      await restoreLatestTurnConversationOnly();
-      return;
-    }
-
-    await confirmAndRestoreLatestTurn();
   };
 
   const applyConnectProvider = async (
@@ -2062,8 +2109,218 @@ export function createSessionController(
     );
   };
 
+  const appendSystemText = (content: string, title: string) => {
+    appendUiMessage(createSystemMessage(content, title));
+  };
+
+  const withOptionalServerName = (serverName?: string) =>
+    serverName ? { serverName } : {};
+
+  const doesPathExist = async (targetPath: string) => {
+    try {
+      await fs.access(targetPath);
+      return true;
+    } catch {
+      return false;
+    }
+  };
+
+  const isDirectoryReady = async (targetPath: string) => {
+    try {
+      const stat = await fs.stat(targetPath);
+      return stat.isDirectory();
+    } catch {
+      return false;
+    }
+  };
+
+  const getSkillCommandContext = async () => {
+    const projectRoot = path.join(runtime.config.paths.alyceDirectory, "skills");
+    const userRoot = path.join(runtime.config.paths.userAlyceDirectory, "skills");
+    const [projectRootReady, userRootReady] = await Promise.all([
+      isDirectoryReady(projectRoot),
+      isDirectoryReady(userRoot)
+    ]);
+    return {
+      projectRoot,
+      userRoot,
+      projectRootReady,
+      userRootReady
+    };
+  };
+
+  const getMcpCommandContext = async () => {
+    const projectConfigPath = path.join(runtime.config.paths.alyceDirectory, "mcp.json");
+    const localConfigPath = path.join(runtime.config.paths.alyceDirectory, "mcp.local.json");
+    const userConfigPath = path.join(runtime.config.paths.userAlyceDirectory, "mcp.json");
+    const [projectConfigExists, localConfigExists, userConfigExists] = await Promise.all([
+      doesPathExist(projectConfigPath),
+      doesPathExist(localConfigPath),
+      doesPathExist(userConfigPath)
+    ]);
+    return {
+      projectConfigPath,
+      projectConfigExists,
+      localConfigPath,
+      localConfigExists,
+      userConfigPath,
+      userConfigExists
+    };
+  };
+
+  const findCatalogSkill = (
+    catalog: Awaited<ReturnType<SessionRuntime["listSkills"]>>,
+    requestedName: string
+  ) => [...catalog.skills, ...catalog.disabledSkills].find((entry) =>
+    entry.normalizedName === requestedName.trim().toLowerCase()
+  );
+
+  const handleSkillsCommand = async (parsedCommand: SkillsParsedCommand) => {
+    switch (parsedCommand.type) {
+      case "skills-list": {
+        const catalog = await runtime.listSkills();
+        appendSystemText(formatSkillList(catalog, await getSkillCommandContext()), "Skills");
+        return;
+      }
+      case "skills-view": {
+        const catalog = await runtime.listSkills();
+        const skill = findCatalogSkill(catalog, parsedCommand.name);
+        const details = formatSkillDetails(
+          skill,
+          parsedCommand.name,
+          catalog,
+          await getSkillCommandContext()
+        );
+        appendUiMessage(
+          skill
+            ? createSystemMessage(details, "Skills")
+            : createErrorMessage(details)
+        );
+        return;
+      }
+      case "skills-set-enabled": {
+        const result = parsedCommand.reference.kind === "bundled"
+          ? await runtime.setBundledSkillsEnabled(parsedCommand.enabled, parsedCommand.target)
+          : await runtime.setSkillEnabled(
+              parsedCommand.reference,
+              parsedCommand.enabled,
+              parsedCommand.target
+            );
+        appendSystemText(result.message, "Skills");
+        return;
+      }
+      case "skills-refresh": {
+        const catalog = await runtime.refreshSkills();
+        appendSystemText(
+          [
+            "Skill catalog refreshed.",
+            `Active: ${catalog.skills.length}`,
+            `Disabled: ${catalog.disabledSkills.length}`
+          ].join("\n"),
+          "Skills"
+        );
+        return;
+      }
+    }
+  };
+
+  const appendMcpAuthorizationUrl = (details: {
+    server: string;
+    authorizationUrl: string;
+    redirectUrl: string;
+  }) => {
+    appendSystemText(
+      [
+        `Open this URL to authorize MCP server '${details.server}':`,
+        details.authorizationUrl,
+        `Redirect URL: ${details.redirectUrl}`
+      ].join("\n"),
+      "MCP"
+    );
+  };
+
+  const handleMcpCommand = async (parsedCommand: McpParsedCommand) => {
+    switch (parsedCommand.type) {
+      case "mcp-list": {
+        const status = await runtime.getMcpStatus({ initialize: false });
+        appendSystemText(formatMcpServerList(status, await getMcpCommandContext()), "MCP");
+        return;
+      }
+      case "mcp-status": {
+        const status = await runtime.getMcpStatus({ initialize: true });
+        appendSystemText(formatMcpStatus(status, await getMcpCommandContext()), "MCP");
+        return;
+      }
+      case "mcp-tools": {
+        const result = await runtime.listMcpTools(withOptionalServerName(parsedCommand.serverName));
+        appendSystemText(formatMcpTools(result, await getMcpCommandContext()), "MCP");
+        return;
+      }
+      case "mcp-resources": {
+        const result = await runtime.listMcpResources(withOptionalServerName(parsedCommand.serverName));
+        appendSystemText(formatMcpResources(result, await getMcpCommandContext()), "MCP");
+        return;
+      }
+      case "mcp-prompts": {
+        const result = await runtime.listMcpPrompts(withOptionalServerName(parsedCommand.serverName));
+        appendSystemText(formatMcpPrompts(result, await getMcpCommandContext()), "MCP");
+        return;
+      }
+      case "mcp-prompt": {
+        const result = await runtime.getMcpPrompt(
+          parsedCommand.serverName,
+          parsedCommand.promptName,
+          parsedCommand.args
+        );
+        appendSystemText(formatMcpPrompt(result), "MCP");
+        return;
+      }
+      case "mcp-templates": {
+        const result = await runtime.listMcpResourceTemplates(withOptionalServerName(parsedCommand.serverName));
+        appendSystemText(
+          formatMcpResourceTemplates(result, await getMcpCommandContext()),
+          "MCP"
+        );
+        return;
+      }
+      case "mcp-add": {
+        const result = await runtime.addMcpServer(
+          parsedCommand.name,
+          parsedCommand.config,
+          parsedCommand.scope
+        );
+        appendSystemText(formatMcpMutation("add", result), "MCP");
+        return;
+      }
+      case "mcp-remove": {
+        const result = await runtime.removeMcpServer(parsedCommand.name, parsedCommand.scope);
+        appendSystemText(formatMcpMutation("remove", result), "MCP");
+        return;
+      }
+      case "mcp-set-enabled": {
+        const result = await runtime.setMcpServerEnabled(
+          parsedCommand.name,
+          parsedCommand.enabled,
+          parsedCommand.scope
+        );
+        appendSystemText(
+          formatMcpMutation(parsedCommand.enabled ? "enable" : "disable", result),
+          "MCP"
+        );
+        return;
+      }
+      case "mcp-login": {
+        const result = await runtime.loginMcpServer(parsedCommand.serverName, {
+          onAuthorizationUrl: appendMcpAuthorizationUrl
+        });
+        appendSystemText(formatMcpLoginResult(result), "MCP");
+        return;
+      }
+    }
+  };
+
   const handleCommand = async (
-    parsedCommand: ReturnType<typeof parseReplCommand>
+    parsedCommand: ParsedReplCommand
   ): Promise<boolean> => {
     if (parsedCommand.type === "none") {
       return false;
@@ -2194,18 +2451,8 @@ export function createSessionController(
       return true;
     }
 
-    if (parsedCommand.type === "rewind") {
-      openRewindSelector();
-      return true;
-    }
-
     if (parsedCommand.type === "revert") {
-      try {
-        await handleRevertCommand(parsedCommand.mode);
-      } catch (error) {
-        appendUiMessage(createErrorMessage(`Revert failed: ${getErrorMessage(error)}`));
-        store.updateState((state) => setStatusText(state, "Error"));
-      }
+      openRewindSelector();
       return true;
     }
 
@@ -2381,6 +2628,16 @@ export function createSessionController(
       return true;
     }
 
+    if (isSkillsParsedCommand(parsedCommand)) {
+      await handleSkillsCommand(parsedCommand);
+      return true;
+    }
+
+    if (isMcpParsedCommand(parsedCommand)) {
+      await handleMcpCommand(parsedCommand);
+      return true;
+    }
+
     if (parsedCommand.type === "add-directory") {
       const absolutePath = await resolveAdditionalDirectory(parsedCommand.directory);
       const alreadyAllowed = isDirectoryAlreadyAllowed(absolutePath);
@@ -2447,22 +2704,6 @@ export function createSessionController(
       return true;
     }
 
-    if (parsedCommand.type === "model-view") {
-      appendUiMessage(
-        createSystemMessage(
-          formatModelStatusReport({
-            connectionState: runtime.getConnectionConfigState(),
-            settings: runtime.getSettings(),
-            currentModel: runtime.getCurrentModel(),
-            env: process.env,
-            authRecords: runtime.getProviderAuthRecords()
-          }),
-          "Model"
-        )
-      );
-      return true;
-    }
-
     if (parsedCommand.type === "switch-model") {
       await switchCurrentModel(parsedCommand.model, {
         closeActiveDialog: false,
@@ -2471,7 +2712,8 @@ export function createSessionController(
       return true;
     }
 
-    return true;
+    const unhandledCommand: never = parsedCommand;
+    throw new Error(`Unhandled command type: ${(unhandledCommand as { type: string }).type}`);
   };
 
   return {
@@ -2496,6 +2738,13 @@ export function createSessionController(
           "Startup"
         )
       );
+      const runtimeBootstrapSummary = formatRuntimeBootstrapSummary(
+        runtime.config.bootstrap,
+        runtime.config.paths
+      );
+      if (runtimeBootstrapSummary) {
+        appendUiMessage(createSystemMessage(runtimeBootstrapSummary, "Startup"));
+      }
       if (options.startupContextSummary) {
         appendUiMessage(createSystemMessage(options.startupContextSummary, "Startup Context"));
       }
@@ -2522,7 +2771,13 @@ export function createSessionController(
       setDraftInputValue("");
 
       const parsedCommand = parseReplCommand(normalized);
-      if (await handleCommand(parsedCommand)) {
+      try {
+        if (await handleCommand(parsedCommand)) {
+          return;
+        }
+      } catch (error) {
+        appendUiMessage(createErrorMessage(`Command failed: ${getErrorMessage(error)}`));
+        store.updateState((state) => setStatusText(state, "Error"));
         return;
       }
 
@@ -2555,12 +2810,17 @@ export function createSessionController(
       resetTurnEphemeralMessages();
 
       store.updateState((state) => setTranscriptSticky(state, true));
+      const promptSkillContext = await runtime.preparePromptSkillContext(normalized);
       const userMessage = {
         role: "user",
         content: normalized
       } as const;
-      runtime.messages.push(userMessage);
+      runtime.messages.push(...promptSkillContext.generatedMessages, userMessage);
       appendUiMessage(createUserMessage(normalized));
+      const promptSkillSummary = formatPromptSkillSummary(promptSkillContext);
+      if (promptSkillSummary) {
+        appendUiMessage(createSystemMessage(promptSkillSummary, "Skills"));
+      }
       store.updateState((state) => setLoading(setStatusText(state, "Preparing..."), true));
       let completedTurnHistoryPlan: CompletedTurnHistoryPlan | null = null;
       let turnRecorded = false;
@@ -2590,7 +2850,8 @@ export function createSessionController(
         });
         throwIfAborted(controller.signal);
         await runtime.resetSystemMessage({
-          availableTools: getFunctionToolNames(tools)
+          availableTools: getFunctionToolNames(tools),
+          nextUserInput: normalized
         });
         store.updateState((state) => setStatusText(state, "Estimating context..."));
         throwIfAborted(controller.signal);
@@ -2926,6 +3187,9 @@ export function createSessionController(
     respondToQuestion: (response) => {
       pendingQuestionResolver?.(response);
     },
+    respondToMcpElicitation: (response) => {
+      pendingMcpElicitationResolver?.(response);
+    },
     openSettings: (section = "session", reason) => {
       if (section === "connection") {
         store.updateState((state) => openConnectProviderDialog(state));
@@ -2946,7 +3210,11 @@ export function createSessionController(
     },
     closeDialog: () => {
       const activeDialog = getActiveDialog(store.getState());
-      if (activeDialog?.type === "permission" || activeDialog?.type === "question") {
+      if (
+        activeDialog?.type === "permission" ||
+        activeDialog?.type === "question" ||
+        activeDialog?.type === "mcp-elicitation"
+      ) {
         return;
       }
 
@@ -3226,7 +3494,7 @@ function formatFilesOnlyRevertResult(
     return [
       `Turn ${report.turnId} was already restored${result.restoredAt ? ` at ${result.restoredAt}` : ""}.`,
       "No file changes were applied.",
-      "Use /rewind or /revert --conversation-only if you only need to move the conversation."
+      "Open /revert if you still need to restore conversation history."
     ].join("\n");
   }
 
@@ -3325,6 +3593,75 @@ function extractMessageText(value: unknown): string {
     .trim();
 }
 
+function formatPromptSkillSummary(
+  context: Awaited<ReturnType<SessionRuntime["preparePromptSkillContext"]>>
+): string | null {
+  const lines: string[] = [];
+
+  if (context.loadedSkillNames.length > 0) {
+    lines.push(`Loaded skill context from prompt mentions: ${context.loadedSkillNames.join(", ")}`);
+  }
+
+  const unresolvedMentions = context.unresolvedMentions.filter(shouldWarnForUnknownSkillMention);
+  if (unresolvedMentions.length > 0) {
+    lines.push(
+      `Unknown skill mention(s) ignored: ${unresolvedMentions.map((name) => `$${name}`).join(", ")}`
+    );
+  }
+
+  if (context.disabledMentions.length > 0) {
+    lines.push(
+      `Disabled skill mention(s) ignored: ${context.disabledMentions.map((name) => `$${name}`).join(", ")}`
+    );
+  }
+
+  if (context.dependencyWarnings.length > 0) {
+    lines.push(...context.dependencyWarnings.slice(0, 5));
+  }
+
+  if (context.loadedSkillNames.length > 0 && context.duplicateWarnings.length > 0) {
+    lines.push(...context.duplicateWarnings.slice(0, 3));
+  }
+
+  return lines.length > 0 ? lines.join("\n") : null;
+}
+
+function shouldWarnForUnknownSkillMention(name: string) {
+  return /-/.test(name) || /[a-z]/.test(name);
+}
+
+function formatRuntimeBootstrapSummary(
+  report: RuntimeBootstrapReport,
+  paths: RuntimePaths
+): string | null {
+  if (report.createdPaths.length === 0 && report.failedPaths.length === 0) {
+    return null;
+  }
+
+  const lines: string[] = [];
+  if (report.createdPaths.length > 0) {
+    lines.push(
+      `Initialized Alyce runtime storage (${report.createdPaths.length} path(s) ready).`,
+      `Skills root: ${path.join(paths.alyceDirectory, "skills")}`,
+      `Project MCP config: ${path.join(paths.alyceDirectory, "mcp.json")} (created on first save)`
+    );
+  }
+
+  if (report.failedPaths.length > 0) {
+    if (lines.length > 0) {
+      lines.push("");
+    }
+    lines.push(
+      `Some runtime paths could not be initialized (${report.failedPaths.length}):`,
+      ...report.failedPaths
+        .slice(0, 5)
+        .map((failure) => `- ${failure.path}: ${failure.error}`)
+    );
+  }
+
+  return lines.join("\n");
+}
+
 function mergeThinkingContent(current: string, nextChunk: string): string {
   if (!nextChunk.trim()) {
     return current;
@@ -3420,6 +3757,7 @@ async function waitForUiPaint(): Promise<void> {
 export const __SESSION_CONTROLLER_TESTING__ = {
   mergeThinkingContent,
   extractThinkingDelta,
+  formatPromptSkillSummary,
   shouldSkipApprovalDialog,
   parseAutoReviewDecision,
   buildAutoReviewPrompt,

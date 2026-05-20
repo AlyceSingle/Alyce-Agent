@@ -14,6 +14,20 @@ const MAX_VISIBLE_SLASH_COMMAND_SUGGESTIONS = 10;
 const DEFAULT_PROMPT_PLACEHOLDER = "Ask Alyce to inspect, edit, or explain something...";
 export const INPUT_LOCKED_PLACEHOLDER = "Input locked while Alyce is working. Press ESC to interrupt.";
 
+const SLASH_COMMAND_SEARCH_INDEX = REPL_COMMAND_DEFINITIONS.map((command) => ({
+  command,
+  prefixes: Array.from(
+    new Set(
+      [
+        command.command,
+        command.usage,
+        command.completion,
+        ...(command.searchPrefixes ?? [])
+      ].map((candidate) => candidate.toLowerCase())
+    )
+  )
+}));
+
 export function isSlashCommandInput(value: string) {
   return value.startsWith("/") && !value.includes("\n");
 }
@@ -24,10 +38,13 @@ export function getSlashCommandSuggestions(value: string): ReplCommandDefinition
   }
 
   const query = value.toLowerCase();
-  return REPL_COMMAND_DEFINITIONS.filter((command) => {
-    const candidates = [command.command, command.usage, command.completion];
-    return candidates.some((candidate) => candidate.toLowerCase().startsWith(query));
-  });
+  const matches: ReplCommandDefinition[] = [];
+  for (const entry of SLASH_COMMAND_SEARCH_INDEX) {
+    if (entry.prefixes.some((prefix) => prefix.startsWith(query))) {
+      matches.push(entry.command);
+    }
+  }
+  return matches;
 }
 
 export function getVisibleSlashCommandSuggestions(
@@ -343,9 +360,9 @@ function SlashCommandSuggestions(props: {
     props.suggestions,
     props.selectedIndex
   );
-  const usageWidth = Math.min(
+  const commandWidth = Math.min(
     30,
-    visibleSuggestions.suggestions.reduce((width, command) => Math.max(width, command.usage.length), 0)
+    visibleSuggestions.suggestions.reduce((width, command) => Math.max(width, command.command.length), 0)
   );
 
   return (
@@ -356,12 +373,12 @@ function SlashCommandSuggestions(props: {
         const color = selected ? terminalUiTheme.colors.promptAccent : terminalUiTheme.colors.inputTray;
         return (
           <Text
-            key={suggestion.usage}
+            key={suggestion.command}
             color={color}
             wrap="truncate-end"
           >
             {marker}
-            {suggestion.usage.padEnd(usageWidth)}
+            {suggestion.command.padEnd(commandWidth)}
             {"  "}
             <Text color={selected ? terminalUiTheme.colors.chrome : terminalUiTheme.colors.subtle}>
               {suggestion.description}

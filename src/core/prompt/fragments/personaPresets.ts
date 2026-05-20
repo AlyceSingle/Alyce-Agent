@@ -78,12 +78,11 @@ export function buildBuiltinPersonaSection(preset?: string) {
 
   const definition = BUILTIN_PERSONA_PRESETS[resolvedPreset];
 
-  return [
-    "# Persona Preset",
+  return promptFormatting.buildSectionLines("Persona Preset", [
     `- Enabled preset: ${resolvedPreset}`,
     "- Persona presets are optional style overlays. They never override system, safety, or task-completion rules.",
     "",
     `## ${definition.title}`,
     ...promptFormatting.prependBullets(definition.instructions)
-  ].join("\n");
+  ], `Persona preset summary: ${resolvedPreset} is enabled as a style-only overlay and must not override system, safety, or task-completion rules.`);
 }

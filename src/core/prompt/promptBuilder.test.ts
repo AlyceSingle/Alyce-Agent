@@ -1,13 +1,18 @@
 import assert from "node:assert/strict";
-import { buildDefaultSystemPrompt } from "./builder.js";
+import { buildDefaultSystemPrompt, buildEffectiveSystemPrompt } from "./builder.js";
 import { PromptSectionResolver } from "./sectionResolver.js";
 import type { PromptRuntimeContext } from "./types.js";
+import type { SkillPromptContext } from "../../skills/service.js";
 
 function runTests() {
   void Promise.all([
+    testDefaultSystemPromptStartsWithSummaryLine(),
     testToolListUpdatesAcrossBuilds(),
+    testDefaultSystemPromptShowsAvailableSkills(),
+    testDefaultSystemPromptShowsOptionalSectionSummaries(),
     testDefaultSystemPromptGuidesLongRunningServers(),
     testDefaultSystemPromptGuidesInteractivePtyUse(),
+    testEffectiveSystemPromptSummarizesAdditionalInstructions(),
     testDefaultSystemPromptUsesEnglishAuthoredText()
   ]).then(() => {
     console.log("promptBuilder tests passed");
@@ -17,7 +22,10 @@ function runTests() {
   });
 }
 
-function createRuntimeContext(availableTools: string[]): PromptRuntimeContext {
+function createRuntimeContext(
+  availableTools: string[],
+  availableSkills?: SkillPromptContext
+): PromptRuntimeContext {
   return {
     model: "test-model",
     workspaceRoot: process.cwd(),
@@ -27,11 +35,26 @@ function createRuntimeContext(availableTools: string[]): PromptRuntimeContext {
     timeZone: "Asia/Shanghai",
     platform: process.platform,
     availableTools,
+    ...(availableSkills ? { availableSkills } : {}),
     memory: {
       sessionNotes: [],
       persistentNotes: []
     }
   };
+}
+
+async function testDefaultSystemPromptStartsWithSummaryLine() {
+  const prompt = await buildDefaultSystemPrompt(
+    createRuntimeContext(["Read"]),
+    {},
+    new PromptSectionResolver()
+  );
+
+  const firstNonEmptyLine = prompt.split(/\r?\n/).find((line) => line.trim().length > 0);
+  assert.equal(firstNonEmptyLine, 'Identity summary: you are "Alyce", the interactive terminal assistant responsible for helping the user complete practical tasks.');
+  assert.match(prompt, /System summary:/);
+  assert.match(prompt, /Time summary:/);
+  assert.match(prompt, /Tool result summary:/);
 }
 
 async function testDefaultSystemPromptUsesEnglishAuthoredText() {
@@ -87,6 +110,70 @@ async function testToolListUpdatesAcrossBuilds() {
   assert.doesNotMatch(first, /mcp__demo__echo/);
   assert.match(second, /Current available tools: Read, mcp__demo__echo/);
   assert.match(second, /Use MCP tools/);
+}
+
+async function testDefaultSystemPromptShowsAvailableSkills() {
+  const prompt = await buildDefaultSystemPrompt(
+    createRuntimeContext(["SkillTool"], {
+      skills: [
+        {
+          name: "code-review",
+          source: "project",
+          description: "Review code changes.",
+          shortDescription: "Review code changes.",
+          whenToUse: "Use when the user asks for a review."
+        }
+      ],
+      totalCount: 1,
+      truncatedCount: 0,
+      duplicateWarnings: [],
+      charBudget: 8_000
+    }),
+    {},
+    new PromptSectionResolver()
+  );
+
+  assert.match(prompt, /Skills summary:/);
+  assert.match(prompt, /# Available skills/);
+  assert.match(prompt, /\$<skill-name>/);
+  assert.match(prompt, /code-review \[project\]/);
+  assert.match(prompt, /Use when the user asks for a review/);
+}
+
+async function testDefaultSystemPromptShowsOptionalSectionSummaries() {
+  const prompt = await buildDefaultSystemPrompt(
+    {
+      ...createRuntimeContext(["SkillTool"]),
+      memory: {
+        sessionSummary: "Branch: feature/system-summary",
+        sessionNotes: ["Check the first line before expanding prompts."],
+        persistentNotes: ["The user prefers concise implementation notes."]
+      }
+    },
+    {
+      personaPreset: "alyce",
+      languagePreference: "Simplified Chinese"
+    },
+    new PromptSectionResolver()
+  );
+
+  assert.match(prompt, /Persona preset summary:/);
+  assert.match(prompt, /Memory summary:/);
+  assert.match(prompt, /Language summary:/);
+}
+
+async function testEffectiveSystemPromptSummarizesAdditionalInstructions() {
+  const prompt = await buildEffectiveSystemPrompt(
+    createRuntimeContext(["Read"]),
+    {
+      appendSystemPrompt: "# Extra Constraints\nFollow the extra rules."
+    },
+    new PromptSectionResolver()
+  );
+
+  assert.match(prompt, /Additional instructions summary:/);
+  assert.match(prompt, /# Additional Instructions/);
+  assert.match(prompt, /# Extra Constraints/);
 }
 
 runTests();

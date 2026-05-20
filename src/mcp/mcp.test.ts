@@ -3,16 +3,21 @@ import { promises as fs } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { getFunctionToolName } from "../core/api/openaiFunctionTools.js";
-import { loadProjectMcpConfig } from "./config.js";
+import { loadMcpConfigState, loadProjectMcpConfig } from "./config.js";
 import { createProjectMcpRuntime } from "./runtime.js";
 import { decodeMcpToolName, encodeMcpToolName } from "./toolNames.js";
 
 type McpFixtureName = "mockMcpServer" | "hangingToolsMcpServer";
 
 async function runTests() {
+  await testMissingMcpConfigReturnsEmptyServerSet();
   await testLoadsProjectMcpConfig();
+  await testLoadsMergedScopedMcpConfigState();
   await testLoadsRemoteMcpConfig();
+  await testLoadsSseMcpConfig();
+  await testRejectsInvalidMcpConfigSchema();
   await testRuntimeSurvivesInvalidMcpConfig();
+  await testRuntimeHandlesMissingMcpConfig();
   testEncodesAndDecodesToolNames();
   testTruncatesToolNamesWithoutLosingShape();
   await testRuntimeUsesStdioServerTools();
@@ -23,8 +28,24 @@ async function runTests() {
   await testRuntimeCloseClearsInitializingState();
   await testRuntimeCanAbortToolDiscovery();
   await testRuntimeCanRetryAfterAbortedToolDiscovery();
-  await testRuntimeListsAndReadsResources();
+  await testRuntimeListsToolsAndReadsResources();
+  await testRuntimeListsPromptsAndTemplates();
+  await testRuntimeHandlesToolElicitation();
+  await testRuntimeApprovalPolicyCanDenyTool();
+  await testRuntimeApprovalPolicyCanAllowTool();
+  await testRuntimeApprovalPolicyToolOverrideWins();
+  await testRuntimeExposureBudgetHidesDynamicTools();
+  await testRuntimeCanExecuteNamedToolCalls();
+  await testRuntimeNormalizesServerLookupNames();
+  await testRuntimePersistsEnableDisableAndRemove();
   console.log("MCP tests passed");
+}
+
+async function testMissingMcpConfigReturnsEmptyServerSet() {
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), "alyce-mcp-missing-config-"));
+  const config = await loadProjectMcpConfig(root);
+
+  assert.deepEqual(config, { mcpServers: {} });
 }
 
 async function testLoadsProjectMcpConfig() {
@@ -53,6 +74,106 @@ async function testLoadsProjectMcpConfig() {
   assert.equal(chrome?.type === "stdio" ? chrome.cwd : undefined, root);
 }
 
+async function testLoadsMergedScopedMcpConfigState() {
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), "alyce-mcp-scoped-state-"));
+  const homeDirectory = path.join(root, "home");
+  await fs.mkdir(path.join(root, ".alyce"), { recursive: true });
+  await fs.mkdir(path.join(homeDirectory, ".alyce"), { recursive: true });
+
+  await fs.writeFile(
+    path.join(homeDirectory, ".alyce", "mcp.json"),
+    JSON.stringify({
+      mcpServers: {
+        "user-only": {
+          command: "${TEST_MCP_COMMAND}",
+          cwd: "."
+        },
+        shared: {
+          command: "user-cmd"
+        }
+      }
+    }),
+    "utf8"
+  );
+  await fs.writeFile(
+    path.join(root, ".alyce", "mcp.json"),
+    JSON.stringify({
+      mcpServers: {
+        shared: {
+          command: "project-cmd",
+          cwd: "./project-subdir"
+        },
+        "project-only": {
+          url: "https://example.com/%TEST_MCP_PATH%"
+        }
+      }
+    }),
+    "utf8"
+  );
+  await fs.writeFile(
+    path.join(root, ".alyce", "mcp.local.json"),
+    JSON.stringify({
+      mcpServers: {
+        "local-only": {
+          type: "sse",
+          url: "https://example.com/$TEST_MCP_PATH"
+        }
+      }
+    }),
+    "utf8"
+  );
+
+  const state = await loadMcpConfigState(root, {
+    env: {
+      ...process.env,
+      TEST_MCP_COMMAND: "expanded-user-cmd",
+      TEST_MCP_PATH: "events"
+    },
+    homeDirectory
+  });
+
+  assert.equal(state.sources["user-only"], "user");
+  assert.equal(state.sources.shared, "project");
+  assert.equal(state.sources["project-only"], "project");
+  assert.equal(state.sources["local-only"], "local");
+  assert.equal(
+    state.effective.mcpServers["user-only"]?.type === "stdio"
+      ? state.effective.mcpServers["user-only"].command
+      : "",
+    "expanded-user-cmd"
+  );
+  assert.equal(
+    state.effective.mcpServers["user-only"]?.type === "stdio"
+      ? state.effective.mcpServers["user-only"].cwd
+      : "",
+    homeDirectory
+  );
+  assert.equal(
+    state.effective.mcpServers.shared?.type === "stdio"
+      ? state.effective.mcpServers.shared.command
+      : "",
+    "project-cmd"
+  );
+  assert.equal(
+    state.effective.mcpServers.shared?.type === "stdio"
+      ? state.effective.mcpServers.shared.cwd
+      : "",
+    path.join(root, "project-subdir")
+  );
+  assert.equal(
+    state.effective.mcpServers["project-only"]?.type === "streamable_http"
+      ? state.effective.mcpServers["project-only"].url
+      : "",
+    "https://example.com/events"
+  );
+  assert.equal(
+    state.effective.mcpServers["local-only"]?.type === "sse"
+      ? state.effective.mcpServers["local-only"].url
+      : "",
+    "https://example.com/events"
+  );
+}
+
 async function testLoadsRemoteMcpConfig() {
   const root = await fs.mkdtemp(path.join(os.tmpdir(), "alyce-mcp-remote-config-"));
   await fs.mkdir(path.join(root, ".alyce"), { recursive: true });
@@ -77,6 +198,53 @@ async function testLoadsRemoteMcpConfig() {
   assert.equal(remote?.type === "streamable_http" ? remote.url : undefined, "https://example.com/mcp");
 }
 
+async function testLoadsSseMcpConfig() {
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), "alyce-mcp-sse-config-"));
+  await fs.mkdir(path.join(root, ".alyce"), { recursive: true });
+  await fs.writeFile(
+    path.join(root, ".alyce", "mcp.json"),
+    JSON.stringify({
+      mcpServers: {
+        events: {
+          type: "sse",
+          url: "https://example.com/events",
+          headers: {
+            authorization: "Bearer token"
+          }
+        }
+      }
+    }),
+    "utf8"
+  );
+
+  const config = await loadProjectMcpConfig(root);
+  const events = config.mcpServers.events;
+  assert.equal(events?.type, "sse");
+  assert.equal(events?.type === "sse" ? events.url : undefined, "https://example.com/events");
+  assert.equal(events?.type === "sse" ? events.headers?.authorization : undefined, "Bearer token");
+}
+
+async function testRejectsInvalidMcpConfigSchema() {
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), "alyce-mcp-invalid-schema-"));
+  await fs.mkdir(path.join(root, ".alyce"), { recursive: true });
+  await fs.writeFile(
+    path.join(root, ".alyce", "mcp.json"),
+    JSON.stringify({
+      mcpServers: {
+        broken: {
+          command: ""
+        }
+      }
+    }),
+    "utf8"
+  );
+
+  await assert.rejects(
+    () => loadProjectMcpConfig(root),
+    /Invalid MCP config .*mcpServers\.broken\.command/
+  );
+}
+
 async function testRuntimeSurvivesInvalidMcpConfig() {
   const root = await fs.mkdtemp(path.join(os.tmpdir(), "alyce-mcp-invalid-runtime-"));
   await fs.mkdir(path.join(root, ".alyce"), { recursive: true });
@@ -89,8 +257,20 @@ async function testRuntimeSurvivesInvalidMcpConfig() {
 
     const status = await runtime.getStatus();
     assert.equal(status.servers[0]?.name, "configuration");
-    assert.equal(status.servers[0]?.status, "error");
+    assert.equal(status.servers[0]?.status, "failed");
     assert.match(status.servers[0]?.error ?? "", /Invalid MCP config JSON/);
+  } finally {
+    await runtime.close();
+  }
+}
+
+async function testRuntimeHandlesMissingMcpConfig() {
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), "alyce-mcp-missing-runtime-"));
+
+  const runtime = await createProjectMcpRuntime(root);
+  try {
+    assert.deepEqual(await runtime.getToolSchemas({ initialize: true }), []);
+    assert.deepEqual(await runtime.getStatus(), { servers: [] });
   } finally {
     await runtime.close();
   }
@@ -118,20 +298,13 @@ function testTruncatesToolNamesWithoutLosingShape() {
 async function testRuntimeUsesStdioServerTools() {
   const root = await fs.mkdtemp(path.join(os.tmpdir(), "alyce-mcp-runtime-"));
   const fixture = getMcpFixtureCommand("mockMcpServer");
-  await fs.mkdir(path.join(root, ".alyce"), { recursive: true });
-  await fs.writeFile(
-    path.join(root, ".alyce", "mcp.json"),
-    JSON.stringify({
-      mcpServers: {
-        mock: {
-          command: fixture.command,
-          args: fixture.args,
-          startup_timeout_ms: 5000
-        }
-      }
-    }),
-    "utf8"
-  );
+  await writeProjectConfig(root, {
+    mock: {
+      command: fixture.command,
+      args: fixture.args,
+      startup_timeout_ms: 5000
+    }
+  });
 
   const runtime = await createProjectMcpRuntime(root);
   try {
@@ -157,20 +330,13 @@ async function testRuntimeUsesStdioServerTools() {
 async function testRuntimeStatusDoesNotInitializeServersByDefault() {
   const root = await fs.mkdtemp(path.join(os.tmpdir(), "alyce-mcp-status-lazy-"));
   const fixture = getMcpFixtureCommand("mockMcpServer");
-  await fs.mkdir(path.join(root, ".alyce"), { recursive: true });
-  await fs.writeFile(
-    path.join(root, ".alyce", "mcp.json"),
-    JSON.stringify({
-      mcpServers: {
-        mock: {
-          command: fixture.command,
-          args: fixture.args,
-          startup_timeout_ms: 5000
-        }
-      }
-    }),
-    "utf8"
-  );
+  await writeProjectConfig(root, {
+    mock: {
+      command: fixture.command,
+      args: fixture.args,
+      startup_timeout_ms: 5000
+    }
+  });
 
   const runtime = await createProjectMcpRuntime(root);
   try {
@@ -189,20 +355,13 @@ async function testRuntimeStatusDoesNotInitializeServersByDefault() {
 async function testRuntimeToolSchemasDoNotInitializeServersByDefault() {
   const root = await fs.mkdtemp(path.join(os.tmpdir(), "alyce-mcp-schemas-lazy-"));
   const fixture = getMcpFixtureCommand("mockMcpServer");
-  await fs.mkdir(path.join(root, ".alyce"), { recursive: true });
-  await fs.writeFile(
-    path.join(root, ".alyce", "mcp.json"),
-    JSON.stringify({
-      mcpServers: {
-        mock: {
-          command: fixture.command,
-          args: fixture.args,
-          startup_timeout_ms: 5000
-        }
-      }
-    }),
-    "utf8"
-  );
+  await writeProjectConfig(root, {
+    mock: {
+      command: fixture.command,
+      args: fixture.args,
+      startup_timeout_ms: 5000
+    }
+  });
 
   const runtime = await createProjectMcpRuntime(root);
   try {
@@ -220,20 +379,13 @@ async function testRuntimeToolSchemasDoNotInitializeServersByDefault() {
 async function testRuntimeClearsToolIndexOnClose() {
   const root = await fs.mkdtemp(path.join(os.tmpdir(), "alyce-mcp-close-index-"));
   const fixture = getMcpFixtureCommand("mockMcpServer");
-  await fs.mkdir(path.join(root, ".alyce"), { recursive: true });
-  await fs.writeFile(
-    path.join(root, ".alyce", "mcp.json"),
-    JSON.stringify({
-      mcpServers: {
-        mock: {
-          command: fixture.command,
-          args: fixture.args,
-          startup_timeout_ms: 5000
-        }
-      }
-    }),
-    "utf8"
-  );
+  await writeProjectConfig(root, {
+    mock: {
+      command: fixture.command,
+      args: fixture.args,
+      startup_timeout_ms: 5000
+    }
+  });
 
   const runtime = await createProjectMcpRuntime(root);
   const schemas = await runtime.getToolSchemas({ initialize: true });
@@ -251,20 +403,13 @@ async function testRuntimeClearsToolIndexOnClose() {
 async function testRuntimeTimesOutHangingToolDiscovery() {
   const root = await fs.mkdtemp(path.join(os.tmpdir(), "alyce-mcp-hanging-tools-"));
   const fixture = getMcpFixtureCommand("hangingToolsMcpServer");
-  await fs.mkdir(path.join(root, ".alyce"), { recursive: true });
-  await fs.writeFile(
-    path.join(root, ".alyce", "mcp.json"),
-    JSON.stringify({
-      mcpServers: {
-        hanging: {
-          command: fixture.command,
-          args: fixture.args,
-          startup_timeout_ms: 1_000
-        }
-      }
-    }),
-    "utf8"
-  );
+  await writeProjectConfig(root, {
+    hanging: {
+      command: fixture.command,
+      args: fixture.args,
+      startup_timeout_ms: 1_000
+    }
+  });
 
   const runtime = await createProjectMcpRuntime(root);
   try {
@@ -274,7 +419,7 @@ async function testRuntimeTimesOutHangingToolDiscovery() {
     assert.equal(Date.now() - startedAt < 2_000, true);
 
     const status = await runtime.getStatus();
-    assert.equal(status.servers[0]?.status, "error");
+    assert.equal(status.servers[0]?.status, "failed");
     assert.match(status.servers[0]?.error ?? "", /did not list tools in time|timed out/i);
   } finally {
     await runtime.close();
@@ -284,28 +429,21 @@ async function testRuntimeTimesOutHangingToolDiscovery() {
 async function testRuntimeCloseClearsInitializingState() {
   const root = await fs.mkdtemp(path.join(os.tmpdir(), "alyce-mcp-close-initializing-"));
   const fixture = getMcpFixtureCommand("hangingToolsMcpServer");
-  await fs.mkdir(path.join(root, ".alyce"), { recursive: true });
-  await fs.writeFile(
-    path.join(root, ".alyce", "mcp.json"),
-    JSON.stringify({
-      mcpServers: {
-        hanging: {
-          command: fixture.command,
-          args: fixture.args,
-          startup_timeout_ms: 5_000
-        }
-      }
-    }),
-    "utf8"
-  );
+  await writeProjectConfig(root, {
+    hanging: {
+      command: fixture.command,
+      args: fixture.args,
+      startup_timeout_ms: 5_000
+    }
+  });
 
   const runtime = await createProjectMcpRuntime(root);
-    const initializing = runtime.getToolSchemas({ initialize: true }).catch(() => []);
+  const initializing = runtime.getToolSchemas({ initialize: true }).catch(() => []);
   await new Promise((resolve) => setTimeout(resolve, 25));
   await runtime.close();
 
   const status = await runtime.getStatus();
-  assert.equal(status.servers[0]?.status, "error");
+  assert.equal(status.servers[0]?.status, "failed");
   assert.match(status.servers[0]?.error ?? "", /closed during initialization/i);
   assert.equal(runtime.canExecuteTool("mcp__hanging__echo"), false);
   await initializing;
@@ -314,20 +452,13 @@ async function testRuntimeCloseClearsInitializingState() {
 async function testRuntimeCanAbortToolDiscovery() {
   const root = await fs.mkdtemp(path.join(os.tmpdir(), "alyce-mcp-abort-tools-"));
   const fixture = getMcpFixtureCommand("hangingToolsMcpServer");
-  await fs.mkdir(path.join(root, ".alyce"), { recursive: true });
-  await fs.writeFile(
-    path.join(root, ".alyce", "mcp.json"),
-    JSON.stringify({
-      mcpServers: {
-        hanging: {
-          command: fixture.command,
-          args: fixture.args,
-          startup_timeout_ms: 5_000
-        }
-      }
-    }),
-    "utf8"
-  );
+  await writeProjectConfig(root, {
+    hanging: {
+      command: fixture.command,
+      args: fixture.args,
+      startup_timeout_ms: 5_000
+    }
+  });
 
   const runtime = await createProjectMcpRuntime(root);
   const controller = new AbortController();
@@ -345,20 +476,13 @@ async function testRuntimeCanAbortToolDiscovery() {
 async function testRuntimeCanRetryAfterAbortedToolDiscovery() {
   const root = await fs.mkdtemp(path.join(os.tmpdir(), "alyce-mcp-retry-after-abort-"));
   const fixture = getMcpFixtureCommand("mockMcpServer");
-  await fs.mkdir(path.join(root, ".alyce"), { recursive: true });
-  await fs.writeFile(
-    path.join(root, ".alyce", "mcp.json"),
-    JSON.stringify({
-      mcpServers: {
-        mock: {
-          command: fixture.command,
-          args: fixture.args,
-          startup_timeout_ms: 5_000
-        }
-      }
-    }),
-    "utf8"
-  );
+  await writeProjectConfig(root, {
+    mock: {
+      command: fixture.command,
+      args: fixture.args,
+      startup_timeout_ms: 5_000
+    }
+  });
 
   const runtime = await createProjectMcpRuntime(root);
   const controller = new AbortController();
@@ -379,26 +503,30 @@ async function testRuntimeCanRetryAfterAbortedToolDiscovery() {
   }
 }
 
-async function testRuntimeListsAndReadsResources() {
+async function testRuntimeListsToolsAndReadsResources() {
   const root = await fs.mkdtemp(path.join(os.tmpdir(), "alyce-mcp-resources-"));
   const fixture = getMcpFixtureCommand("mockMcpServer");
-  await fs.mkdir(path.join(root, ".alyce"), { recursive: true });
-  await fs.writeFile(
-    path.join(root, ".alyce", "mcp.json"),
-    JSON.stringify({
-      mcpServers: {
-        mock: {
-          command: fixture.command,
-          args: fixture.args,
-          startup_timeout_ms: 5000
-        }
-      }
-    }),
-    "utf8"
-  );
+  await writeProjectConfig(root, {
+    mock: {
+      command: fixture.command,
+      args: fixture.args,
+      startup_timeout_ms: 5000
+    }
+  });
 
   const runtime = await createProjectMcpRuntime(root);
   try {
+    const tools = await runtime.listTools({ serverName: "mock" });
+    assert.equal(tools.toolCount, 2);
+    assert.deepEqual(
+      tools.servers[0]?.tools.map((tool) => tool.name).sort(),
+      ["collect_deploy_info", "echo"]
+    );
+    assert.equal(
+      tools.servers[0]?.tools.some((tool) => tool.exposedName === "mcp__mock__echo"),
+      true
+    );
+
     const listed = await runtime.listResources({ serverName: "mock" });
     assert.equal(listed.resourceCount, 2);
     assert.equal(listed.servers[0]?.resources[0]?.uri, "mock://text");
@@ -418,16 +546,348 @@ async function testRuntimeListsAndReadsResources() {
     const outputPath = blob.contents[0]?.type === "blob" ? blob.contents[0].outputPath : "";
     assert.equal(outputPath.startsWith(path.join(root, ".alyce", "mcp-output")), true);
     assert.deepEqual([...await fs.readFile(outputPath)], [1, 2, 3, 4]);
-
-    const secondBlob = await runtime.readResource("mock", "mock://blob");
-    const secondOutputPath = secondBlob.contents[0]?.type === "blob"
-      ? secondBlob.contents[0].outputPath
-      : "";
-    assert.notEqual(secondOutputPath, outputPath);
-    assert.deepEqual([...await fs.readFile(secondOutputPath)], [1, 2, 3, 4]);
   } finally {
     await runtime.close();
   }
+}
+
+async function testRuntimeListsPromptsAndTemplates() {
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), "alyce-mcp-prompts-"));
+  const fixture = getMcpFixtureCommand("mockMcpServer");
+  await writeProjectConfig(root, {
+    mock: {
+      command: fixture.command,
+      args: fixture.args,
+      startup_timeout_ms: 5000
+    }
+  });
+
+  const runtime = await createProjectMcpRuntime(root);
+  try {
+    const prompts = await runtime.listPrompts({ serverName: "mock" });
+    assert.equal(prompts.promptCount, 1);
+    assert.equal(prompts.servers[0]?.prompts[0]?.name, "summarize_release");
+
+    const prompt = await runtime.getPrompt("mock", "summarize_release", {
+      topic: "release notes"
+    });
+    assert.equal(prompt.status, "completed");
+    assert.equal(prompt.messages[0]?.content[0]?.type, "text");
+    assert.equal(
+      prompt.messages[0]?.content[0]?.type === "text"
+        ? prompt.messages[0].content[0].text
+        : "",
+      "Summarize release notes."
+    );
+
+    const templates = await runtime.listResourceTemplates({ serverName: "mock" });
+    assert.equal(templates.resourceTemplateCount, 1);
+    assert.equal(
+      templates.servers[0]?.resourceTemplates[0]?.uriTemplate,
+      "mock://repo/{owner}/{name}"
+    );
+  } finally {
+    await runtime.close();
+  }
+}
+
+async function testRuntimeHandlesToolElicitation() {
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), "alyce-mcp-elicitation-"));
+  const fixture = getMcpFixtureCommand("mockMcpServer");
+  await writeProjectConfig(root, {
+    mock: {
+      command: fixture.command,
+      args: fixture.args,
+      startup_timeout_ms: 5000
+    }
+  });
+
+  const runtime = await createProjectMcpRuntime(root);
+  runtime.setInteractionHandlers?.({
+    requestElicitation: async (request) => {
+      assert.equal(request.mode, "form");
+      return {
+        action: "accept",
+        content: {
+          environment: "production",
+          include_logs: true
+        }
+      };
+    }
+  });
+
+  try {
+    await runtime.getToolSchemas({ initialize: true });
+    const result = await runtime.executeToolCall("mcp__mock__collect_deploy_info", {
+      label: "release"
+    }, {
+      requestApproval: async () => true
+    }) as {
+      status: string;
+      structuredContent?: { environment?: string; includeLogs?: boolean };
+      content: Array<{ type: string; text?: string }>;
+    };
+
+    assert.equal(result.status, "completed");
+    assert.equal(result.structuredContent?.environment, "production");
+    assert.equal(result.structuredContent?.includeLogs, true);
+    assert.equal(result.content[0]?.text, "deploy:production:with-logs");
+  } finally {
+    await runtime.close();
+  }
+}
+
+async function testRuntimeApprovalPolicyCanDenyTool() {
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), "alyce-mcp-approval-deny-"));
+  const fixture = getMcpFixtureCommand("mockMcpServer");
+  await writeProjectConfig(root, {
+    mock: {
+      command: fixture.command,
+      args: fixture.args,
+      startup_timeout_ms: 5000,
+      approval: {
+        default: "deny"
+      }
+    }
+  });
+
+  const runtime = await createProjectMcpRuntime(root);
+  try {
+    await runtime.getToolSchemas({ initialize: true });
+    let approvalCount = 0;
+    await assert.rejects(
+      () => runtime.executeNamedToolCall("mock", "echo", { text: "hello" }, {
+        requestApproval: async () => {
+          approvalCount += 1;
+          return true;
+        }
+      }),
+      /denied by MCP approval policy/
+    );
+    assert.equal(approvalCount, 0);
+  } finally {
+    await runtime.close();
+  }
+}
+
+async function testRuntimeApprovalPolicyCanAllowTool() {
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), "alyce-mcp-approval-allow-"));
+  const fixture = getMcpFixtureCommand("mockMcpServer");
+  await writeProjectConfig(root, {
+    mock: {
+      command: fixture.command,
+      args: fixture.args,
+      startup_timeout_ms: 5000,
+      approval: {
+        default: "allow"
+      }
+    }
+  });
+
+  const runtime = await createProjectMcpRuntime(root);
+  try {
+    await runtime.getToolSchemas({ initialize: true });
+    let approvalCount = 0;
+    const result = await runtime.executeNamedToolCall("mock", "echo", { text: "hello" }, {
+      requestApproval: async () => {
+        approvalCount += 1;
+        return true;
+      }
+    }) as {
+      status: string;
+      structuredContent?: { echoed?: string };
+    };
+
+    assert.equal(result.status, "completed");
+    assert.equal(result.structuredContent?.echoed, "hello");
+    assert.equal(approvalCount, 0);
+  } finally {
+    await runtime.close();
+  }
+}
+
+async function testRuntimeApprovalPolicyToolOverrideWins() {
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), "alyce-mcp-approval-override-"));
+  const fixture = getMcpFixtureCommand("mockMcpServer");
+  await writeProjectConfig(root, {
+    mock: {
+      command: fixture.command,
+      args: fixture.args,
+      startup_timeout_ms: 5000,
+      approval: {
+        default: "allow",
+        tools: {
+          echo: "deny"
+        }
+      }
+    }
+  });
+
+  const runtime = await createProjectMcpRuntime(root);
+  try {
+    await runtime.getToolSchemas({ initialize: true });
+    await assert.rejects(
+      () => runtime.executeNamedToolCall("mock", "echo", { text: "hello" }, {
+        requestApproval: async () => true
+      }),
+      /denied by MCP approval policy/
+    );
+  } finally {
+    await runtime.close();
+  }
+}
+
+async function testRuntimeExposureBudgetHidesDynamicTools() {
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), "alyce-mcp-budgeted-tools-"));
+  const fixture = getMcpFixtureCommand("mockMcpServer");
+  const servers = Object.fromEntries(
+    Array.from({ length: 13 }, (_, index) => [
+      `mock-${index + 1}`,
+      {
+        command: fixture.command,
+        args: fixture.args,
+        startup_timeout_ms: 5000
+      }
+    ])
+  );
+  await writeProjectConfig(root, servers);
+
+  const runtime = await createProjectMcpRuntime(root);
+  try {
+    const schemas = await runtime.getToolSchemas({ initialize: true });
+    assert.deepEqual(schemas, []);
+
+    const status = await runtime.getStatus();
+    assert.equal(status.servers.length, 13);
+    assert.equal(status.servers.every((server) => server.toolExposure === "budgeted"), true);
+    assert.equal(status.servers.every((server) => server.directToolCount === 0), true);
+    assert.equal(status.servers.every((server) => server.hiddenToolCount === 2), true);
+  } finally {
+    await runtime.close();
+  }
+}
+
+async function testRuntimeCanExecuteNamedToolCalls() {
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), "alyce-mcp-named-tool-call-"));
+  const fixture = getMcpFixtureCommand("mockMcpServer");
+  await writeProjectConfig(root, {
+    mock: {
+      command: fixture.command,
+      args: fixture.args,
+      startup_timeout_ms: 5000
+    }
+  });
+
+  const runtime = await createProjectMcpRuntime(root);
+  try {
+    await runtime.getToolSchemas({ initialize: true });
+    const result = await runtime.executeNamedToolCall("mock", "echo", { text: "hello" }, {
+      requestApproval: async () => true
+    }) as {
+      status: string;
+      structuredContent?: { echoed?: string };
+      content: Array<{ text?: string }>;
+    };
+
+    assert.equal(result.status, "completed");
+    assert.equal(result.structuredContent?.echoed, "hello");
+    assert.equal(result.content[0]?.text, "echo:hello");
+  } finally {
+    await runtime.close();
+  }
+}
+
+async function testRuntimeNormalizesServerLookupNames() {
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), "alyce-mcp-normalized-lookups-"));
+  const fixture = getMcpFixtureCommand("mockMcpServer");
+  await writeProjectConfig(root, {
+    mock: {
+      command: fixture.command,
+      args: fixture.args,
+      startup_timeout_ms: 5000
+    }
+  });
+
+  const runtime = await createProjectMcpRuntime(root);
+  try {
+    const tools = await runtime.listTools({ serverName: "MOCK" });
+    assert.equal(tools.toolCount, 2);
+    assert.equal(tools.servers[0]?.server, "mock");
+
+    const prompt = await runtime.getPrompt("MOCK", "summarize_release", {
+      topic: "release notes"
+    });
+    assert.equal(prompt.status, "completed");
+
+    const resource = await runtime.readResource("MOCK", "mock://text", { maxTextChars: 20 });
+    assert.equal(resource.status, "completed");
+
+    const result = await runtime.executeNamedToolCall("MOCK", "echo", { text: "hello" }, {
+      requestApproval: async () => true
+    }) as {
+      status: string;
+      structuredContent?: { echoed?: string };
+    };
+    assert.equal(result.status, "completed");
+    assert.equal(result.structuredContent?.echoed, "hello");
+  } finally {
+    await runtime.close();
+  }
+}
+
+async function testRuntimePersistsEnableDisableAndRemove() {
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), "alyce-mcp-mutations-"));
+  const fixture = getMcpFixtureCommand("mockMcpServer");
+  await writeProjectConfig(root, {
+    mock: {
+      command: fixture.command,
+      args: fixture.args,
+      startup_timeout_ms: 5000
+    }
+  });
+
+  const runtime = await createProjectMcpRuntime(root);
+  try {
+    await runtime.setServerEnabled("mock", false);
+    let status = await runtime.getStatus();
+    assert.equal(status.servers[0]?.status, "disabled");
+    assert.equal(status.servers[0]?.enabled, false);
+
+    let config = await loadProjectMcpConfig(root);
+    assert.equal(config.mcpServers.mock?.enabled, false);
+
+    await runtime.setServerEnabled("mock", true);
+    status = await runtime.getStatus();
+    assert.equal(status.servers[0]?.status, "not_initialized");
+    assert.equal(status.servers[0]?.enabled, true);
+
+    await runtime.addServer("remote", {
+      type: "streamable_http",
+      url: "https://example.com/mcp"
+    }, {
+      scope: "local"
+    });
+    status = await runtime.getStatus();
+    assert.equal(status.servers.some((server) => server.name === "remote" && server.scope === "local"), true);
+
+    await runtime.removeServer("remote", { scope: "local" });
+    status = await runtime.getStatus();
+    assert.equal(status.servers.some((server) => server.name === "remote"), false);
+  } finally {
+    await runtime.close();
+  }
+}
+
+async function writeProjectConfig(
+  workspaceRoot: string,
+  servers: Record<string, Record<string, unknown>>
+) {
+  await fs.mkdir(path.join(workspaceRoot, ".alyce"), { recursive: true });
+  await fs.writeFile(
+    path.join(workspaceRoot, ".alyce", "mcp.json"),
+    JSON.stringify({ mcpServers: servers }),
+    "utf8"
+  );
 }
 
 function getMcpFixtureCommand(name: McpFixtureName) {

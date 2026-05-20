@@ -86,6 +86,7 @@ import type {
   SessionMemoryFileState
 } from "../core/memory/types.js";
 import { buildPatchedChatCompletionRequest } from "../core/api/sendChatCompletion.js";
+import { createSkillContextMessage } from "../core/api/generatedMessages.js";
 import {
   createModelAdapter,
   getModelAdapterAvailability,
@@ -136,6 +137,36 @@ import {
 import { formatCurrentDateLabel, formatSystemDateTime, getSystemTimeZone } from "../core/time/systemTime.js";
 import { getReplCommandHelpLines } from "./commandRouter.js";
 import { createProjectMcpRuntime } from "../mcp/runtime.js";
+import type {
+  McpConfigMutationResult,
+  McpConfigScope,
+  McpElicitationCompleteEvent,
+  McpElicitationRequest,
+  McpElicitationResponse,
+  McpListPromptsResult,
+  McpListResourcesResult,
+  McpListResourceTemplatesResult,
+  McpListToolsResult,
+  McpLoginResult,
+  McpPromptResult,
+  McpServerConfig,
+  McpStatusResult
+} from "../mcp/types.js";
+import {
+  type SkillActivationContext,
+  type SkillCatalog,
+  type SkillConfigMutationResult,
+  type SkillDescriptor,
+  type SkillReference,
+  SkillService,
+  extractPathMentions,
+  extractSkillMentions,
+  formatSkillContentMessage
+} from "../skills/service.js";
+import {
+  collectSkillDependencyNotices,
+  formatSkillDependencyNotices
+} from "../skills/dependencies.js";
 import { getRegisteredToolNames, getToolSchemasByName } from "../tools/registry.js";
 import { TOOL_SCHEMAS } from "../tools.js";
 import {
@@ -223,6 +254,17 @@ interface PromptRuntimeContextOptions {
   workspaceRoot?: string;
   allowedRoots?: string[];
   model?: string;
+  skillActivationContext?: SkillActivationContext;
+  nextUserInput?: string;
+}
+
+export interface PreparedPromptSkillContext {
+  generatedMessages: SessionMessage[];
+  loadedSkillNames: string[];
+  unresolvedMentions: string[];
+  disabledMentions: string[];
+  duplicateWarnings: string[];
+  dependencyWarnings: string[];
 }
 
 interface SubagentPromptInput {
@@ -283,7 +325,11 @@ export interface SessionRuntime {
   getAllowedRoots: () => string[];
   getSessionAdditionalDirectories: () => string[];
   setSessionAdditionalDirectories: (directories: string[]) => Promise<void>;
-  resetSystemMessage: (options?: { availableTools?: string[] }) => Promise<void>;
+  resetSystemMessage: (options?: {
+    availableTools?: string[];
+    skillActivationContext?: SkillActivationContext;
+    nextUserInput?: string;
+  }) => Promise<void>;
   clearConversation: () => Promise<void>;
   clearPromptCache: () => void;
   recordSessionTurn: (options: {
@@ -332,6 +378,85 @@ export interface SessionRuntime {
   listPtySessions: () => PtySessionInfo[];
   closeAllPtySessions: () => PtyCloseResult[];
   buildContextPreview: (nextUserInput?: string, options?: { abortSignal?: AbortSignal }) => Promise<string>;
+  listSkills: () => Promise<SkillCatalog>;
+  getSkill: (name: string) => Promise<SkillDescriptor | undefined>;
+  setSkillEnabled: (
+    reference: SkillReference,
+    enabled: boolean,
+    target: "project" | "user"
+  ) => Promise<SkillConfigMutationResult>;
+  setBundledSkillsEnabled: (
+    enabled: boolean,
+    target: "project" | "user"
+  ) => Promise<SkillConfigMutationResult>;
+  refreshSkills: () => Promise<SkillCatalog>;
+  getMcpStatus: (options?: {
+    abortSignal?: AbortSignal;
+    initialize?: boolean;
+  }) => Promise<McpStatusResult>;
+  listMcpTools: (options?: {
+    serverName?: string;
+    abortSignal?: AbortSignal;
+  }) => Promise<McpListToolsResult>;
+  listMcpResources: (options?: {
+    serverName?: string;
+    abortSignal?: AbortSignal;
+    timeoutMs?: number;
+  }) => Promise<McpListResourcesResult>;
+  listMcpPrompts: (options?: {
+    serverName?: string;
+    abortSignal?: AbortSignal;
+    timeoutMs?: number;
+  }) => Promise<McpListPromptsResult>;
+  getMcpPrompt: (
+    serverName: string,
+    promptName: string,
+    args?: Record<string, string>,
+    options?: {
+      maxTextChars?: number;
+      abortSignal?: AbortSignal;
+      timeoutMs?: number;
+    }
+  ) => Promise<McpPromptResult>;
+  listMcpResourceTemplates: (options?: {
+    serverName?: string;
+    abortSignal?: AbortSignal;
+    timeoutMs?: number;
+  }) => Promise<McpListResourceTemplatesResult>;
+  addMcpServer: (
+    name: string,
+    config: McpServerConfig,
+    scope?: McpConfigScope
+  ) => Promise<McpConfigMutationResult>;
+  removeMcpServer: (
+    name: string,
+    scope?: McpConfigScope
+  ) => Promise<McpConfigMutationResult>;
+  setMcpServerEnabled: (
+    name: string,
+    enabled: boolean,
+    scope?: McpConfigScope
+  ) => Promise<McpConfigMutationResult>;
+  loginMcpServer: (
+    serverName: string,
+    options?: {
+      abortSignal?: AbortSignal;
+      timeoutMs?: number;
+      onAuthorizationUrl?: (details: {
+        server: string;
+        authorizationUrl: string;
+        redirectUrl: string;
+      }) => void;
+    }
+  ) => Promise<McpLoginResult>;
+  setMcpInteractionHandlers: (handlers: {
+    requestElicitation?: (
+      request: McpElicitationRequest,
+      options?: { signal?: AbortSignal; timeoutMs?: number }
+    ) => Promise<McpElicitationResponse>;
+    onElicitationComplete?: (event: McpElicitationCompleteEvent) => void;
+  }) => void;
+  preparePromptSkillContext: (input: string) => Promise<PreparedPromptSkillContext>;
   getContextBudgetService: () => ContextBudgetService;
   estimateContextBudget: (options?: {
     messages?: SessionMessage[];
@@ -409,7 +534,7 @@ export function getHelpText(currentModel: string) {
     "",
     "Shortcuts:",
     "  Ctrl+X  Open settings",
-    "  Esc     Interrupt while running; when idle, open rewind from empty input",
+    "  Esc     Interrupt while running; when idle, open revert history from empty input",
     "  Ctrl+C  Copy selection, otherwise clear input, otherwise quit",
     "  Ctrl+Q  Quit"
   ].join("\n");
@@ -541,6 +666,10 @@ export async function createSessionRuntime(
     getCurrentSessionId: () => sessionHistory.getCurrentSessionId()
   });
   const subagentHistoryStore = new SubagentHistoryStore();
+  const skillService = new SkillService({
+    workspaceRoot: config.paths.workspaceRoot,
+    watch: true
+  });
   const getWorktreesDirectory = () =>
     path.join(os.tmpdir(), "alyce-agent-worktrees", sessionHistory.getCurrentSessionId());
   await migrateLegacySubagentTasks({
@@ -582,6 +711,25 @@ export async function createSessionRuntime(
   const getAvailableToolNamesForPrompt = (availableTools?: string[]) =>
     availableTools ?? getRegisteredToolNames();
 
+  const getRecentOpenedSkillPaths = () =>
+    [...fileReadState.entries()]
+      .sort((left, right) => {
+        const leftTime = Date.parse(left[1].readAt);
+        const rightTime = Date.parse(right[1].readAt);
+        return rightTime - leftTime;
+      })
+      .slice(0, 24)
+      .map(([absolutePath]) => {
+        const relative = path.relative(config.paths.workspaceRoot, absolutePath);
+        return relative.startsWith("..") ? absolutePath : relative;
+      });
+
+  const buildSkillActivationContext = (nextUserInput?: string): SkillActivationContext => ({
+    workspaceRoot: config.paths.workspaceRoot,
+    referencedPaths: nextUserInput ? extractPathMentions(nextUserInput) : [],
+    openedPaths: getRecentOpenedSkillPaths()
+  });
+
   const getPromptRuntimeContext = async (options: PromptRuntimeContextOptions = {}) => {
     const now = new Date();
     const workspaceRoot = options.workspaceRoot ?? config.paths.workspaceRoot;
@@ -598,12 +746,60 @@ export async function createSessionRuntime(
       timeZone: getSystemTimeZone(),
       platform: process.platform,
       availableTools: getAvailableToolNamesForPrompt(options.availableTools),
+      availableSkills: await skillService.buildPromptContext({
+        activationContext: options.skillActivationContext ??
+          buildSkillActivationContext(options.nextUserInput)
+      }),
       memory: await memoryService.getPromptContext()
     };
   };
 
+  const preparePromptSkillContext = async (
+    input: string
+  ): Promise<PreparedPromptSkillContext> => {
+    const mentions = extractSkillMentions(input);
+    if (mentions.length === 0) {
+        return {
+          generatedMessages: [],
+          loadedSkillNames: [],
+          unresolvedMentions: [],
+          disabledMentions: [],
+          duplicateWarnings: [],
+          dependencyWarnings: []
+        };
+      }
+
+      const resolution = await skillService.resolveMentionedSkills(input);
+      const dependencyWarnings = formatSkillDependencyNotices(
+        await collectSkillDependencyNotices(
+          resolution.resolvedSkills,
+          mcpRuntime,
+          { abortSignal: undefined }
+        )
+      );
+      return {
+        generatedMessages: resolution.resolvedSkills.map((skill) =>
+          createSkillContextMessage(formatSkillContentMessage({
+            ...skill,
+            dependencyNotes: dependencyWarnings.filter((warning) =>
+              warning.includes(`Skill '${skill.name}'`)
+            )
+          }))
+        ),
+        loadedSkillNames: resolution.resolvedSkills.map((skill) => skill.name),
+        unresolvedMentions: resolution.unresolvedMentions,
+        disabledMentions: resolution.disabledMentions,
+        duplicateWarnings: resolution.duplicateWarnings,
+        dependencyWarnings
+      };
+    };
+
   // system prompt 始终由当前模型、环境、工具能力和记忆视图重新生成。
-  const buildSystemPrompt = async (options: { availableTools?: string[] } = {}) =>
+  const buildSystemPrompt = async (options: {
+    availableTools?: string[];
+    skillActivationContext?: SkillActivationContext;
+    nextUserInput?: string;
+  } = {}) =>
     buildEffectiveSystemPrompt(
       await getPromptRuntimeContext(options),
       {
@@ -651,6 +847,8 @@ export async function createSessionRuntime(
 
     return [
       basePrompt,
+      "Subagent assignment summary: the following section defines the subagent's role, task, and reporting contract for this run.",
+      "",
       "# Subagent assignment",
       `Subagent type: ${agent.type}`,
       `Task description: ${input.description}`,
@@ -666,7 +864,11 @@ export async function createSessionRuntime(
   ];
 
   // 约定 messages[0] 永远保留为 system message，其他消息只追加在其后。
-  const resetSystemMessage = async (options: { availableTools?: string[] } = {}) => {
+  const resetSystemMessage = async (options: {
+    availableTools?: string[];
+    skillActivationContext?: SkillActivationContext;
+    nextUserInput?: string;
+  } = {}) => {
     messages[0] = {
       role: "system",
       content: await buildSystemPrompt(options)
@@ -1100,6 +1302,7 @@ export async function createSessionRuntime(
     flushSessionHistory: async () => {
       clearInterval(subagentMemoryGcTimer);
       ptyManager.closeAll();
+      skillService.close();
       await sessionHistory.flush();
       await mcpRuntime.close();
     },
@@ -1156,6 +1359,16 @@ export async function createSessionRuntime(
     buildContextPreview: async (nextUserInput, options = {}) => {
       const previewTimestamp = formatSystemDateTime(new Date());
       const trimmedInput = nextUserInput?.trim();
+      const promptSkillContext = trimmedInput
+        ? await preparePromptSkillContext(trimmedInput)
+        : {
+            generatedMessages: [],
+            loadedSkillNames: [],
+            unresolvedMentions: [],
+            disabledMentions: [],
+            duplicateWarnings: [],
+            dependencyWarnings: []
+          };
       const previewUserMessage: SessionMessage | undefined = trimmedInput
         ? {
             role: "user",
@@ -1165,12 +1378,17 @@ export async function createSessionRuntime(
       const tools = await getMainAgentToolSchemas({
         abortSignal: options.abortSignal
       });
-      const previewMessages = (previewUserMessage ? [...messages, previewUserMessage] : messages)
+      const previewMessages = (
+        previewUserMessage
+          ? [...messages, ...promptSkillContext.generatedMessages, previewUserMessage]
+          : messages
+      )
         .map((message) => ({ ...message }));
       previewMessages[0] = {
         role: "system",
         content: await buildSystemPrompt({
-          availableTools: getToolNamesFromSchemas(tools)
+          availableTools: getToolNamesFromSchemas(tools),
+          skillActivationContext: buildSkillActivationContext(trimmedInput)
         })
       };
       const resolvedModel = resolveModelProfileFor(connection.model);
@@ -1187,6 +1405,43 @@ export async function createSessionRuntime(
         contextBudgetService
       });
     },
+    listSkills: () => skillService.discoverSkills(),
+    getSkill: async (name) => (await skillService.findSkillByName(name, { includeDisabled: true })).skill,
+    setSkillEnabled: async (reference, enabled, target) => {
+      const result = await skillService.setSkillEnabled(reference, enabled, target);
+      await resetSystemMessage();
+      return result;
+    },
+    setBundledSkillsEnabled: async (enabled, target) => {
+      const result = await skillService.setSkillEnabled({ kind: "bundled" }, enabled, target);
+      await resetSystemMessage();
+      return result;
+    },
+    refreshSkills: async () => {
+      const catalog = await skillService.refresh();
+      await resetSystemMessage();
+      return catalog;
+    },
+    getMcpStatus: async (options = {}) => await mcpRuntime.getStatus(options),
+    listMcpTools: async (options = {}) => await mcpRuntime.listTools(options),
+    listMcpResources: async (options = {}) => await mcpRuntime.listResources(options),
+    listMcpPrompts: async (options = {}) => await mcpRuntime.listPrompts(options),
+    getMcpPrompt: async (serverName, promptName, args = {}, options = {}) =>
+      await mcpRuntime.getPrompt(serverName, promptName, args, options),
+    listMcpResourceTemplates: async (options = {}) =>
+      await mcpRuntime.listResourceTemplates(options),
+    addMcpServer: async (name, serverConfig, scope = "project") =>
+      await mcpRuntime.addServer(name, serverConfig, { scope }),
+    removeMcpServer: async (name, scope = "project") =>
+      await mcpRuntime.removeServer(name, { scope }),
+    setMcpServerEnabled: async (name, enabled, scope = "project") =>
+      await mcpRuntime.setServerEnabled(name, enabled, { scope }),
+    loginMcpServer: async (serverName, options = {}) =>
+      await mcpRuntime.loginServer(serverName, options),
+    setMcpInteractionHandlers: (handlers) => {
+      mcpRuntime.setInteractionHandlers?.(handlers);
+    },
+    preparePromptSkillContext,
     getContextBudgetService: () => contextBudgetService,
     estimateContextBudget: (options = {}) => {
       const model = options.model ?? connection.model;

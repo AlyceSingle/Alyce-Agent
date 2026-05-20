@@ -6,6 +6,8 @@ export const KNOWN_TOOL_NAMES = new Set([
   "AskUserQuestion",
   "SkillTool",
   "McpStatus",
+  "ListMcpTools",
+  "CallMcpTool",
   "ListMcpResources",
   "ReadMcpResource",
   "Read",
