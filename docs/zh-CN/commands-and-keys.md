@@ -16,9 +16,9 @@
 |---|---|
 | `/help` | 列出所有可用命令。 |
 | `/doctor` | 运行本地健康检查，包括 Node、TTY、工作区、连接配置、审批风险、MCP、技能、provider 插件、`rg`、`git`、`.alyce` 存储、snapshot 存储和请求 patch。 |
-| `/settings` | 打开设置面板。 |
+| `/settings` | 打开会话设置面板；用 `/settings connection` 可直接打开 provider 连接选择器。 |
 | `/permissions` | 打开四档审批和访问模式切换面板。 |
-| `/setup` | `/connect` 的别名；打开 provider 选择器。 |
+| `/setup` | 已废弃的迁移兼容命令；现在会提示改用 `/connect`。 |
 | `/clear` | 清空当前对话上下文。 |
 | `/rewind` | 打开回退选择器，恢复到之前的输入状态。 |
 | `/exit` | 退出 Alyce。 |

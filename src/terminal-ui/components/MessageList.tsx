@@ -117,7 +117,7 @@ type HeaderSegment = {
   color: ThemeColor;
 };
 
-const TOOL_TARGET_HEADER_COLOR = terminalUiTheme.colors.system;
+const TOOL_TARGET_HEADER_COLOR = terminalUiTheme.colors.toolTarget;
 
 type MessagePalette = {
   headerColor: ThemeColor;

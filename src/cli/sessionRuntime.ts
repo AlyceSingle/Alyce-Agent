@@ -490,6 +490,7 @@ export interface SessionRuntime {
   finalizeTurnFileChanges: (turnId: string) => Promise<void>;
   hasTrackedFileChanges: (turnId: string) => boolean;
   canRestoreFilesForTurn: (turnId: string) => boolean;
+  isFilesAlreadyRestoredForTurn: (turnId: string) => boolean;
   restoreFilesForTurn: (turnId: string) => Promise<FileHistoryRestoreResult>;
   discardTurn: (turnId: string) => void;
   getTurnDiff: (turnId: string) => Promise<TurnDiffReport>;
@@ -1184,6 +1185,17 @@ export async function createSessionRuntime(
     return mergeFileRestoreResults(results);
   }
 
+  function isFilesAlreadyRestoredForTurn(turnId: string) {
+    const restoreStates: boolean[] = [];
+    if (turnSnapshotService.hasTurn(turnId)) {
+      restoreStates.push(turnSnapshotService.isTurnRestored(turnId));
+    }
+    if (fileHistoryManager.getSnapshot(turnId)) {
+      restoreStates.push(fileHistoryManager.isTurnRestored(turnId));
+    }
+    return restoreStates.length > 0 && restoreStates.every(Boolean);
+  }
+
   return {
     config,
     memoryService,
@@ -1589,6 +1601,7 @@ export async function createSessionRuntime(
     canRestoreFilesForTurn: (turnId) =>
       (isFileBackupSnapshotEnabled(settings) && fileHistoryManager.canRestoreTurn(turnId)) ||
       turnSnapshotService.canRestoreTurn(turnId),
+    isFilesAlreadyRestoredForTurn: (turnId) => isFilesAlreadyRestoredForTurn(turnId),
     restoreFilesForTurn: (turnId) => restoreFilesForTurn(turnId),
     discardTurn: (turnId) => {
       fileHistoryManager.removeTurn(turnId);

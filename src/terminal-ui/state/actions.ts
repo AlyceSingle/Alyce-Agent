@@ -14,7 +14,6 @@ import type {
   ActiveDialog,
   ModelPickerDialogState,
   TerminalUiRewindPoint,
-  SettingsSection,
   TerminalUiMessage,
   TerminalUiOverlayId,
   TerminalUiTaskSummary,
@@ -299,13 +298,11 @@ export function openMcpElicitationDialog(
 
 export function openSettingsDialog(
   state: TerminalUiState,
-  section: SettingsSection,
   reason?: string
 ): TerminalUiState {
   return pushDialog(state, {
     type: "settings",
     layer: "overlay",
-    section,
     reason
   });
 }

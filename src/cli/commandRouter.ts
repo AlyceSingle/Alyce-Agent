@@ -40,8 +40,8 @@ export const REPL_COMMAND_DEFINITIONS: ReplCommandDefinition[] = [
   },
   {
     command: "/settings",
-    usage: "/settings",
-    description: "Open runtime settings",
+    usage: "/settings [session|connection]",
+    description: "Open session settings or the connection picker",
     completion: "/settings",
     group: "Connection"
   },
@@ -406,6 +406,19 @@ export function parseReplCommand(input: string): ParsedCommand {
 
   if (input === "/settings") {
     return { type: "open-settings", section: "session" };
+  }
+
+  if (input.startsWith("/settings ")) {
+    const section = input.slice("/settings ".length).trim();
+    if (section === "session" || section === "connection") {
+      return { type: "open-settings", section };
+    }
+
+    return {
+      type: "command-error",
+      input,
+      message: "Unsupported /settings argument. Use /settings, /settings session, or /settings connection."
+    };
   }
 
   if (input === "/permissions") {

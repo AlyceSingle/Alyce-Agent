@@ -14,6 +14,7 @@ export const terminalUiTheme = {
     user: "#7fb4ff",
     assistant: "#fab283",
     tool: "#56b6c2",
+    toolTarget: "#d6dde5",
     thinking: "#808080",
     system: "#c9b6ff",
     selection: "#203247",

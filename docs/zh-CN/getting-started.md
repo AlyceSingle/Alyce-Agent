@@ -193,15 +193,17 @@ Plan Mode（计划模式）保持探索过程为只读。准备好进入实现�
 ```
 /help       — 列出所有可用命令
 /doctor     — 运行本地健康检查
-/settings   — 直接打开设置面板
+/settings   — 直接打开会话设置面板
+/settings connection — 打开 provider 连接选择器
 /permissions — 切换审批和访问模式
 /connect    — 打开 provider 选择器
-/setup      — 打开 provider 选择器
 /plan       — 进入只读计划模式
 /build      — 退出 Plan Mode，不会执行 npm run build
 /context    — 预览模型下一轮实际接收到的内容
 /memory     — 查看当前持久记忆内容
 ```
+
+如果仍然输入 `/setup`，Alyce 现在会给出迁移提示，并引导您改用 `/connect`。
 
 建议尝试使用 `/context` 命令，它可以让您预览模型实际接收到的上下文内容。
 

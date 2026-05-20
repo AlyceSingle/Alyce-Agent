@@ -1,7 +1,6 @@
 import { setTimeout as sleep } from "node:timers/promises";
 import type {
   OAuthAuthRecord,
-  ProviderAuthRecord,
   ProviderAuthRecordInput
 } from "../../auth/authStore.js";
 import { sleepWithAbort, throwIfAuthCancelled } from "../authFlowUtils.js";

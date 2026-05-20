@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import type { SessionSettingsState } from "../../config/runtime.js";
 import {
   createInitialTerminalUiState,
+  openSettingsDialog,
   openConnectProviderDialog,
   openModelPickerDialog,
   prependMessages,
@@ -100,6 +101,7 @@ function runTests() {
   testInitialStateDisablesPlanMode();
   testInitialStateUsesConnectionReadyOverride();
   testSetPlanModeEnabled();
+  testOpenSettingsDialog();
   testOpenConnectProviderDialog();
   testOpenModelPickerDialog();
   testUpdateModelPickerDialogState();
@@ -171,6 +173,15 @@ function testSetPlanModeEnabled() {
 
   assert.equal(next.planModeEnabled, true);
   assert.equal(setPlanModeEnabled(next, true), next);
+}
+
+function testOpenSettingsDialog() {
+  const initial = createInitialState();
+  const next = openSettingsDialog(initial, "from test");
+
+  assert.equal(next.dialogQueue[0]?.type, "settings");
+  assert.equal(next.dialogQueue[0]?.layer, "overlay");
+  assert.equal(next.dialogQueue[0]?.type === "settings" ? next.dialogQueue[0].reason : "", "from test");
 }
 
 function testOpenConnectProviderDialog() {

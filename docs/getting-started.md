@@ -194,15 +194,17 @@ Once Alyce is running, we recommend the following steps:
 ```
 /help       — shows the full command list
 /doctor     — runs local health checks
-/settings   — opens settings directly
+/settings   — opens session settings directly
+/settings connection — opens the provider connection picker
 /permissions — switches approval and access mode
 /connect    — open provider picker
-/setup      — open provider picker
 /plan       — enters read-only planning mode
 /build      — exits Plan Mode; does not run npm run build
 /context    — previews what the model will actually see next turn
 /memory     — shows current persistent memory
 ```
+
+If you still type `/setup`, Alyce now shows a migration error and points you to `/connect`.
 
 We suggest trying `/context` early to understand how the model receives information, including memory and summaries.
 

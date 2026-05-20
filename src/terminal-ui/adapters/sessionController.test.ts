@@ -20,11 +20,13 @@ async function runTests() {
   testExtractThinkingDeltaForOverlap();
   testShouldSkipApprovalDialog();
   testBuildApprovalModePermissionRules();
+  testIsFileRestoreAvailable();
   testBackgroundPanelOnlyShowsRunningNonAutoReviewerTasks();
   testBackgroundProcessCountOnlyIncludesRunningProcesses();
   testParseAutoReviewDecision();
   testFormatPromptSkillSummary();
   await testSettingsCommandOpensSessionSettings();
+  await testSettingsConnectionCommandOpensConnectDialog();
   await testConnectCommandOpensInteractiveDialog();
   await testModelCommandOpensInteractiveDialog();
   await testLegacyModelCommandShowsMigrationError();
@@ -148,6 +150,31 @@ function testBuildApprovalModePermissionRules() {
   );
 }
 
+function testIsFileRestoreAvailable() {
+  const isAvailable = __SESSION_CONTROLLER_TESTING__.isFileRestoreAvailable;
+
+  assert.equal(isAvailable({
+    hasTrackedChanges: true,
+    canRestore: true,
+    alreadyRestored: false
+  }), true);
+  assert.equal(isAvailable({
+    hasTrackedChanges: true,
+    canRestore: false,
+    alreadyRestored: true
+  }), true);
+  assert.equal(isAvailable({
+    hasTrackedChanges: true,
+    canRestore: false,
+    alreadyRestored: false
+  }), false);
+  assert.equal(isAvailable({
+    hasTrackedChanges: false,
+    canRestore: true,
+    alreadyRestored: true
+  }), false);
+}
+
 function testBackgroundPanelOnlyShowsRunningNonAutoReviewerTasks() {
   const isVisible = __SESSION_CONTROLLER_TESTING__.isVisibleBackgroundTask;
 
@@ -237,7 +264,16 @@ async function testSettingsCommandOpensSessionSettings() {
 
   const dialog = store.getState().dialogQueue[0];
   assert.equal(dialog?.type, "settings");
-  assert.equal(dialog?.type === "settings" ? dialog.section : "", "session");
+}
+
+async function testSettingsConnectionCommandOpensConnectDialog() {
+  const runtime = createRuntimeStub({});
+  const store = createTerminalUiStore(createInitialState());
+  const controller = createSessionController(runtime, store);
+
+  await controller.submit("/settings connection");
+
+  assert.equal(store.getState().dialogQueue[0]?.type, "connect-provider");
 }
 
 async function testConnectCommandOpensInteractiveDialog() {

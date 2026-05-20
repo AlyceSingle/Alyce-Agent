@@ -12,7 +12,6 @@ import {
   formatDiffDetails,
   formatDiffOverview,
   formatPostEditSummary,
-  type DiffFileReport,
   type TurnDiffReport
 } from "../../core/diff/diffService.js";
 import type { FileHistoryRestoreResult } from "../../core/file-history/fileHistoryManager.js";
@@ -78,8 +77,6 @@ import {
 } from "../../cli/sessionRuntime.js";
 import type {
   ApprovalMode,
-  ConnectionConfig,
-  ConnectionConfigSaveTarget,
   RuntimeBootstrapReport,
   RuntimePaths,
   SessionSettings
@@ -131,7 +128,6 @@ import type { TerminalUiStore } from "../state/store.js";
 import type {
   PermissionDecision,
   RewindRestoreMode,
-  SettingsSection,
   TerminalUiMessage,
   ModelPickerDialogState,
   TerminalUiRewindPoint,
@@ -327,6 +323,8 @@ async function recordCompletedTurnHistory(
   });
 }
 
+type SettingsSection = "connection" | "session";
+
 export interface SessionController {
   initialize: () => void;
   submit: (input: string) => Promise<void>;
@@ -361,11 +359,7 @@ export interface SessionController {
   ) => Promise<{ ok: true } | { ok: false; message: string }>;
   cancelProviderAuthFromDialog: (provider: string, methodIndex: number) => void;
   resumeSession: (sessionId: string) => Promise<void>;
-  saveConfig: (
-    connectionPatch: Partial<ConnectionConfig>,
-    settingsPatch: Partial<SessionSettings>,
-    connectionTarget: ConnectionConfigSaveTarget
-  ) => Promise<void>;
+  saveConfig: (settingsPatch: Partial<SessionSettings>) => Promise<void>;
   requestExit: () => void;
   setExitHandler: (handler: (() => void) | null) => void;
 }
@@ -871,8 +865,11 @@ export function createSessionController(
   const hasRestorableFileSnapshot = (point: RewindPoint) =>
     point.hasFileChanges &&
     !point.isRestoredFromHistory &&
-    runtime.hasTrackedFileChanges(point.turnId) &&
-    runtime.canRestoreFilesForTurn(point.turnId);
+    isFileRestoreAvailable({
+      hasTrackedChanges: runtime.hasTrackedFileChanges(point.turnId),
+      canRestore: runtime.canRestoreFilesForTurn(point.turnId),
+      alreadyRestored: runtime.isFilesAlreadyRestoredForTurn(point.turnId)
+    });
 
   const toTerminalRewindPoint = (point: RewindPoint): TerminalUiRewindPoint => {
     const affected = getAffectedRewindPoints(point);
@@ -1003,9 +1000,6 @@ export function createSessionController(
       if (result.missingSnapshot) {
         throw new Error(`File snapshots for turn ${point.turnId} are no longer available.`);
       }
-      if (result.alreadyRestored) {
-        throw new Error(`File snapshots for turn ${point.turnId} were already restored.`);
-      }
       fileRestoreResults.push({ turnId: point.turnId, result });
     }
 
@@ -1105,9 +1099,10 @@ export function createSessionController(
       (totals, entry) => ({
         restored: totals.restored + entry.result.restored.length,
         removed: totals.removed + entry.result.removed.length,
-        conflicts: totals.conflicts + entry.result.conflicts.length
+        conflicts: totals.conflicts + entry.result.conflicts.length,
+        alreadyRestored: totals.alreadyRestored + (entry.result.alreadyRestored ? 1 : 0)
       }),
-      { restored: 0, removed: 0, conflicts: 0 }
+      { restored: 0, removed: 0, conflicts: 0, alreadyRestored: 0 }
     );
     const conflictLines = options.fileRestoreResults.flatMap((entry) =>
       formatRestoreConflictLines(entry.result.conflicts, undefined, 5)
@@ -1129,12 +1124,19 @@ export function createSessionController(
         ? "Conversation: unchanged."
         : `Conversation turns removed: ${options.affectedTurnCount}`,
       options.mode === "code-and-conversation" || options.mode === "files-only"
-        ? `Files restored: ${fileTotals.restored}; created files removed: ${fileTotals.removed}; conflicts skipped: ${fileTotals.conflicts}`
+        ? `Files restored: ${fileTotals.restored}; created files removed: ${fileTotals.removed}; conflicts skipped: ${fileTotals.conflicts}; already restored: ${fileTotals.alreadyRestored}`
         : "Files restored: 0; created files removed: 0"
     ];
 
     if (conflictLines.length > 0) {
       lines.push("", "Conflicts skipped:", ...conflictLines);
+    }
+
+    if (fileTotals.alreadyRestored > 0) {
+      lines.push(
+        "",
+        `${fileTotals.alreadyRestored} affected turn(s) were already restored earlier and were skipped safely.`
+      );
     }
 
     return lines.join("\n");
@@ -2342,7 +2344,7 @@ export function createSessionController(
         return true;
       }
 
-      store.updateState((state) => openSettingsDialog(state, parsedCommand.section));
+      store.updateState((state) => openSettingsDialog(state));
       return true;
     }
 
@@ -3196,7 +3198,7 @@ export function createSessionController(
         return;
       }
 
-      store.updateState((state) => openSettingsDialog(state, section, reason));
+      store.updateState((state) => openSettingsDialog(state, reason));
     },
     setApprovalMode: async (mode) => {
       try {
@@ -3236,8 +3238,13 @@ export function createSessionController(
     resumeSession: async (sessionId) => {
       await resumeSessionById(sessionId);
     },
-    saveConfig: async (connectionPatch, settingsPatch, connectionTarget) => {
-      await runtime.updateConnectionConfig(connectionPatch, connectionTarget);
+    saveConfig: async (settingsPatch) => {
+      if (Object.keys(settingsPatch).length === 0) {
+        store.updateState((state) => setStatusText(closeDialog(state), "No settings changes"));
+        appendUiMessage(createSystemMessage("No session settings changed.", "Settings"));
+        return;
+      }
+
       await runtime.updateSettings(settingsPatch);
       syncDiagnosticsRegistrySettings();
       if (!runtime.getSettings().historyPagingEnabled) {
@@ -3252,10 +3259,7 @@ export function createSessionController(
         setStatusText(
           setSessionAllowedKinds(
             setSessionApprovalMode(
-              setSessionSettingsState(
-                setConnectionConfigState(closeDialog(state), runtime.getConnectionConfigState()),
-                runtime.getSettingsState()
-              ),
+              setSessionSettingsState(closeDialog(state), runtime.getSettingsState()),
               sessionApprovalMode
             ),
             []
@@ -3264,19 +3268,14 @@ export function createSessionController(
         )
       );
 
-      const overriddenKeys = [
-        ...Object.entries(runtime.getConnectionConfigState().sources)
-          .filter(([, source]) => source === "cli")
-          .map(([key]) => `connection.${key}`),
-        ...Object.entries(runtime.getSettingsState().sources)
+      const overriddenKeys = Object.entries(runtime.getSettingsState().sources)
         .filter(([, source]) => source === "env" || source === "cli")
-        .map(([key]) => `settings.${key}`)
-      ];
+        .map(([key]) => `settings.${key}`);
       appendUiMessage(
         createSystemMessage(
           overriddenKeys.length > 0
             ? `Settings saved. Active overrides: ${overriddenKeys.join(", ")}.`
-            : "Connection and runtime settings saved.",
+            : "Session settings saved.",
           "Settings"
         )
       );
@@ -3440,81 +3439,6 @@ function formatSessionTime(value: string): string {
     hour: "2-digit",
     minute: "2-digit"
   });
-}
-
-function formatRevertFileLines(files: DiffFileReport[], limit = 20): string[] {
-  if (files.length === 0) {
-    return ["- (no tracked file changes)"];
-  }
-
-  const visibleFiles = files.slice(0, limit);
-  const lines = visibleFiles.map((file) =>
-    `- ${file.path}: ${file.status}, +${file.additions} -${file.deletions}`
-  );
-  const hiddenCount = files.length - visibleFiles.length;
-  if (hiddenCount > 0) {
-    lines.push(`- ... ${hiddenCount} more file(s)`);
-  }
-
-  return lines;
-}
-
-function formatRevertPreview(
-  report: TurnDiffReport,
-  mode: "files" | "files-and-conversation" | "conversation"
-): string {
-  const modeLine =
-    mode === "files"
-      ? "Files will be restored. Conversation stays as-is."
-      : mode === "files-and-conversation"
-        ? "Files will be restored and conversation turns from this point onward will be removed."
-        : "Conversation turns from this point onward will be removed. Files stay as-is.";
-
-  return [
-    modeLine,
-    `Turn: ${report.turnId}`,
-    "Files:",
-    ...formatRevertFileLines(report.files)
-  ].join("\n");
-}
-
-function formatFilesOnlyRevertResult(
-  report: TurnDiffReport,
-  result: FileHistoryRestoreResult
-): string {
-  if (result.missingSnapshot) {
-    return [
-      `File revert is unavailable for turn ${report.turnId}.`,
-      "The file snapshots are missing or were pruned.",
-      "No file changes were applied."
-    ].join("\n");
-  }
-
-  if (result.alreadyRestored) {
-    return [
-      `Turn ${report.turnId} was already restored${result.restoredAt ? ` at ${result.restoredAt}` : ""}.`,
-      "No file changes were applied.",
-      "Open /revert if you still need to restore conversation history."
-    ].join("\n");
-  }
-
-  return [
-    `Reverted tracked file changes for turn ${report.turnId}.`,
-    "Conversation: unchanged.",
-    `Restored existing files: ${result.restored.length}`,
-    `Removed files created by the turn: ${result.removed.length}`,
-    `Conflicts skipped: ${result.conflicts.length}`,
-    ...(result.conflicts.length > 0
-      ? [
-          "",
-          "Conflicts skipped:",
-          ...formatRestoreConflictLines(result.conflicts, report)
-        ]
-      : []),
-    "",
-    "Files:",
-    ...formatRevertFileLines(report.files)
-  ].join("\n");
 }
 
 function formatRestoreConflictLines(
@@ -3754,6 +3678,14 @@ async function waitForUiPaint(): Promise<void> {
   });
 }
 
+function isFileRestoreAvailable(options: {
+  hasTrackedChanges: boolean;
+  canRestore: boolean;
+  alreadyRestored: boolean;
+}) {
+  return options.hasTrackedChanges && (options.canRestore || options.alreadyRestored);
+}
+
 export const __SESSION_CONTROLLER_TESTING__ = {
   mergeThinkingContent,
   extractThinkingDelta,
@@ -3762,6 +3694,7 @@ export const __SESSION_CONTROLLER_TESTING__ = {
   parseAutoReviewDecision,
   buildAutoReviewPrompt,
   buildApprovalModePermissionRules,
+  isFileRestoreAvailable,
   isBackgroundProcessToolName,
   isVisibleBackgroundProcess,
   isVisibleBackgroundTask,

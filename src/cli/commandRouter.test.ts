@@ -51,6 +51,13 @@ function testParserHandlesRepresentedCommands() {
   assert.deepEqual(parseReplCommand("/plan exit"), { type: "plan-exit" });
   assert.deepEqual(parseReplCommand("/build"), { type: "plan-exit" });
   assert.deepEqual(parseReplCommand("/settings"), { type: "open-settings", section: "session" });
+  assert.deepEqual(parseReplCommand("/settings session"), { type: "open-settings", section: "session" });
+  assert.deepEqual(parseReplCommand("/settings connection"), { type: "open-settings", section: "connection" });
+  assert.deepEqual(parseReplCommand("/settings advanced"), {
+    type: "command-error",
+    input: "/settings advanced",
+    message: "Unsupported /settings argument. Use /settings, /settings session, or /settings connection."
+  });
   assert.deepEqual(parseReplCommand("/permissions"), { type: "open-permissions" });
   assert.deepEqual(parseReplCommand("/permissions default"), {
     type: "command-error",

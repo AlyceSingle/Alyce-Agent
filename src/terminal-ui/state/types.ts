@@ -54,8 +54,6 @@ export interface TerminalUiMessage {
   toolData?: TerminalUiToolData;
 }
 
-export type SettingsSection = "connection" | "session";
-
 export type RewindRestoreMode = "files-only" | "conversation" | "code-and-conversation";
 
 export interface ModelPickerDialogState {
@@ -98,7 +96,7 @@ export type ActiveDialog =
   | { type: "permission"; layer: "overlay"; request: ToolApprovalRequest }
   | { type: "question"; layer: "overlay"; request: AskUserQuestionRequest }
   | { type: "mcp-elicitation"; layer: "overlay"; request: McpElicitationRequest }
-  | { type: "settings"; layer: "overlay"; section: SettingsSection; reason?: string }
+  | { type: "settings"; layer: "overlay"; reason?: string }
   | { type: "permissions"; layer: "overlay" }
   | { type: "connect-provider"; layer: "modal" }
   | { type: "model-picker"; layer: "modal"; state: ModelPickerDialogState }

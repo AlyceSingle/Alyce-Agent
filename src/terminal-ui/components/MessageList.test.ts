@@ -541,7 +541,7 @@ function testShellToolHeaderUsesCodexStyleSegments(
   assert.equal(entry.headerSegments[2]?.color, terminalUiTheme.colors.chrome);
   assert.equal(entry.headerSegments[3]?.color, terminalUiTheme.colors.tool);
   assert.equal(entry.headerSegments[5]?.color, terminalUiTheme.colors.system);
-  assert.equal(entry.headerSegments[7]?.color, terminalUiTheme.colors.system);
+  assert.equal(entry.headerSegments[7]?.color, terminalUiTheme.colors.toolTarget);
 }
 
 function testReadToolHeaderSplitsActionAndTarget(
@@ -593,7 +593,7 @@ function testReadToolHeaderSplitsActionAndTarget(
     ["TOOL", " · ", "Read", " ", "~/Desktop/personal-website/"]
   );
   assert.equal(entry.headerSegments[2]?.color, terminalUiTheme.colors.chrome);
-  assert.equal(entry.headerSegments[4]?.color, terminalUiTheme.colors.system);
+  assert.equal(entry.headerSegments[4]?.color, terminalUiTheme.colors.toolTarget);
 }
 
 function testShellCommandHeaderHighlightsCommandFlagsAndTargets() {
@@ -608,7 +608,7 @@ function testShellCommandHeaderHighlightsCommandFlagsAndTargets() {
   );
   assert.equal(segments[0]?.color, terminalUiTheme.colors.tool);
   assert.equal(segments[2]?.color, terminalUiTheme.colors.system);
-  assert.equal(segments[4]?.color, terminalUiTheme.colors.system);
+  assert.equal(segments[4]?.color, terminalUiTheme.colors.toolTarget);
 }
 
 function testToolMessagesDefaultToHeaderAndMetadataOnly(

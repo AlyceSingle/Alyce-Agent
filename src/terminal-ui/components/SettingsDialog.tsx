@@ -1,28 +1,22 @@
 import { useEffect, useState } from "react";
 import type {
-  ConnectionConfig,
-  ConnectionConfigSaveTarget,
-  ConnectionConfigState,
   SessionSettings,
   SessionSettingsState
 } from "../../config/runtime.js";
 import { getBuiltinPersonaPresetNames } from "../../core/prompt/fragments/personaPresets.js";
 import { useRegisterOverlay } from "../context/overlayContext.js";
 import { Box, Text, useInput } from "../runtime/ink.js";
-import type { SettingsSection } from "../state/types.js";
 import { terminalUiTheme } from "../theme/theme.js";
 import { normalizeInlineValue } from "../utils/text.js";
 import { Pane } from "./Pane.js";
 
-type EditableConfig = ConnectionConfig & SessionSettings;
+type EditableConfig = SessionSettings;
 
 type FieldDefinition = {
-  key: keyof EditableConfig;
+  key: keyof SessionSettings;
   label: string;
   type: "text" | "number" | "toggle" | "select";
-  section: SettingsSection;
   options?: string[];
-  secret?: boolean;
 };
 
 const PERSONA_OPTIONS = ["", ...getBuiltinPersonaPresetNames()];
@@ -32,117 +26,97 @@ const FIELD_DEFINITIONS: FieldDefinition[] = [
     key: "approvalMode",
     label: "Approval Mode",
     type: "select",
-    section: "session",
     options: ["read-only", "default", "auto-review", "full-access"]
   },
-  { key: "maxSteps", label: "Max Steps", type: "number", section: "session" },
-  { key: "commandTimeoutMs", label: "Command Timeout", type: "number", section: "session" },
-  { key: "scrollSpeed", label: "Scroll Speed", type: "number", section: "session" },
-  {
-    key: "scrollAccelerationEnabled",
-    label: "Scroll Acceleration",
-    type: "toggle",
-    section: "session"
-  },
-  {
-    key: "historyPagingEnabled",
-    label: "History Paging",
-    type: "toggle",
-    section: "session"
-  },
-  {
-    key: "maxMessagesWithoutVirtualization",
-    label: "Max Non-Virtual Messages",
-    type: "number",
-    section: "session"
-  },
-  { key: "sessionMemoryEnabled", label: "Session Memory", type: "toggle", section: "session" },
-  {
-    key: "messageTimestampsEnabled",
-    label: "Current System Time",
-    type: "toggle",
-    section: "session"
-  },
-  {
-    key: "markdownMessageRenderingEnabled",
-    label: "Markdown Messages",
-    type: "toggle",
-    section: "session"
-  },
-  {
-    key: "markdownToolMessageRenderingEnabled",
-    label: "Tool Markdown",
-    type: "toggle",
-    section: "session"
-  },
-  {
-    key: "markdownRenderMaxChars",
-    label: "Markdown Max Chars",
-    type: "number",
-    section: "session"
-  },
-  {
-    key: "thinkingMessagesExpandedByDefault",
-    label: "THINK Default Expanded",
-    type: "toggle",
-    section: "session"
-  },
-  {
-    key: "diagnosticsPendingTimeoutMs",
-    label: "Diagnostics Timeout",
-    type: "number",
-    section: "session"
-  },
-  {
-    key: "diagnosticsFailureThreshold",
-    label: "Diagnostics Fail Threshold",
-    type: "number",
-    section: "session"
-  },
-  {
-    key: "diagnosticsFailureCooldownMs",
-    label: "Diagnostics Cooldown",
-    type: "number",
-    section: "session"
-  },
-  {
-    key: "conversationCompactionEnabled",
-    label: "Conversation Compaction",
-    type: "toggle",
-    section: "session"
-  },
-  { key: "autoCompactTimeoutMs", label: "Auto Compact Timeout", type: "number", section: "session" },
-  { key: "autoCompactMaxFailures", label: "Auto Compact Max Failures", type: "number", section: "session" },
-  {
-    key: "modelContextWindowOverrides",
-    label: "Context Window Overrides",
-    type: "text",
-    section: "session"
-  },
-  { key: "languagePreference", label: "Language", type: "text", section: "session" },
   {
     key: "personaPreset",
     label: "Persona Preset",
     type: "select",
-    section: "session",
     options: PERSONA_OPTIONS
   },
   {
     key: "aiPersonalityPrompt",
     label: "Persona Overlay",
-    type: "text",
-    section: "session"
+    type: "text"
   },
   {
     key: "appendSystemPrompt",
     label: "Append Prompt",
-    type: "text",
-    section: "session"
-  }
+    type: "text"
+  },
+  { key: "languagePreference", label: "Language", type: "text" },
+  { key: "sessionMemoryEnabled", label: "Session Memory", type: "toggle" },
+  {
+    key: "scrollAccelerationEnabled",
+    label: "Scroll Acceleration",
+    type: "toggle"
+  },
+  {
+    key: "historyPagingEnabled",
+    label: "History Paging",
+    type: "toggle"
+  },
+  {
+    key: "messageTimestampsEnabled",
+    label: "Current System Time",
+    type: "toggle"
+  },
+  {
+    key: "markdownMessageRenderingEnabled",
+    label: "Markdown Messages",
+    type: "toggle"
+  },
+  {
+    key: "markdownToolMessageRenderingEnabled",
+    label: "Tool Markdown",
+    type: "toggle"
+  },
+  {
+    key: "thinkingMessagesExpandedByDefault",
+    label: "THINK Default Expanded",
+    type: "toggle"
+  },
+  {
+    key: "conversationCompactionEnabled",
+    label: "Conversation Compaction",
+    type: "toggle"
+  },
+  {
+    key: "modelContextWindowOverrides",
+    label: "Context Window Overrides",
+    type: "text"
+  },
+  { key: "maxSteps", label: "Max Steps", type: "number" },
+  { key: "commandTimeoutMs", label: "Command Timeout", type: "number" },
+  { key: "scrollSpeed", label: "Scroll Speed", type: "number" },
+  {
+    key: "maxMessagesWithoutVirtualization",
+    label: "Max Non-Virtual Messages",
+    type: "number"
+  },
+  {
+    key: "markdownRenderMaxChars",
+    label: "Markdown Max Chars",
+    type: "number"
+  },
+  {
+    key: "diagnosticsPendingTimeoutMs",
+    label: "Diagnostics Timeout",
+    type: "number"
+  },
+  {
+    key: "diagnosticsFailureThreshold",
+    label: "Diagnostics Fail Threshold",
+    type: "number"
+  },
+  {
+    key: "diagnosticsFailureCooldownMs",
+    label: "Diagnostics Cooldown",
+    type: "number"
+  },
+  { key: "autoCompactTimeoutMs", label: "Auto Compact Timeout", type: "number" },
+  { key: "autoCompactMaxFailures", label: "Auto Compact Max Failures", type: "number" }
 ];
-
-const CONNECTION_FIELDS = FIELD_DEFINITIONS.filter((field) => field.section === "connection");
-const SESSION_FIELDS = FIELD_DEFINITIONS.filter((field) => field.section === "session");
 
 function encodeTextValue(value: string | undefined) {
   return value?.replace(/\r?\n/g, "\\n") ?? "";
@@ -167,6 +141,7 @@ function decodeContextWindowOverrides(value: string): SessionSettings["modelCont
   }
 
   for (const entry of normalized.split(",")) {
+    // 允许 pattern 自身包含 "="，因此从最后一个 "=" 开始切分。
     const separatorIndex = entry.lastIndexOf("=");
     if (separatorIndex <= 0) {
       throw new Error("Context Window Overrides must use pattern=tokens entries separated by commas.");
@@ -209,14 +184,6 @@ function getFieldValue(config: EditableConfig, field: FieldDefinition): string {
   return encodeTextValue(typeof value === "string" ? value : undefined);
 }
 
-function maskValue(value: string) {
-  if (value.length <= 8) {
-    return value ? "configured" : "Not set";
-  }
-
-  return `${value.slice(0, 4)}...${value.slice(-4)}`;
-}
-
 function getSourceLabel(source: string) {
   switch (source) {
     case "project":
@@ -232,10 +199,6 @@ function getSourceLabel(source: string) {
   }
 }
 
-function getConnectionSaveTargetLabel(target: ConnectionConfigSaveTarget) {
-  return target === "project" ? "project file" : "user file";
-}
-
 function buildPatch<T extends object>(
   fields: FieldDefinition[],
   initialConfig: EditableConfig,
@@ -248,6 +211,7 @@ function buildPatch<T extends object>(
     const nextValue = currentConfig[field.key];
     const initialValue = initialConfig[field.key];
 
+    // 只持久化真正改动过的字段，避免把未修改配置重新写回。
     if (!areFieldValuesEqual(field, initialValue, nextValue)) {
       patch[key] = nextValue as T[keyof T];
     }
@@ -274,25 +238,14 @@ function areFieldValuesEqual(field: FieldDefinition, left: unknown, right: unkno
 
 export function SettingsDialog(props: {
   visible: boolean;
-  initialSection: SettingsSection;
   reason?: string;
-  connection: ConnectionConfig;
-  connectionState: ConnectionConfigState;
   settings: SessionSettings;
   settingsState: SessionSettingsState;
   onClose: () => void;
-  onSave: (
-    connectionPatch: Partial<ConnectionConfig>,
-    settingsPatch: Partial<SessionSettings>,
-    connectionTarget: ConnectionConfigSaveTarget
-  ) => Promise<void>;
+  onSave: (settingsPatch: Partial<SessionSettings>) => Promise<void>;
   onCtrlCCaptureChange: (capture: boolean) => void;
 }) {
-  const initialEditableConfig: EditableConfig = {
-    ...props.connection,
-    ...props.settings
-  };
-  const [section, setSection] = useState<SettingsSection>("session");
+  const initialEditableConfig: EditableConfig = props.settings;
   const [selectedIndex, setSelectedIndex] = useState(0);
   const [isEditing, setIsEditing] = useState(false);
   const [draftValue, setDraftValue] = useState("");
@@ -300,42 +253,27 @@ export function SettingsDialog(props: {
   const [isSaving, setIsSaving] = useState(false);
   const [initialConfig, setInitialConfig] = useState<EditableConfig>(initialEditableConfig);
   const [config, setConfig] = useState<EditableConfig>(initialEditableConfig);
-  const [connectionSaveTarget, setConnectionSaveTarget] = useState<ConnectionConfigSaveTarget>(
-    props.connectionState.saveTarget
-  );
 
   useRegisterOverlay("settings", props.visible);
 
-  // Connection provider setup lives in /connect; settings only edits session/runtime behavior.
-  const sectionFields = SESSION_FIELDS;
-  const currentField = sectionFields[selectedIndex] ?? sectionFields[0];
+  // Connection provider setup lives in /connect; this dialog only edits session/runtime behavior.
+  const fields = FIELD_DEFINITIONS;
+  const currentField = fields[selectedIndex] ?? fields[0];
   const sourceInfo =
     currentField
       ? {
-          source: props.settingsState.sources[currentField.key as keyof SessionSettings] ?? "default",
+          source: props.settingsState.sources[currentField.key] ?? "default",
           saveTargetPath: props.settingsState.saveTargetPath,
           fallbackPath: props.settingsState.projectPath
         }
       : null;
-  const connectionSavePath =
-    connectionSaveTarget === "project"
-      ? props.connectionState.projectPath
-      : props.connectionState.userPath;
-  const alternateConnectionSavePath =
-    connectionSaveTarget === "project"
-      ? props.connectionState.userPath
-      : props.connectionState.projectPath;
 
   useEffect(() => {
     if (!props.visible) {
       return;
     }
 
-    const nextConfig = {
-      ...props.connection,
-      ...props.settings
-    };
-    setSection("session");
+    const nextConfig = props.settings;
     setSelectedIndex(0);
     setIsEditing(false);
     setDraftValue("");
@@ -343,8 +281,7 @@ export function SettingsDialog(props: {
     setIsSaving(false);
     setInitialConfig(nextConfig);
     setConfig(nextConfig);
-    setConnectionSaveTarget(props.connectionState.saveTarget);
-  }, [props.connection, props.initialSection, props.settings, props.visible]);
+  }, [props.settings, props.visible]);
 
   useEffect(() => {
     props.onCtrlCCaptureChange(props.visible && !isSaving && isEditing && draftValue.length > 0);
@@ -411,7 +348,7 @@ export function SettingsDialog(props: {
     }
 
     if (key.downArrow) {
-      setSelectedIndex((current) => Math.min(sectionFields.length - 1, current + 1));
+      setSelectedIndex((current) => Math.min(fields.length - 1, current + 1));
       return;
     }
 
@@ -450,13 +387,10 @@ export function SettingsDialog(props: {
   const visibleCount = 8;
   const startIndex = Math.max(
     0,
-    Math.min(selectedIndex - Math.floor(visibleCount / 2), sectionFields.length - visibleCount)
+    Math.min(selectedIndex - Math.floor(visibleCount / 2), fields.length - visibleCount)
   );
-  const visibleFields = sectionFields.slice(startIndex, startIndex + visibleCount);
-  const hasRuntimeOverride =
-    currentField?.section === "connection"
-      ? sourceInfo?.source === "cli"
-      : sourceInfo?.source === "env" || sourceInfo?.source === "cli";
+  const visibleFields = fields.slice(startIndex, startIndex + visibleCount);
+  const hasRuntimeOverride = sourceInfo?.source === "env" || sourceInfo?.source === "cli";
 
   return (
     <Pane
@@ -470,7 +404,7 @@ export function SettingsDialog(props: {
           const actualIndex = startIndex + index;
           const isSelected = actualIndex === selectedIndex;
           const rawValue = getFieldValue(config, field);
-          const valueLabel = field.secret ? maskValue(rawValue) : normalizeInlineValue(rawValue);
+          const valueLabel = normalizeInlineValue(rawValue);
 
           return (
             <Box key={field.key} width="100%">
@@ -492,51 +426,28 @@ export function SettingsDialog(props: {
           <Text color={terminalUiTheme.colors.subtle} wrap="truncate-end">
             Current field: {currentField.label}
           </Text>
-          {currentField.section === "connection" ? (
-            <>
-              <Text color={terminalUiTheme.colors.subtle} wrap="truncate-end">
-                Source: {getSourceLabel(sourceInfo.source)}
-                {" | "}
-                Save scope: {getConnectionSaveTargetLabel(connectionSaveTarget)}
-              </Text>
-              <Text color={terminalUiTheme.colors.subtle} wrap="truncate-end">
-                Other scope path: {normalizeInlineValue(alternateConnectionSavePath, "(none)")}
-              </Text>
-            </>
-          ) : (
-            <>
-              <Text color={terminalUiTheme.colors.subtle} wrap="truncate-end">
-                Source: {getSourceLabel(sourceInfo.source)}
-                {" | "}
-                Save target: {normalizeInlineValue(sourceInfo.saveTargetPath, "(none)")}
-              </Text>
-              {sourceInfo.fallbackPath ? (
-                <Text color={terminalUiTheme.colors.subtle} wrap="truncate-end">
-                  Project fallback: {normalizeInlineValue(sourceInfo.fallbackPath, "(none)")}
-                </Text>
-              ) : null}
-            </>
-          )}
+          <Text color={terminalUiTheme.colors.subtle} wrap="truncate-end">
+            Source: {getSourceLabel(sourceInfo.source)}
+            {" | "}
+            Save target: {normalizeInlineValue(sourceInfo.saveTargetPath, "(none)")}
+          </Text>
+          {sourceInfo.fallbackPath ? (
+            <Text color={terminalUiTheme.colors.subtle} wrap="truncate-end">
+              Project fallback: {normalizeInlineValue(sourceInfo.fallbackPath, "(none)")}
+            </Text>
+          ) : null}
           {hasRuntimeOverride ? (
             <Text color={terminalUiTheme.colors.warning} wrap="truncate-end">
-              {currentField.section === "connection"
-                ? "This field is currently overridden by a CLI flag. Saved changes are persisted, but the CLI value stays active for this run."
-                : `This field is currently overridden by ${sourceInfo.source}. Saved changes will apply after the override is removed.`}
-            </Text>
-          ) : currentField.section === "connection" && sourceInfo.source === "env" ? (
-            <Text color={terminalUiTheme.colors.info} wrap="truncate-end">
-              This field currently falls back to the environment. Saving here will override that environment value.
+              {`This field is currently overridden by ${sourceInfo.source}. Saved changes will apply after the override is removed.`}
             </Text>
           ) : null}
           {isEditing ? (
             <Text color={terminalUiTheme.colors.chrome} wrap="truncate-end">
-              Draft: {currentField.secret ? maskValue(draftValue) : normalizeInlineValue(draftValue, "")}
+              Draft: {normalizeInlineValue(draftValue, "")}
             </Text>
           ) : (
             <Text color={terminalUiTheme.colors.subtle} wrap="truncate-end">
-              {currentField.section === "connection"
-                ? "Text fields accept \\n for line breaks. Press P to switch the connection save scope."
-                : currentField.key === "modelContextWindowOverrides"
+              {currentField.key === "modelContextWindowOverrides"
                   ? "Use comma-separated pattern=tokens entries, for example custom fast=512000."
                   : currentField.key === "markdownToolMessageRenderingEnabled"
                     ? "When off, tool results always use plain/code sections even if markdown-capable."
@@ -563,11 +474,9 @@ export function SettingsDialog(props: {
           )}
         </Box>
       ) : null}
-      {section === "session" ? (
-        <Text color={terminalUiTheme.colors.subtle} wrap="truncate-end">
-          External path access is available directly on the local filesystem.
-        </Text>
-      ) : null}
+      <Text color={terminalUiTheme.colors.subtle} wrap="truncate-end">
+        External path access is available directly on the local filesystem.
+      </Text>
       {errorText ? (
         <Text color={terminalUiTheme.colors.danger} wrap="truncate-end">
           {errorText}
@@ -649,9 +558,8 @@ export function SettingsDialog(props: {
     setIsSaving(true);
     setErrorText(null);
     try {
-      const connectionPatch = buildPatch<ConnectionConfig>(CONNECTION_FIELDS, initialConfig, config);
-      const settingsPatch = buildPatch<SessionSettings>(SESSION_FIELDS, initialConfig, config);
-      await props.onSave(connectionPatch, settingsPatch, connectionSaveTarget);
+      const settingsPatch = buildPatch<SessionSettings>(FIELD_DEFINITIONS, initialConfig, config);
+      await props.onSave(settingsPatch);
     } catch (error) {
       setErrorText(error instanceof Error ? error.message : String(error));
     } finally {

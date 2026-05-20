@@ -18,7 +18,6 @@ import { getAbortReason, isTurnInterruptedError, throwIfAborted, TurnInterrupted
 import type { FunctionParameters } from "../core/api/openaiFunctionTools.js";
 import type { JsonRecord, ToolApprovalRequest } from "../tools/types.js";
 import {
-  getMcpConfigPaths,
   loadMcpConfigState,
   normalizeMcpServerName,
   removeMcpServerConfig,
@@ -32,7 +31,6 @@ import {
 import { encodeMcpToolName } from "./toolNames.js";
 import type {
   McpApprovalAction,
-  McpConfig,
   McpConfigMutationResult,
   McpConfigScope,
   McpConfigState,
@@ -135,7 +133,6 @@ export class ProjectMcpRuntime implements McpToolRuntime {
   private readonly outputDirectory: string;
   private toolSchemasCache: ChatCompletionTool[] = [];
   private initializationRunCounter = 0;
-  private configState: McpConfigState;
   private closed = false;
   private elicitationHandler?: (
     request: McpElicitationRequest,
@@ -149,7 +146,6 @@ export class ProjectMcpRuntime implements McpToolRuntime {
     configurationError?: string
   ) {
     this.outputDirectory = path.join(workspaceRoot, ".alyce", "mcp-output");
-    this.configState = state ?? createEmptyConfigState(workspaceRoot);
     if (state) {
       this.applyConfigState(state);
       return;
@@ -871,7 +867,6 @@ export class ProjectMcpRuntime implements McpToolRuntime {
       await closeServerTransport(server);
     }));
 
-    this.configState = state ?? createEmptyConfigState(this.workspaceRoot);
     if (state) {
       this.applyConfigState(state);
       return;
@@ -881,7 +876,6 @@ export class ProjectMcpRuntime implements McpToolRuntime {
   }
 
   private applyConfigState(state: McpConfigState) {
-    this.configState = state;
     for (const [name, serverConfig] of Object.entries(state.effective.mcpServers)) {
       const scope = state.sources[name] ?? "project";
       this.servers.set(name, {
@@ -2599,19 +2593,4 @@ function extensionForMimeType(mimeType: string | undefined) {
     default:
       return ".bin";
   }
-}
-
-function createEmptyConfigState(workspaceRoot: string): McpConfigState {
-  return {
-    paths: getMcpConfigPaths(workspaceRoot),
-    configs: {
-      user: { mcpServers: {} },
-      project: { mcpServers: {} },
-      local: { mcpServers: {} }
-    },
-    effective: {
-      mcpServers: {}
-    },
-    sources: {}
-  };
 }
