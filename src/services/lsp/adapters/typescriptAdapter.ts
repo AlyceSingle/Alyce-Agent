@@ -12,32 +12,13 @@ import type {
   ResolvedLspRuntimeFileInput,
   ResolvedLspRuntimeQueryInput
 } from "../types.js";
+import {
+  TYPESCRIPT_LSP_BACKEND_CAPABILITIES,
+  TYPESCRIPT_LSP_SUPPORTED_OPERATIONS,
+  isTypeScriptLspSupportedFile
+} from "./typescriptAdapterMetadata.js";
 
-const SUPPORTED_EXTENSIONS = new Set([
-  ".ts",
-  ".tsx",
-  ".js",
-  ".jsx",
-  ".mts",
-  ".cts",
-  ".mjs",
-  ".cjs"
-]);
-const SUPPORTED_FILE_EXTENSIONS = [...SUPPORTED_EXTENSIONS].sort((left, right) =>
-  left.localeCompare(right)
-);
-const SUPPORTED_OPERATIONS: LspRuntimeOperation[] = [
-  "goToDefinition",
-  "findReferences",
-  "hover",
-  "documentSymbol",
-  "workspaceSymbol",
-  "goToImplementation",
-  "prepareCallHierarchy",
-  "incomingCalls",
-  "outgoingCalls"
-];
-const SUPPORTED_OPERATION_SET = new Set(SUPPORTED_OPERATIONS);
+const SUPPORTED_OPERATION_SET = new Set<LspRuntimeOperation>(TYPESCRIPT_LSP_SUPPORTED_OPERATIONS);
 
 const DEFAULT_MAX_WORKSPACE_SYMBOLS = 100;
 const MAX_FORMATTED_ITEMS = 200;
@@ -132,17 +113,8 @@ const typeScriptLspCacheStats = createEmptyTypeScriptLspCacheStats();
 
 export const typescriptLspAdapter: LspRuntimeAdapter = {
   backend: "typescript-language-service",
-  capabilities: {
-    supportedOperations: [...SUPPORTED_OPERATIONS],
-    supportsDiagnostics: true,
-    fileSync: {
-      change: true,
-      save: true,
-      close: true
-    },
-    supportedFileExtensions: [...SUPPORTED_FILE_EXTENSIONS]
-  },
-  isSupportedFile,
+  capabilities: TYPESCRIPT_LSP_BACKEND_CAPABILITIES,
+  isSupportedFile: isTypeScriptLspSupportedFile,
   supportsOperation,
   execute,
   getHealth,
@@ -253,7 +225,7 @@ function syncFileChange(input: ResolvedLspRuntimeFileInput) {
 
 function syncFileSave(input: ResolvedLspRuntimeFileInput) {
   bumpSyncedVersion(input.absolutePath);
-  if (!isSupportedFile(input.absolutePath)) {
+  if (!isTypeScriptLspSupportedFile(input.absolutePath)) {
     return;
   }
 
@@ -354,7 +326,7 @@ function createCachedTypeScriptProject(options: {
 }
 
 function ensureProjectIncludesRootFile(project: CachedTypeScriptProject, fileName: string) {
-  if (!isSupportedFile(fileName) || !isAllowedExistingPath(project.allowedRoots, fileName)) {
+  if (!isTypeScriptLspSupportedFile(fileName) || !isAllowedExistingPath(project.allowedRoots, fileName)) {
     return;
   }
 
@@ -381,10 +353,6 @@ function bumpSyncedVersion(fileName: string) {
   const normalized = normalizeFileName(fileName);
   const next = (syncedVersionOffsets.get(normalized) ?? 0) + 1;
   syncedVersionOffsets.set(normalized, next);
-}
-
-function isSupportedFile(fileName: string) {
-  return SUPPORTED_EXTENSIONS.has(path.extname(fileName).toLowerCase());
 }
 
 function getRequiredPosition(project: TypeScriptProject, input: ResolvedLspRuntimeQueryInput) {

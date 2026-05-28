@@ -5,19 +5,8 @@ import type {
   LspRuntimeDiagnosticSeverity,
   LspRuntimeDiagnosticsResult
 } from "../../services/lsp/types.js";
-import { typescriptLspAdapter } from "../../services/lsp/adapters/typescriptAdapter.js";
+import { isTypeScriptLspSupportedFile } from "../../services/lsp/adapters/typescriptAdapterMetadata.js";
 import { resolvePathFromInput } from "./pathSandbox.js";
-
-const SUPPORTED_EXTENSIONS = new Set([
-  ".ts",
-  ".tsx",
-  ".js",
-  ".jsx",
-  ".mts",
-  ".cts",
-  ".mjs",
-  ".cjs"
-]);
 
 const DEFAULT_DIAGNOSTICS_WORKER_TIMEOUT_MS = 60_000;
 
@@ -45,18 +34,19 @@ type WorkerFailureResponse = {
 };
 
 export function isTypeScriptDiagnosticSupported(fileName: string): boolean {
-  return SUPPORTED_EXTENSIONS.has(path.extname(fileName).toLowerCase());
+  return isTypeScriptLspSupportedFile(fileName);
 }
 
-export function getTypeScriptDiagnosticsForFile(options: {
+export async function getTypeScriptDiagnosticsForFile(options: {
   fileName: string;
   workspaceRoot: string;
   allowedRoots: readonly string[];
-}): TypeScriptDiagnosticsResult {
+}): Promise<TypeScriptDiagnosticsResult> {
   if (!isTypeScriptDiagnosticSupported(options.fileName)) {
     throw new Error(`TypeScript diagnostics only support TypeScript/JavaScript files: ${options.fileName}`);
   }
 
+  const { typescriptLspAdapter } = await import("../../services/lsp/adapters/typescriptAdapter.js");
   const absolutePath = resolvePathFromInput(
     options.workspaceRoot,
     options.allowedRoots,

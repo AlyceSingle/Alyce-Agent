@@ -9,7 +9,7 @@ type WorkerRequest = {
 
 type WorkerSuccessResponse = {
   ok: true;
-  result: ReturnType<typeof getTypeScriptDiagnosticsForFile>;
+  result: Awaited<ReturnType<typeof getTypeScriptDiagnosticsForFile>>;
 };
 
 type WorkerFailureResponse = {
@@ -29,12 +29,12 @@ function assertWorkerPort() {
   return parentPort;
 }
 
-function run() {
+async function run() {
   const port = assertWorkerPort();
   const request = workerData as WorkerRequest;
 
   try {
-    const result = getTypeScriptDiagnosticsForFile({
+    const result = await getTypeScriptDiagnosticsForFile({
       fileName: request.fileName,
       workspaceRoot: request.workspaceRoot,
       allowedRoots: request.allowedRoots
@@ -53,4 +53,4 @@ function run() {
   }
 }
 
-run();
+void run();

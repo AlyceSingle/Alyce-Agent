@@ -95,6 +95,15 @@ npm test
 
 You can run a subset by passing a path or name fragment, for example `npm test -- commandRouter`.
 
+## Release to npm
+
+1. Add a repository secret named `NPM_TOKEN` in GitHub. Use an npm automation token from the account that owns `alyce`.
+2. Bump the version in `package.json` and commit it.
+3. Create a GitHub release whose tag matches the package version, for example `v0.3.3`.
+4. The `Publish to npm` workflow will run `npm ci`, `npm run build`, `npm test`, and then publish the package to npm.
+
+If you publish a GitHub prerelease, the workflow sends it to npm with the `next` dist-tag instead of `latest`.
+
 ## Documentation
 
 - [Documentation Index](https://github.com/AlyceSingle/Alyce-Agent/blob/master/docs/README.md)

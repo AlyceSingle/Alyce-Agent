@@ -1,6 +1,5 @@
 import { throwIfAborted } from "../../core/abort.js";
 import { resolvePathFromInput, toWorkspaceRelative } from "../../tools/internal/pathSandbox.js";
-import { typescriptLspAdapter } from "./adapters/typescriptAdapter.js";
 import type {
   LspRuntimeAdapter,
   LspRuntimeBackendCapabilities,
@@ -14,6 +13,10 @@ import type {
   LspRuntimeQueryInput,
   LspRuntimeQueryResult
 } from "./types.js";
+import {
+  TYPESCRIPT_LSP_BACKEND_CAPABILITIES,
+  isTypeScriptLspSupportedFile
+} from "./adapters/typescriptAdapterMetadata.js";
 
 const MAX_HEALTH_ERROR_MESSAGE_CHARS = 300;
 
@@ -47,14 +50,22 @@ export class LspRuntimeUnsupportedOperationError extends Error {
 }
 
 export class LspRuntimeService {
-  constructor(private readonly adapters: readonly LspRuntimeAdapter[] = [typescriptLspAdapter]) {}
+  private readonly adapters: LspRuntimeAdapter[] = [];
+  private readonly includeBuiltInTypeScriptAdapter: boolean;
+  private typescriptAdapterPromise: Promise<LspRuntimeAdapter> | undefined;
+
+  constructor(adapters?: readonly LspRuntimeAdapter[]) {
+    this.adapters = [...(adapters ?? [])];
+    this.includeBuiltInTypeScriptAdapter = adapters === undefined;
+  }
 
   isSupportedFile(fileName: string): boolean {
-    return this.adapters.some((adapter) => adapter.isSupportedFile(fileName));
+    return this.adapters.some((adapter) => adapter.isSupportedFile(fileName)) ||
+      (this.includeBuiltInTypeScriptAdapter && isTypeScriptLspSupportedFile(fileName));
   }
 
   getBackendSnapshot(): LspRuntimeBackendSnapshot[] {
-    return this.adapters.map((adapter) => ({
+    return this.getKnownAdaptersForSnapshot().map((adapter) => ({
       backend: adapter.backend,
       capabilities: cloneBackendCapabilities(adapter.capabilities),
       health: this.getAdapterHealth(adapter)
@@ -62,14 +73,14 @@ export class LspRuntimeService {
   }
 
   getBackendCapabilitiesSnapshot() {
-    return this.adapters.map((adapter) => ({
+    return this.getKnownAdaptersForSnapshot().map((adapter) => ({
       backend: adapter.backend,
       capabilities: cloneBackendCapabilities(adapter.capabilities)
     }));
   }
 
   getBackendHealthSnapshot() {
-    return this.adapters.map((adapter) => this.getAdapterHealth(adapter));
+    return this.getKnownAdaptersForSnapshot().map((adapter) => this.getAdapterHealth(adapter));
   }
 
   async execute(input: LspRuntimeQueryInput): Promise<LspRuntimeQueryResult> {
@@ -81,7 +92,7 @@ export class LspRuntimeService {
       input.filePath
     );
     const runtimeFilePath = toWorkspaceRelative(input.workspaceRoot, absolutePath);
-    const adapter = this.resolveAdapter(absolutePath);
+    const adapter = await this.resolveAdapter(absolutePath);
     this.assertOperationSupported(adapter, input.operation, runtimeFilePath);
     const result = adapter.execute({
       ...input,
@@ -101,7 +112,7 @@ export class LspRuntimeService {
   async getDiagnostics(input: LspRuntimeFileInput): Promise<LspRuntimeDiagnosticsResult> {
     throwIfAborted(input.abortSignal);
     const resolved = this.resolveFileInput(input);
-    const adapter = this.resolveAdapter(resolved.absolutePath);
+    const adapter = await this.resolveAdapter(resolved.absolutePath);
     if (!adapter.getDiagnostics) {
       throw new Error(`LSP diagnostics are not implemented for backend: ${adapter.backend}`);
     }
@@ -112,7 +123,7 @@ export class LspRuntimeService {
   async syncFileChange(input: LspRuntimeFileInput): Promise<void> {
     throwIfAborted(input.abortSignal);
     const resolved = this.resolveFileInput(input);
-    const adapter = this.resolveAdapterOrNull(resolved.absolutePath);
+    const adapter = await this.resolveAdapterOrNull(resolved.absolutePath);
     if (!adapter?.syncFileChange) {
       return;
     }
@@ -123,7 +134,7 @@ export class LspRuntimeService {
   async syncFileSave(input: LspRuntimeFileInput): Promise<void> {
     throwIfAborted(input.abortSignal);
     const resolved = this.resolveFileInput(input);
-    const adapter = this.resolveAdapterOrNull(resolved.absolutePath);
+    const adapter = await this.resolveAdapterOrNull(resolved.absolutePath);
     if (!adapter?.syncFileSave) {
       return;
     }
@@ -134,7 +145,7 @@ export class LspRuntimeService {
   async syncFileClose(input: LspRuntimeFileInput): Promise<void> {
     throwIfAborted(input.abortSignal);
     const resolved = this.resolveFileInput(input);
-    const adapter = this.resolveAdapterOrNull(resolved.absolutePath);
+    const adapter = await this.resolveAdapterOrNull(resolved.absolutePath);
     if (!adapter?.syncFileClose) {
       return;
     }
@@ -154,8 +165,8 @@ export class LspRuntimeService {
     };
   }
 
-  private resolveAdapter(fileName: string): LspRuntimeAdapter {
-    const adapter = this.resolveAdapterOrNull(fileName);
+  private async resolveAdapter(fileName: string): Promise<LspRuntimeAdapter> {
+    const adapter = await this.resolveAdapterOrNull(fileName);
     if (!adapter) {
       throw new Error(`LSP currently supports TypeScript/JavaScript files only: ${fileName}`);
     }
@@ -163,8 +174,17 @@ export class LspRuntimeService {
     return adapter;
   }
 
-  private resolveAdapterOrNull(fileName: string): LspRuntimeAdapter | null {
-    return this.adapters.find((candidate) => candidate.isSupportedFile(fileName)) ?? null;
+  private async resolveAdapterOrNull(fileName: string): Promise<LspRuntimeAdapter | null> {
+    const adapter = this.adapters.find((candidate) => candidate.isSupportedFile(fileName));
+    if (adapter) {
+      return adapter;
+    }
+
+    if (!this.includeBuiltInTypeScriptAdapter || !isTypeScriptLspSupportedFile(fileName)) {
+      return null;
+    }
+
+    return this.loadTypeScriptAdapter();
   }
 
   private assertOperationSupported(
@@ -214,6 +234,29 @@ export class LspRuntimeService {
         message: `Backend health check failed: ${truncateHealthError(error)}`
       };
     }
+  }
+
+  private getKnownAdaptersForSnapshot(): LspRuntimeAdapter[] {
+    if (this.adapters.length > 0) {
+      return this.adapters;
+    }
+
+    if (this.includeBuiltInTypeScriptAdapter) {
+      return [createTypeScriptAdapterSnapshot()];
+    }
+
+    return [];
+  }
+
+  private async loadTypeScriptAdapter(): Promise<LspRuntimeAdapter> {
+    this.typescriptAdapterPromise ??= import("./adapters/typescriptAdapter.js")
+      .then((module) => module.typescriptLspAdapter);
+    const adapter = await this.typescriptAdapterPromise;
+    if (!this.adapters.includes(adapter)) {
+      this.adapters.push(adapter);
+    }
+
+    return adapter;
   }
 }
 
@@ -271,4 +314,21 @@ function cloneBackendCapabilities(capabilities: LspRuntimeBackendCapabilities): 
 function truncateHealthError(error: unknown) {
   const text = error instanceof Error ? error.message : String(error);
   return text.slice(0, MAX_HEALTH_ERROR_MESSAGE_CHARS);
+}
+
+function createTypeScriptAdapterSnapshot(): LspRuntimeAdapter {
+  return {
+    backend: "typescript-language-service",
+    capabilities: TYPESCRIPT_LSP_BACKEND_CAPABILITIES,
+    isSupportedFile: isTypeScriptLspSupportedFile,
+    execute: () => {
+      throw new Error("TypeScript language service has not been initialized.");
+    },
+    getHealth: () => ({
+      backend: "typescript-language-service",
+      status: "ready",
+      checkedAt: new Date().toISOString(),
+      message: "Backend is ready."
+    })
+  };
 }
