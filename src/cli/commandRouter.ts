@@ -6,7 +6,7 @@ export type ReplCommandDefinition = {
   description: string;
   completion: string;
   searchPrefixes?: string[];
-  group: "Core" | "Session" | "Connection" | "Tasks" | "Skills & MCP";
+  group: "Core" | "Session" | "Connection" | "Trust" | "Tasks" | "Skills & MCP";
 };
 
 export const REPL_COMMAND_DEFINITIONS: ReplCommandDefinition[] = [
@@ -51,6 +51,21 @@ export const REPL_COMMAND_DEFINITIONS: ReplCommandDefinition[] = [
     description: "Switch approval and access mode",
     completion: "/permissions",
     group: "Connection"
+  },
+  {
+    command: "/trust",
+    usage: "/trust [status]",
+    description: "Trust this workspace so project-local Alyce config and assets can load",
+    completion: "/trust",
+    searchPrefixes: ["/trust status"],
+    group: "Trust"
+  },
+  {
+    command: "/untrust",
+    usage: "/untrust",
+    description: "Disable project-local Alyce config and assets for this workspace",
+    completion: "/untrust",
+    group: "Trust"
   },
   {
     command: "/connect",
@@ -226,6 +241,7 @@ export function getReplCommandHelpLines(currentModel: string) {
     "Core",
     "Session",
     "Connection",
+    "Trust",
     "Tasks",
     "Skills & MCP"
   ];
@@ -260,6 +276,8 @@ export type ParsedCommand =
   | { type: "exit" }
   | { type: "open-settings"; section: "connection" | "session" }
   | { type: "open-permissions" }
+  | { type: "trust-status" }
+  | { type: "project-trust-set"; trusted: boolean }
   | { type: "connect-provider"; provider?: string; args: string[] }
   | { type: "logout-provider"; provider: string }
   | { type: "open-session-picker" }
@@ -430,6 +448,40 @@ export function parseReplCommand(input: string): ParsedCommand {
       type: "command-error",
       input,
       message: "Unsupported /permissions argument. Use /permissions."
+    };
+  }
+
+  if (input === "/trust status") {
+    return { type: "trust-status" };
+  }
+
+  if (input === "/trust" || input === "/trust enable" || input === "/trust project") {
+    return {
+      type: "project-trust-set",
+      trusted: true
+    };
+  }
+
+  if (input.startsWith("/trust ")) {
+    return {
+      type: "command-error",
+      input,
+      message: "Unsupported /trust argument. Use /trust or /trust status."
+    };
+  }
+
+  if (input === "/untrust") {
+    return {
+      type: "project-trust-set",
+      trusted: false
+    };
+  }
+
+  if (input.startsWith("/untrust ")) {
+    return {
+      type: "command-error",
+      input,
+      message: "Unsupported /untrust argument. Use /untrust."
     };
   }
 

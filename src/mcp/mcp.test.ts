@@ -12,11 +12,13 @@ type McpFixtureName = "mockMcpServer" | "hangingToolsMcpServer";
 async function runTests() {
   await testMissingMcpConfigReturnsEmptyServerSet();
   await testLoadsProjectMcpConfig();
+  await testUntrustedProjectMcpConfigIsIgnored();
   await testLoadsMergedScopedMcpConfigState();
   await testLoadsRemoteMcpConfig();
   await testLoadsSseMcpConfig();
   await testRejectsInvalidMcpConfigSchema();
   await testRuntimeSurvivesInvalidMcpConfig();
+  await testRuntimeIgnoresInvalidProjectMcpConfigWhenUntrusted();
   await testRuntimeHandlesMissingMcpConfig();
   testEncodesAndDecodesToolNames();
   testTruncatesToolNamesWithoutLosingShape();
@@ -29,6 +31,7 @@ async function runTests() {
   await testRuntimeCanAbortToolDiscovery();
   await testRuntimeCanRetryAfterAbortedToolDiscovery();
   await testRuntimeListsToolsAndReadsResources();
+  await testRuntimeUsesConfiguredOutputDirectory();
   await testRuntimeListsPromptsAndTemplates();
   await testRuntimeHandlesToolElicitation();
   await testRuntimeApprovalPolicyCanDenyTool();
@@ -72,6 +75,29 @@ async function testLoadsProjectMcpConfig() {
   assert.equal(chrome?.type, "stdio");
   assert.equal(chrome?.type === "stdio" ? chrome.command : undefined, "npx");
   assert.equal(chrome?.type === "stdio" ? chrome.cwd : undefined, root);
+}
+
+async function testUntrustedProjectMcpConfigIsIgnored() {
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), "alyce-mcp-untrusted-config-"));
+  await fs.mkdir(path.join(root, ".alyce"), { recursive: true });
+  await fs.writeFile(
+    path.join(root, ".alyce", "mcp.json"),
+    JSON.stringify({
+      mcpServers: {
+        project: {
+          command: "project-cmd"
+        }
+      }
+    }),
+    "utf8"
+  );
+
+  const state = await loadMcpConfigState(root, {
+    trustedProject: false
+  });
+
+  assert.deepEqual(Object.keys(state.configs.project.mcpServers), []);
+  assert.deepEqual(Object.keys(state.effective.mcpServers), []);
 }
 
 async function testLoadsMergedScopedMcpConfigState() {
@@ -259,6 +285,22 @@ async function testRuntimeSurvivesInvalidMcpConfig() {
     assert.equal(status.servers[0]?.name, "configuration");
     assert.equal(status.servers[0]?.status, "failed");
     assert.match(status.servers[0]?.error ?? "", /Invalid MCP config JSON/);
+  } finally {
+    await runtime.close();
+  }
+}
+
+async function testRuntimeIgnoresInvalidProjectMcpConfigWhenUntrusted() {
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), "alyce-mcp-untrusted-invalid-runtime-"));
+  await fs.mkdir(path.join(root, ".alyce"), { recursive: true });
+  await fs.writeFile(path.join(root, ".alyce", "mcp.json"), "{", "utf8");
+
+  const runtime = await createProjectMcpRuntime(root, {
+    trusted: false
+  });
+  try {
+    assert.deepEqual(await runtime.getToolSchemas({ initialize: true }), []);
+    assert.deepEqual(await runtime.getStatus(), { servers: [] });
   } finally {
     await runtime.close();
   }
@@ -546,6 +588,30 @@ async function testRuntimeListsToolsAndReadsResources() {
     const outputPath = blob.contents[0]?.type === "blob" ? blob.contents[0].outputPath : "";
     assert.equal(outputPath.startsWith(path.join(root, ".alyce", "mcp-output")), true);
     assert.deepEqual([...await fs.readFile(outputPath)], [1, 2, 3, 4]);
+  } finally {
+    await runtime.close();
+  }
+}
+
+async function testRuntimeUsesConfiguredOutputDirectory() {
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), "alyce-mcp-output-dir-"));
+  const outputDirectory = path.join(root, "home", ".alyce", "workspace-state", "workspace", "mcp-output");
+  const fixture = getMcpFixtureCommand("mockMcpServer");
+  await writeProjectConfig(root, {
+    mock: {
+      command: fixture.command,
+      args: fixture.args,
+      startup_timeout_ms: 5000
+    }
+  });
+
+  const runtime = await createProjectMcpRuntime(root, {
+    outputDirectory
+  });
+  try {
+    const blob = await runtime.readResource("mock", "mock://blob");
+    const outputPath = blob.contents[0]?.type === "blob" ? blob.contents[0].outputPath : "";
+    assert.equal(outputPath.startsWith(outputDirectory), true);
   } finally {
     await runtime.close();
   }

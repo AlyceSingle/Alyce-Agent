@@ -13,6 +13,7 @@ import {
 import type OpenAI from "openai";
 import { randomUUID } from "node:crypto";
 import { promises as fs } from "node:fs";
+import os from "node:os";
 import path from "node:path";
 import { getAbortReason, isTurnInterruptedError, throwIfAborted, TurnInterruptedError } from "../core/abort.js";
 import type { FunctionParameters } from "../core/api/openaiFunctionTools.js";
@@ -117,13 +118,25 @@ interface McpToolMetadata {
 
 type InitializationReason = "initial" | "reconnect";
 
-export async function createProjectMcpRuntime(workspaceRoot: string): Promise<McpToolRuntime> {
+export interface ProjectMcpRuntimeOptions {
+  homeDirectory?: string;
+  outputDirectory?: string;
+  trusted?: boolean;
+}
+
+export async function createProjectMcpRuntime(
+  workspaceRoot: string,
+  options: ProjectMcpRuntimeOptions = {}
+): Promise<McpToolRuntime> {
   try {
-    const state = await loadMcpConfigState(workspaceRoot);
-    return new ProjectMcpRuntime(workspaceRoot, state);
+    const state = await loadMcpConfigState(workspaceRoot, {
+      homeDirectory: options.homeDirectory,
+      trustedProject: options.trusted !== false
+    });
+    return new ProjectMcpRuntime(workspaceRoot, state, undefined, options);
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
-    return new ProjectMcpRuntime(workspaceRoot, undefined, message);
+    return new ProjectMcpRuntime(workspaceRoot, undefined, message, options);
   }
 }
 
@@ -131,9 +144,11 @@ export class ProjectMcpRuntime implements McpToolRuntime {
   private readonly servers = new Map<string, McpServerRuntime>();
   private readonly toolsByExposedName = new Map<string, McpToolMetadata>();
   private readonly outputDirectory: string;
+  private readonly homeDirectory: string;
   private toolSchemasCache: ChatCompletionTool[] = [];
   private initializationRunCounter = 0;
   private closed = false;
+  private trustedProject: boolean;
   private elicitationHandler?: (
     request: McpElicitationRequest,
     options?: { signal?: AbortSignal; timeoutMs?: number }
@@ -143,11 +158,14 @@ export class ProjectMcpRuntime implements McpToolRuntime {
   constructor(
     private readonly workspaceRoot: string,
     state?: McpConfigState,
-    configurationError?: string
+    configurationError?: string,
+    options: ProjectMcpRuntimeOptions = {}
   ) {
-    this.outputDirectory = path.join(workspaceRoot, ".alyce", "mcp-output");
+    this.trustedProject = options.trusted !== false;
+    this.homeDirectory = options.homeDirectory ?? os.homedir();
+    this.outputDirectory = options.outputDirectory ?? path.join(workspaceRoot, ".alyce", "mcp-output");
     if (state) {
-      this.applyConfigState(state);
+      this.applyConfigState(state, this.trustedProject);
       return;
     }
 
@@ -777,13 +795,18 @@ export class ProjectMcpRuntime implements McpToolRuntime {
 
   async reloadConfig(): Promise<void> {
     try {
-      const state = await loadMcpConfigState(this.workspaceRoot);
+      const state = await loadMcpConfigState(this.workspaceRoot, this.getConfigLoadOptions());
       await this.replaceConfigState(state);
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       await this.replaceConfigState(undefined, message);
       throw error;
     }
+  }
+
+  async setProjectTrusted(trusted: boolean): Promise<void> {
+    this.trustedProject = trusted;
+    await this.reloadConfig();
   }
 
   async addServer(
@@ -795,7 +818,8 @@ export class ProjectMcpRuntime implements McpToolRuntime {
       this.workspaceRoot,
       options.scope ?? "project",
       name,
-      config
+      config,
+      this.getConfigLoadOptions()
     );
     await this.replaceConfigState(result.state);
     return result;
@@ -808,7 +832,8 @@ export class ProjectMcpRuntime implements McpToolRuntime {
     const result = await removeMcpServerConfig(
       this.workspaceRoot,
       options.scope ?? "project",
-      name
+      name,
+      this.getConfigLoadOptions()
     );
     await this.replaceConfigState(result.state);
     return result;
@@ -823,7 +848,8 @@ export class ProjectMcpRuntime implements McpToolRuntime {
       this.workspaceRoot,
       options.scope ?? "project",
       name,
-      enabled
+      enabled,
+      this.getConfigLoadOptions()
     );
     await this.replaceConfigState(result.state);
     return result;
@@ -868,29 +894,49 @@ export class ProjectMcpRuntime implements McpToolRuntime {
     }));
 
     if (state) {
-      this.applyConfigState(state);
+      this.applyConfigState(state, this.trustedProject);
       return;
     }
 
     this.setConfigurationError(configurationError ?? "Unknown MCP configuration error.");
   }
 
-  private applyConfigState(state: McpConfigState) {
+  private applyConfigState(state: McpConfigState, trustedProject = true) {
     for (const [name, serverConfig] of Object.entries(state.effective.mcpServers)) {
       const scope = state.sources[name] ?? "project";
+      const disabledByTrust = !trustedProject && scope !== "user";
+      const effectiveConfig = disabledByTrust
+        ? {
+            ...serverConfig,
+            enabled: false
+          }
+        : serverConfig;
       this.servers.set(name, {
         name,
         scope,
-        config: serverConfig,
-        status: isServerEnabled(serverConfig) ? "not_initialized" : "disabled",
+        config: effectiveConfig,
+        status: isServerEnabled(effectiveConfig) ? "not_initialized" : "disabled",
         tools: [],
         toolsByOriginalName: new Map(),
+        ...(disabledByTrust
+          ? {
+              error: "Project MCP servers are disabled until this workspace is trusted.",
+              recentError: "Project MCP servers are disabled until this workspace is trusted."
+            }
+          : {}),
         reconnectAttempt: 0,
         directToolCount: 0,
         hiddenToolCount: 0,
         toolExposure: "direct"
       });
     }
+  }
+
+  private getConfigLoadOptions() {
+    return {
+      homeDirectory: this.homeDirectory,
+      trustedProject: this.trustedProject
+    };
   }
 
   private setConfigurationError(message: string) {

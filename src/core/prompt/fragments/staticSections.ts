@@ -153,7 +153,7 @@ function getUsingToolsSection(runtimeContext: PromptRuntimeContext) {
   }
 
   if (hasTool(runtimeContext, "McpStatus") || hasTool(runtimeContext, "ListMcpResources") || hasTool(runtimeContext, "ReadMcpResource")) {
-    providedToolGuidance.push("Use MCP resource tools to inspect configured MCP servers and read resources by server and URI; binary resources are returned as local .alyce/mcp-output paths.");
+    providedToolGuidance.push("Use MCP resource tools to inspect configured MCP servers and read resources by server and URI; binary resources are returned as local MCP output paths.");
   }
 
   if (hasTool(runtimeContext, "TodoWrite")) {

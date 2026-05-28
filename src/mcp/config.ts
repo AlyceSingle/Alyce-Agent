@@ -76,6 +76,7 @@ type ParsedMcpServerConfig = z.infer<typeof McpServerConfigSchema>;
 interface LoadMcpConfigOptions {
   env?: NodeJS.ProcessEnv;
   homeDirectory?: string;
+  trustedProject?: boolean;
 }
 
 export function getMcpConfigPaths(
@@ -110,10 +111,11 @@ export async function loadMcpConfigState(
 ): Promise<McpConfigState> {
   const homeDirectory = options.homeDirectory ?? os.homedir();
   const paths = getMcpConfigPaths(workspaceRoot, homeDirectory);
+  const trustedProject = options.trustedProject !== false;
   const configs: Record<McpConfigScope, McpConfig> = {
     user: await readMcpConfigFile(paths.user),
-    project: await readMcpConfigFile(paths.project),
-    local: await readMcpConfigFile(paths.local)
+    project: trustedProject ? await readMcpConfigFile(paths.project) : { mcpServers: {} },
+    local: trustedProject ? await readMcpConfigFile(paths.local) : { mcpServers: {} }
   };
 
   return buildMcpConfigState(workspaceRoot, configs, {
@@ -164,6 +166,7 @@ export async function writeMcpServerConfig(
   config: McpServerConfig,
   options: LoadMcpConfigOptions = {}
 ): Promise<McpConfigMutationResult> {
+  assertTrustedProjectScope(scope, options);
   const state = await loadMcpConfigState(workspaceRoot, options);
   const normalizedName = normalizeMcpServerName(name);
   if (!normalizedName) {
@@ -197,6 +200,7 @@ export async function removeMcpServerConfig(
   name: string,
   options: LoadMcpConfigOptions = {}
 ): Promise<McpConfigMutationResult> {
+  assertTrustedProjectScope(scope, options);
   const state = await loadMcpConfigState(workspaceRoot, options);
   const normalizedName = normalizeMcpServerName(name);
   if (!normalizedName) {
@@ -228,6 +232,7 @@ export async function setScopedMcpServerEnabled(
   enabled: boolean,
   options: LoadMcpConfigOptions = {}
 ): Promise<McpConfigMutationResult> {
+  assertTrustedProjectScope(scope, options);
   const state = await loadMcpConfigState(workspaceRoot, options);
   const normalizedName = normalizeMcpServerName(name);
   if (!normalizedName) {
@@ -269,6 +274,12 @@ export function normalizeMcpServerName(value: string): string {
     .toLowerCase()
     .replace(/[^a-z0-9_-]+/g, "-")
     .replace(/^-+|-+$/g, "");
+}
+
+function assertTrustedProjectScope(scope: McpConfigScope, options: LoadMcpConfigOptions) {
+  if (scope !== "user" && options.trustedProject === false) {
+    throw new Error("Project MCP config is disabled until this workspace is trusted.");
+  }
 }
 
 async function readMcpConfigFile(configPath: string): Promise<McpConfig> {

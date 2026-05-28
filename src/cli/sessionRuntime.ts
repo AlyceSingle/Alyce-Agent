@@ -24,6 +24,11 @@ import {
   type SessionSettingsState
 } from "../config/runtime.js";
 import {
+  getUserHomeFromAlyceDirectory,
+  setProjectTrusted,
+  type ProjectTrustState
+} from "../core/trust/projectTrustStore.js";
+import {
   ConversationCompactor,
   DEFAULT_CONVERSATION_COMPACTION_CONFIG,
   type ConversationCompactionConfig,
@@ -292,6 +297,8 @@ export interface SessionRuntime {
   getAuthStorePath: () => string;
   getSettings: () => SessionSettings;
   getSettingsState: () => SessionSettingsState;
+  getProjectTrustState: () => ProjectTrustState;
+  setProjectTrusted: (trusted: boolean) => Promise<ProjectTrustState>;
   getPlanModeState: () => PlanModeState;
   setPlanModeEnabled: (enabled: boolean) => Promise<PlanModeState>;
   requireChatCompletionAdapter: () => ChatCompletionAdapter;
@@ -599,6 +606,7 @@ export async function createSessionRuntime(
   let settingsState = cloneSessionSettingsState(config.settingsState);
   let connection = connectionState.effective;
   let settings = settingsState.effective;
+  let projectTrust = { ...config.projectTrust };
   let planModeState: PlanModeState = { enabled: false };
   let sessionAdditionalDirectories: string[] = [];
   let connectionSaveTarget = connectionState.saveTarget;
@@ -619,11 +627,11 @@ export async function createSessionRuntime(
   );
   const contextBudgetService = createContextBudgetService(settings);
   const usageLedger = new UsageLedger({
-    jsonlPath: path.join(config.paths.alyceDirectory, "usage.jsonl")
+    jsonlPath: config.paths.usageLogPath
   });
   const backgroundProcessManager = new BackgroundProcessManager({
     workspaceRoot: config.paths.workspaceRoot,
-    storageRoot: path.join(config.paths.alyceDirectory, "background-processes")
+    storageRoot: config.paths.backgroundProcessesDirectory
   });
   const ptyManager = new PtyManager({
     workspaceRoot: config.paths.workspaceRoot
@@ -635,7 +643,7 @@ export async function createSessionRuntime(
     createSessionMemoryExtractorConfig(config, settings)
   );
   const sessionHistory = new SessionHistoryStore({
-    sessionsDirectory: path.join(config.paths.alyceDirectory, "sessions"),
+    sessionsDirectory: config.paths.sessionsDirectory,
     workspaceRoot: config.paths.workspaceRoot
   });
   const getSessionMemorySourcePath = () =>
@@ -657,7 +665,11 @@ export async function createSessionRuntime(
   memoryService.setSessionMemoryEnabled(settings.sessionMemoryEnabled);
   memoryService.setSessionMemorySourcePath(getSessionMemorySourcePath());
   await memoryService.initialize();
-  const mcpRuntime = await createProjectMcpRuntime(config.paths.workspaceRoot);
+  const mcpRuntime = await createProjectMcpRuntime(config.paths.workspaceRoot, {
+    homeDirectory: getUserHomeFromAlyceDirectory(config.paths.userAlyceDirectory),
+    outputDirectory: config.paths.mcpOutputDirectory,
+    trusted: projectTrust.trusted
+  });
   const fileReadState = new Map<string, FileReadState>();
   const subagentSessions = new Map<string, SubagentSession>();
   // 只缓存“当前主会话”的轻量任务索引，用于 TaskList/TaskGet 的跨重启恢复。
@@ -669,6 +681,8 @@ export async function createSessionRuntime(
   const subagentHistoryStore = new SubagentHistoryStore();
   const skillService = new SkillService({
     workspaceRoot: config.paths.workspaceRoot,
+    userHomeDirectory: getUserHomeFromAlyceDirectory(config.paths.userAlyceDirectory),
+    trustedProject: projectTrust.trusted,
     watch: true
   });
   const getWorktreesDirectory = () =>
@@ -817,7 +831,9 @@ export async function createSessionRuntime(
     input: SubagentPromptInput,
     workspaceRoot = config.paths.workspaceRoot
   ) => {
-    const agent = await loadSubagentDefinition(config.paths.workspaceRoot, input.agentType);
+    const agent = await loadSubagentDefinition(config.paths.workspaceRoot, input.agentType, {
+      trustedProject: projectTrust.trusted
+    });
     if (!agent) {
       throw new Error(`Unknown subagent type: ${input.agentType}`);
     }
@@ -1204,7 +1220,7 @@ export async function createSessionRuntime(
     requestPatches: config.requestPatches,
     getMainAgentToolSchemas,
     getSessionId: () => sessionHistory.getCurrentSessionId(),
-    getSessionHistoryDirectory: () => path.join(config.paths.alyceDirectory, "sessions"),
+    getSessionHistoryDirectory: () => config.paths.sessionsDirectory,
     hasConnectionConfig: () => hasUsableModelAdapter(),
     getConnectionConfig: () => ({ ...connection }),
     getConnectionConfigState: () => cloneConnectionConfigState(connectionState),
@@ -1212,6 +1228,17 @@ export async function createSessionRuntime(
     getAuthStorePath: () => authStore.getPath(),
     getSettings: () => cloneJson(settings),
     getSettingsState: () => cloneSessionSettingsState(settingsState),
+    getProjectTrustState: () => ({ ...projectTrust }),
+    setProjectTrusted: async (trusted) => {
+      const nextState = await setProjectTrusted(config.paths.workspaceRoot, trusted, {
+        userAlyceDirectory: config.paths.userAlyceDirectory
+      });
+      projectTrust = nextState;
+      skillService.setProjectTrusted(trusted);
+      await mcpRuntime.setProjectTrusted?.(trusted).catch(() => undefined);
+      await resetSystemMessage();
+      return { ...nextState };
+    },
     getPlanModeState: () => ({ ...planModeState }),
     setPlanModeEnabled: async (enabled) => {
       if (planModeState.enabled === enabled) {
@@ -1626,6 +1653,7 @@ export async function createSessionRuntime(
     }) => ({
       // 工具在执行前会先登记 turnId，并在写文件前抓取快照，便于中断后回滚。
       workspaceRoot: config.paths.workspaceRoot,
+      trustedProject: projectTrust.trusted,
       get allowedRoots() {
         return resolveAllowedRoots(
           config.paths.workspaceRoot,
@@ -1685,8 +1713,15 @@ export async function createSessionRuntime(
         }
       },
       stopSubagentTask: (taskId) => stopSubagentTask(taskId),
-      getSubagentDefinition: (type) => loadSubagentDefinition(config.paths.workspaceRoot, type),
-      listSubagentDefinitions: () => loadSubagentDefinitions(config.paths.workspaceRoot)
+      getSubagentDefinition: (type) => loadSubagentDefinition(
+        config.paths.workspaceRoot,
+        type,
+        { trustedProject: projectTrust.trusted }
+      ),
+      listSubagentDefinitions: () => loadSubagentDefinitions(
+        config.paths.workspaceRoot,
+        { trustedProject: projectTrust.trusted }
+      )
     })
   };
 
@@ -2176,7 +2211,9 @@ export async function createSessionRuntime(
   }
 
   async function startSubagentSession(input: SubagentRunInput): Promise<SubagentSession> {
-    const agent = await loadSubagentDefinition(config.paths.workspaceRoot, input.agentType);
+    const agent = await loadSubagentDefinition(config.paths.workspaceRoot, input.agentType, {
+      trustedProject: projectTrust.trusted
+    });
     if (!agent) {
       throw new Error(`Unknown subagent type: ${input.agentType}`);
     }
@@ -2242,7 +2279,9 @@ export async function createSessionRuntime(
     session: SubagentSession,
     parentContextOptions: Parameters<SessionRuntime["createToolContext"]>[0]
   ): Promise<string> {
-    const agent = await loadSubagentDefinition(config.paths.workspaceRoot, session.agentType);
+    const agent = await loadSubagentDefinition(config.paths.workspaceRoot, session.agentType, {
+      trustedProject: projectTrust.trusted
+    });
     if (!agent) {
       throw new Error(`Unknown subagent type: ${session.agentType}`);
     }

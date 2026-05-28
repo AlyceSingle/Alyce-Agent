@@ -56,6 +56,7 @@ export class SkillManager {
   private readonly userHomeDirectory: string;
   private readonly promptCharBudget: number;
   private readonly watchEnabled: boolean;
+  private trustedProject: boolean;
   private readonly roots: SkillDiscoveryRoots;
   private readonly watcherPaths: string[];
   private readonly settingsPaths: ReturnType<typeof getSkillSettingsPaths>;
@@ -70,6 +71,7 @@ export class SkillManager {
     this.userHomeDirectory = path.resolve(options.userHomeDirectory ?? os.homedir());
     this.promptCharBudget = options.promptCharBudget ?? DEFAULT_PROMPT_CHAR_BUDGET;
     this.watchEnabled = options.watch === true;
+    this.trustedProject = options.trustedProject !== false;
     this.roots = {
       projectRoot: path.join(this.workspaceRoot, ".alyce", "skills"),
       userRoot: path.join(this.userHomeDirectory, ".alyce", "skills")
@@ -80,6 +82,15 @@ export class SkillManager {
 
   getRoots(): SkillDiscoveryRoots {
     return { ...this.roots };
+  }
+
+  setProjectTrusted(trusted: boolean) {
+    if (this.trustedProject === trusted) {
+      return;
+    }
+
+    this.trustedProject = trusted;
+    this.cacheDirty = true;
   }
 
   async discoverSkills(options: {
@@ -220,6 +231,10 @@ export class SkillManager {
     enabled: boolean,
     target: SkillConfigTarget
   ): Promise<SkillConfigMutationResult> {
+    if (target === "project" && !this.trustedProject) {
+      throw new Error("Project skills config is disabled until this workspace is trusted.");
+    }
+
     const settingsState = await this.loadSettingsState();
     const layer = cloneSettingsLayer(target === "project" ? settingsState.project : settingsState.user);
     const filePath = target === "project" ? settingsState.projectPath : settingsState.userPath;
@@ -351,7 +366,9 @@ export class SkillManager {
 
   private async loadCatalog(): Promise<CachedSkillCatalog> {
     const [projectSkills, userSkills] = await Promise.all([
-      discoverSkillsFromRoot(this.roots.projectRoot, "project"),
+      this.trustedProject
+        ? discoverSkillsFromRoot(this.roots.projectRoot, "project")
+        : Promise.resolve([]),
       discoverSkillsFromRoot(this.roots.userRoot, "user")
     ]);
     const bundledSkills = loadBundledSkills();
@@ -359,7 +376,9 @@ export class SkillManager {
     let settingsState: SkillSettingsState;
     const configWarnings: string[] = [];
     try {
-      settingsState = await loadSkillSettings(this.settingsPaths);
+      settingsState = await loadSkillSettings(this.settingsPaths, {
+        trustedProject: this.trustedProject
+      });
     } catch (error) {
       settingsState = {
         project: normalizeSkillSettingsLayer(),
@@ -432,7 +451,9 @@ export class SkillManager {
   }
 
   private async loadSettingsState() {
-    return loadSkillSettings(this.settingsPaths);
+    return loadSkillSettings(this.settingsPaths, {
+      trustedProject: this.trustedProject
+    });
   }
 }
 
@@ -502,7 +523,10 @@ function mergeActiveSkills(skills: SkillDescriptor[]) {
   };
 }
 
-function resolveDisabledReason(skill: SkillDescriptor, settingsState: SkillSettingsState) {
+function resolveDisabledReason(
+  skill: SkillDescriptor,
+  settingsState: SkillSettingsState
+) {
   const effective = settingsState.effective;
   if (skill.source === "bundled" && effective.disableBundledSkills) {
     return "bundled skills are disabled by config";

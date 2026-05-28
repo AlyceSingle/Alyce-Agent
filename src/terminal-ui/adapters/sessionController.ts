@@ -288,6 +288,12 @@ type McpParsedCommand = Extract<
       | "mcp-login";
   }
 >;
+type TrustParsedCommand = Extract<
+  ParsedReplCommand,
+  {
+    type: "trust-status" | "project-trust-set";
+  }
+>;
 
 function isSkillsParsedCommand(command: ParsedReplCommand): command is SkillsParsedCommand {
   return command.type.startsWith("skills-");
@@ -295,6 +301,10 @@ function isSkillsParsedCommand(command: ParsedReplCommand): command is SkillsPar
 
 function isMcpParsedCommand(command: ParsedReplCommand): command is McpParsedCommand {
   return command.type.startsWith("mcp-");
+}
+
+function isTrustParsedCommand(command: ParsedReplCommand): command is TrustParsedCommand {
+  return command.type === "trust-status" || command.type === "project-trust-set";
 }
 
 function getApiMessagesSinceCheckpoint(checkpoint: TurnCheckpoint, runtime: SessionRuntime) {
@@ -2137,8 +2147,8 @@ export function createSessionController(
   };
 
   const getSkillCommandContext = async () => {
-    const projectRoot = path.join(runtime.config.paths.alyceDirectory, "skills");
-    const userRoot = path.join(runtime.config.paths.userAlyceDirectory, "skills");
+    const projectRoot = runtime.config.paths.projectSkillsDirectory;
+    const userRoot = runtime.config.paths.userSkillsDirectory;
     const [projectRootReady, userRootReady] = await Promise.all([
       isDirectoryReady(projectRoot),
       isDirectoryReady(userRoot)
@@ -2152,8 +2162,8 @@ export function createSessionController(
   };
 
   const getMcpCommandContext = async () => {
-    const projectConfigPath = path.join(runtime.config.paths.alyceDirectory, "mcp.json");
-    const localConfigPath = path.join(runtime.config.paths.alyceDirectory, "mcp.local.json");
+    const projectConfigPath = path.join(runtime.config.paths.projectAlyceDirectory, "mcp.json");
+    const localConfigPath = path.join(runtime.config.paths.projectAlyceDirectory, "mcp.local.json");
     const userConfigPath = path.join(runtime.config.paths.userAlyceDirectory, "mcp.json");
     const [projectConfigExists, localConfigExists, userConfigExists] = await Promise.all([
       doesPathExist(projectConfigPath),
@@ -2168,6 +2178,21 @@ export function createSessionController(
       userConfigPath,
       userConfigExists
     };
+  };
+
+  const formatProjectTrustStatus = () => {
+    const state = runtime.getProjectTrustState();
+    return [
+      "Project trust",
+      `Workspace: ${state.workspaceRoot}`,
+      `Status: ${state.trusted ? "trusted" : "untrusted"}`,
+      `Trust store: ${state.storePath}`,
+      state.updatedAt ? `Updated: ${state.updatedAt}` : undefined,
+      "",
+      state.trusted
+        ? "Project-local .alyce config, skills, MCP servers, agents, and connector plugins may load."
+        : "Project-local .alyce config, skills, MCP servers, agents, and connector plugins are disabled."
+    ].filter((line): line is string => line !== undefined).join("\n");
   };
 
   const findCatalogSkill = (
@@ -2321,6 +2346,30 @@ export function createSessionController(
     }
   };
 
+  const handleTrustCommand = async (parsedCommand: TrustParsedCommand) => {
+    if (parsedCommand.type === "trust-status") {
+      appendSystemText(formatProjectTrustStatus(), "Trust");
+      return;
+    }
+
+    const next = await runtime.setProjectTrusted(parsedCommand.trusted);
+    await runtime.refreshSkills();
+    await runtime.getMcpStatus({ initialize: false });
+    appendSystemText(
+      [
+        parsedCommand.trusted
+          ? "Workspace trusted."
+          : "Workspace trust revoked.",
+        `Workspace: ${next.workspaceRoot}`,
+        `Trust store: ${next.storePath}`,
+        parsedCommand.trusted
+          ? "Project-local Alyce assets will be considered on subsequent loads."
+          : "Project-local Alyce assets are disabled for this session."
+      ].join("\n"),
+      "Trust"
+    );
+  };
+
   const handleCommand = async (
     parsedCommand: ParsedReplCommand
   ): Promise<boolean> => {
@@ -2416,6 +2465,7 @@ export function createSessionController(
         allowedRoots: runtime.getAllowedRoots(),
         requestPatchCount: runtime.requestPatches.length,
         providerPluginDiagnostics: runtime.config.providerPluginDiagnostics,
+        projectTrust: runtime.getProjectTrustState(),
         snapshotDiagnostics
       }, {
         env: process.env,
@@ -2640,6 +2690,11 @@ export function createSessionController(
       return true;
     }
 
+    if (isTrustParsedCommand(parsedCommand)) {
+      await handleTrustCommand(parsedCommand);
+      return true;
+    }
+
     if (parsedCommand.type === "add-directory") {
       const absolutePath = await resolveAdditionalDirectory(parsedCommand.directory);
       const alreadyAllowed = isDirectoryAlreadyAllowed(absolutePath);
@@ -2745,7 +2800,7 @@ export function createSessionController(
         runtime.config.paths
       );
       if (runtimeBootstrapSummary) {
-        appendUiMessage(createSystemMessage(runtimeBootstrapSummary, "Startup"));
+        appendUiMessage(createSystemMessage(runtimeBootstrapSummary, "Runtime"));
       }
       if (options.startupContextSummary) {
         appendUiMessage(createSystemMessage(options.startupContextSummary, "Startup Context"));
@@ -3562,28 +3617,27 @@ function formatRuntimeBootstrapSummary(
     return null;
   }
 
-  const lines: string[] = [];
+  const parts: string[] = [];
   if (report.createdPaths.length > 0) {
-    lines.push(
-      `Initialized Alyce runtime storage (${report.createdPaths.length} path(s) ready).`,
-      `Skills root: ${path.join(paths.alyceDirectory, "skills")}`,
-      `Project MCP config: ${path.join(paths.alyceDirectory, "mcp.json")} (created on first save)`
+    parts.push(
+      `Runtime storage ready: ${report.createdPaths.length} path(s) initialized`,
+      `state: ${paths.workspaceRuntimeDirectory}`,
+      `user skills: ${paths.userSkillsDirectory}`,
+      `project assets load after /trust`
     );
   }
 
   if (report.failedPaths.length > 0) {
-    if (lines.length > 0) {
-      lines.push("");
-    }
-    lines.push(
-      `Some runtime paths could not be initialized (${report.failedPaths.length}):`,
-      ...report.failedPaths
+    parts.push(
+      `failed: ${report.failedPaths.length}`,
+      `details: ${report.failedPaths
         .slice(0, 5)
         .map((failure) => `- ${failure.path}: ${failure.error}`)
+        .join("; ")}`
     );
   }
 
-  return lines.join("\n");
+  return parts.join("; ");
 }
 
 function mergeThinkingContent(current: string, nextChunk: string): string {

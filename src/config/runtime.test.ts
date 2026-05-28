@@ -8,6 +8,7 @@ import {
   saveUserSessionSettings,
   type RuntimePaths
 } from "./runtime.js";
+import { setProjectTrusted } from "../core/trust/projectTrustStore.js";
 
 async function runTests() {
   testSessionSettingsDefaultsIncludeScrollPerformanceSettings();
@@ -105,27 +106,39 @@ function testSessionSettingsClampsScrollSpeed() {
   assert.equal(high.effective.scrollSpeed, 8);
 }
 
+async function trustWorkspaceForTest(workspaceRoot: string) {
+  await setProjectTrusted(workspaceRoot, true, {
+    userAlyceDirectory: path.join(os.homedir(), ".alyce")
+  });
+}
+
 async function testRuntimeConfigBootstrapsRuntimeDirectories() {
   const workspaceRoot = await fs.mkdtemp(path.join(os.tmpdir(), "alyce-runtime-bootstrap-"));
-  const config = await loadRuntimeConfigForTest([], {
+  const untrusted = await loadRuntimeConfigForTest([], {
     ...process.env,
     AGENT_WORKSPACE: workspaceRoot
+  });
+  assert.equal(untrusted.settings.scrollSpeed, 2);
+
+  const config = await withTemporaryHome(async () => {
+    await trustWorkspaceForTest(workspaceRoot);
+    return loadRuntimeConfig([], {
+      ...process.env,
+      AGENT_WORKSPACE: workspaceRoot
+    });
   });
 
   const expectedDirectories = [
     config.paths.alyceDirectory,
-    path.join(config.paths.alyceDirectory, "skills"),
-    config.paths.projectPluginsDirectory,
-    path.join(config.paths.alyceDirectory, "agents"),
-    path.join(config.paths.alyceDirectory, "memory"),
-    path.join(config.paths.alyceDirectory, "sessions"),
-    path.join(config.paths.alyceDirectory, "background-processes"),
-    path.join(config.paths.alyceDirectory, "mcp-output"),
-    path.join(config.paths.alyceDirectory, "snapshots", "git"),
-    path.join(config.paths.alyceDirectory, "file-history"),
-    path.join(config.paths.alyceDirectory, "tasks"),
+    config.paths.memoryDirectory,
+    config.paths.sessionsDirectory,
+    config.paths.backgroundProcessesDirectory,
+    config.paths.mcpOutputDirectory,
+    config.paths.gitSnapshotsDirectory,
+    config.paths.fileHistoryDirectory,
+    config.paths.tasksDirectory,
     config.paths.userAlyceDirectory,
-    path.join(config.paths.userAlyceDirectory, "skills"),
+    config.paths.userSkillsDirectory,
     config.paths.userPluginsDirectory
   ];
 
@@ -133,13 +146,14 @@ async function testRuntimeConfigBootstrapsRuntimeDirectories() {
     assert.equal((await fs.stat(directory)).isDirectory(), true, directory);
   }
 
-  assert.equal(config.bootstrap.createdPaths.length >= expectedDirectories.length, true);
+  assert.equal(config.bootstrap.createdPaths.length > 0, true);
   assert.equal(config.bootstrap.failedPaths.length, 0);
   assert.equal(config.bootstrap.firstRun, true);
 
+  await assert.rejects(fs.stat(config.paths.projectAlyceDirectory), { code: "ENOENT" });
   await assert.rejects(fs.stat(config.paths.connectionConfigPath), { code: "ENOENT" });
   await assert.rejects(fs.stat(config.paths.settingsConfigPath), { code: "ENOENT" });
-  await assert.rejects(fs.stat(path.join(config.paths.alyceDirectory, "mcp.json")), { code: "ENOENT" });
+  await assert.rejects(fs.stat(path.join(config.paths.projectAlyceDirectory, "mcp.json")), { code: "ENOENT" });
   await assert.rejects(fs.stat(path.join(config.paths.userAlyceDirectory, "auth.json")), { code: "ENOENT" });
 }
 
@@ -207,9 +221,12 @@ async function testRuntimeConfigReadsLegacyApprovalModes() {
     JSON.stringify({ approvalMode: "manual" }),
     "utf8"
   );
-  const manual = await loadRuntimeConfigForTest([], {
-    ...process.env,
-    AGENT_WORKSPACE: manualWorkspace
+  const manual = await withTemporaryHome(async () => {
+    await trustWorkspaceForTest(manualWorkspace);
+    return loadRuntimeConfig([], {
+      ...process.env,
+      AGENT_WORKSPACE: manualWorkspace
+    });
   });
 
   const autoWorkspace = await fs.mkdtemp(path.join(os.tmpdir(), "alyce-runtime-config-auto-"));
@@ -219,9 +236,12 @@ async function testRuntimeConfigReadsLegacyApprovalModes() {
     JSON.stringify({ approvalMode: "auto" }),
     "utf8"
   );
-  const auto = await loadRuntimeConfigForTest([], {
-    ...process.env,
-    AGENT_WORKSPACE: autoWorkspace
+  const auto = await withTemporaryHome(async () => {
+    await trustWorkspaceForTest(autoWorkspace);
+    return loadRuntimeConfig([], {
+      ...process.env,
+      AGENT_WORKSPACE: autoWorkspace
+    });
   });
 
   assert.equal(manual.settings.approvalMode, "default");
@@ -276,9 +296,18 @@ async function testRuntimeConfigIgnoresRetiredStatusUsageSetting() {
     "utf8"
   );
 
-  const config = await loadRuntimeConfigForTest([], {
+  const untrusted = await loadRuntimeConfigForTest([], {
     ...process.env,
     AGENT_WORKSPACE: workspaceRoot
+  });
+  assert.equal(untrusted.settings.scrollSpeed, 2);
+
+  const config = await withTemporaryHome(async () => {
+    await trustWorkspaceForTest(workspaceRoot);
+    return loadRuntimeConfig([], {
+      ...process.env,
+      AGENT_WORKSPACE: workspaceRoot
+    });
   });
 
   assert.equal(config.settings.scrollSpeed, 4);
@@ -296,14 +325,29 @@ async function testSessionSettingsSerializationIncludesScrollPerformanceSettings
   const workspaceRoot = await fs.mkdtemp(path.join(os.tmpdir(), "alyce-runtime-config-save-"));
   const paths = {
     workspaceRoot,
-    alyceDirectory: path.join(workspaceRoot, ".alyce"),
+    projectAlyceDirectory: path.join(workspaceRoot, ".alyce"),
+    alyceDirectory: path.join(workspaceRoot, "user", "workspace-state", "workspace"),
     connectionConfigPath: path.join(workspaceRoot, ".alyce", "config.json"),
     settingsConfigPath: path.join(workspaceRoot, ".alyce", "settings.json"),
+    projectSkillsDirectory: path.join(workspaceRoot, ".alyce", "skills"),
+    projectAgentsDirectory: path.join(workspaceRoot, ".alyce", "agents"),
     projectPluginsDirectory: path.join(workspaceRoot, ".alyce", "plugins"),
     userAlyceDirectory: path.join(workspaceRoot, "user"),
     userConnectionConfigPath: path.join(workspaceRoot, "user", "config.json"),
     userSettingsConfigPath: path.join(workspaceRoot, "user", "settings.json"),
-    userPluginsDirectory: path.join(workspaceRoot, "user", "plugins")
+    userSkillsDirectory: path.join(workspaceRoot, "user", "skills"),
+    userPluginsDirectory: path.join(workspaceRoot, "user", "plugins"),
+    workspaceRuntimeDirectory: path.join(workspaceRoot, "user", "workspace-state", "workspace"),
+    memoryDirectory: path.join(workspaceRoot, "user", "workspace-state", "workspace", "memory"),
+    sessionsDirectory: path.join(workspaceRoot, "user", "workspace-state", "workspace", "sessions"),
+    backgroundProcessesDirectory: path.join(workspaceRoot, "user", "workspace-state", "workspace", "background-processes"),
+    mcpOutputDirectory: path.join(workspaceRoot, "user", "workspace-state", "workspace", "mcp-output"),
+    snapshotsDirectory: path.join(workspaceRoot, "user", "workspace-state", "workspace", "snapshots"),
+    gitSnapshotsDirectory: path.join(workspaceRoot, "user", "workspace-state", "workspace", "snapshots", "git"),
+    fileHistoryDirectory: path.join(workspaceRoot, "user", "workspace-state", "workspace", "file-history"),
+    tasksDirectory: path.join(workspaceRoot, "user", "workspace-state", "workspace", "tasks"),
+    usageLogPath: path.join(workspaceRoot, "user", "workspace-state", "workspace", "usage.jsonl"),
+    projectTrustStorePath: path.join(workspaceRoot, "user", "trusted-projects.json")
   };
 
   await saveUserSessionSettings(paths, {

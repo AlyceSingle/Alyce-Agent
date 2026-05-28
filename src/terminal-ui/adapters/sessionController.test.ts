@@ -982,7 +982,10 @@ function testInitializeShowsRuntimeBootstrapSummary() {
   const runtime = createRuntimeStub({
     config: createRuntimeConfigStub({
       bootstrap: {
-        createdPaths: ["C:\\workspace\\.alyce", "C:\\workspace\\.alyce\\skills"],
+        createdPaths: [
+          "C:\\Users\\Single\\.alyce\\workspace-state\\workspace",
+          "C:\\Users\\Single\\.alyce\\workspace-state\\workspace\\sessions"
+        ],
         existingPaths: [],
         failedPaths: [],
         firstRun: true
@@ -994,9 +997,15 @@ function testInitializeShowsRuntimeBootstrapSummary() {
 
   controller.initialize();
 
-  const output = store.getState().messages.map((message) => message.content).join("\n");
-  assert.match(output, /Initialized Alyce runtime storage/);
-  assert.match(output, /Skills root: C:\\workspace\\\.alyce\\skills/);
+  const message = store.getState().messages.find((entry) =>
+    entry.kind === "system" && entry.title === "Runtime"
+  );
+  assert.ok(message);
+  assert.match(message.content, /^Runtime storage ready: 2 path\(s\) initialized; /);
+  assert.match(message.content, /state: C:\\Users\\Single\\\.alyce\\workspace-state\\workspace/);
+  assert.match(message.content, /user skills: C:\\Users\\Single\\\.alyce\\skills/);
+  assert.match(message.content, /project assets load after \/trust/);
+  assert.equal(message.content.includes("\n"), false);
 }
 
 function createRuntimeStub(overrides: Partial<{
@@ -1271,20 +1280,41 @@ function createRuntimeConfigStub(
   return {
     paths: {
       workspaceRoot: "C:\\workspace",
-      alyceDirectory: "C:\\workspace\\.alyce",
+      projectAlyceDirectory: "C:\\workspace\\.alyce",
+      alyceDirectory: "C:\\Users\\Single\\.alyce\\workspace-state\\workspace",
       connectionConfigPath: "C:\\workspace\\.alyce\\config.json",
       settingsConfigPath: "C:\\workspace\\.alyce\\settings.json",
+      projectSkillsDirectory: "C:\\workspace\\.alyce\\skills",
+      projectAgentsDirectory: "C:\\workspace\\.alyce\\agents",
       projectPluginsDirectory: "C:\\workspace\\.alyce\\plugins",
       userAlyceDirectory: "C:\\Users\\Single\\.alyce",
       userConnectionConfigPath: "C:\\Users\\Single\\.alyce\\config.json",
       userSettingsConfigPath: "C:\\Users\\Single\\.alyce\\settings.json",
-      userPluginsDirectory: "C:\\Users\\Single\\.alyce\\plugins"
+      userSkillsDirectory: "C:\\Users\\Single\\.alyce\\skills",
+      userPluginsDirectory: "C:\\Users\\Single\\.alyce\\plugins",
+      workspaceRuntimeDirectory: "C:\\Users\\Single\\.alyce\\workspace-state\\workspace",
+      memoryDirectory: "C:\\Users\\Single\\.alyce\\workspace-state\\workspace\\memory",
+      sessionsDirectory: "C:\\Users\\Single\\.alyce\\workspace-state\\workspace\\sessions",
+      backgroundProcessesDirectory: "C:\\Users\\Single\\.alyce\\workspace-state\\workspace\\background-processes",
+      mcpOutputDirectory: "C:\\Users\\Single\\.alyce\\workspace-state\\workspace\\mcp-output",
+      snapshotsDirectory: "C:\\Users\\Single\\.alyce\\workspace-state\\workspace\\snapshots",
+      gitSnapshotsDirectory: "C:\\Users\\Single\\.alyce\\workspace-state\\workspace\\snapshots\\git",
+      fileHistoryDirectory: "C:\\Users\\Single\\.alyce\\workspace-state\\workspace\\file-history",
+      tasksDirectory: "C:\\Users\\Single\\.alyce\\workspace-state\\workspace\\tasks",
+      usageLogPath: "C:\\Users\\Single\\.alyce\\workspace-state\\workspace\\usage.jsonl",
+      projectTrustStorePath: "C:\\Users\\Single\\.alyce\\trusted-projects.json"
     },
     bootstrap: {
       createdPaths: [],
       existingPaths: [],
       failedPaths: [],
       firstRun: false
+    },
+    projectTrust: {
+      workspaceRoot: "C:\\workspace",
+      projectKey: "workspace",
+      trusted: false,
+      storePath: "C:\\Users\\Single\\.alyce\\trusted-projects.json"
     },
     connection: connectionState.effective,
     connectionState,

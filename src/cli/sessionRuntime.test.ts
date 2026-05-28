@@ -22,6 +22,7 @@ async function runTests() {
   testPersistedSubagentProgressIsLimited();
   await testProviderConnectionWritesAuthStoreNotProjectConfig();
   await testRuntimeAppliesGitHubCopilotOAuthFromAuthStore();
+  await testRuntimeLoadsUserSkillsFromUserAlyceRoot();
   await testRuntimeRefreshesCurrentProviderModelsInMemory();
   console.log("sessionRuntime tests passed");
 }
@@ -258,6 +259,42 @@ async function testRuntimeAppliesGitHubCopilotOAuthFromAuthStore() {
     assert.equal(profile?.baseURL, "https://copilot-api.ghe.example.com");
     assert.equal(profile?.headers?.Authorization, "Bearer refresh-token");
     assert.equal(runtime.hasConnectionConfig(), true);
+  } finally {
+    await runtime?.flushSessionHistory();
+    os.homedir = originalHomedir;
+  }
+}
+
+async function testRuntimeLoadsUserSkillsFromUserAlyceRoot() {
+  const originalHomedir = os.homedir;
+  const homeDirectory = await fs.mkdtemp(path.join(os.tmpdir(), "alyce-session-runtime-home-"));
+  const workspaceRoot = await fs.mkdtemp(path.join(os.tmpdir(), "alyce-session-runtime-workspace-"));
+  os.homedir = () => homeDirectory;
+  let runtime: Awaited<ReturnType<typeof createSessionRuntime>> | null = null;
+
+  try {
+    const skillDirectory = path.join(homeDirectory, ".alyce", "skills", "user-check");
+    await fs.mkdir(skillDirectory, { recursive: true });
+    await fs.writeFile(
+      path.join(skillDirectory, "SKILL.md"),
+      [
+        "---",
+        "name: user-check",
+        "description: Verify user skill root.",
+        "---",
+        "Use the user skill root."
+      ].join("\n"),
+      "utf8"
+    );
+
+    runtime = await createSessionRuntime([], {
+      AGENT_WORKSPACE: workspaceRoot
+    });
+
+    const catalog = await runtime.listSkills();
+    const userSkill = catalog.skills.find((skill) => skill.name === "user-check");
+    assert.equal(userSkill?.source, "user");
+    assert.equal(userSkill?.skillFilePath, path.join(skillDirectory, "SKILL.md"));
   } finally {
     await runtime?.flushSessionHistory();
     os.homedir = originalHomedir;

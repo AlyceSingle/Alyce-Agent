@@ -436,6 +436,7 @@ export interface McpToolRuntime {
     }
   ) => Promise<McpReadResourceResult>;
   reloadConfig: () => Promise<void>;
+  setProjectTrusted?: (trusted: boolean) => Promise<void>;
   addServer: (
     name: string,
     config: McpServerConfig,

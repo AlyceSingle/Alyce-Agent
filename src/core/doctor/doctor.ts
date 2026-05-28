@@ -8,6 +8,7 @@ import type {
   SessionSettings,
   SessionSettingsState
 } from "../../config/runtime.js";
+import type { ProjectTrustState } from "../trust/projectTrustStore.js";
 import { getModelAdapterAvailability } from "../api/modelAdapters.js";
 import type { ConnectorPluginDiagnostic } from "../providers/pluginConnectors.js";
 import { resolveModelProfile } from "../providers/resolveModel.js";
@@ -43,6 +44,7 @@ export interface DoctorRuntimeInput {
   allowedRoots: string[];
   requestPatchCount: number;
   providerPluginDiagnostics?: ConnectorPluginDiagnostic[];
+  projectTrust?: ProjectTrustState;
   snapshotDiagnostics: DoctorSnapshotDiagnostics;
 }
 
@@ -103,12 +105,12 @@ export async function runDoctorDiagnostics(
   checks.push(checkEndpointAndModel(input.connectionState, input.currentModel));
   checks.push(checkSettings(input.settingsState, input.settings));
   checks.push(checkApprovalRisk(input.settings, input.allowedRoots));
-  checks.push(await checkMcpConfig(input.workspaceRoot, input.paths));
-  checks.push(await checkSkills(input.workspaceRoot, input.paths));
+  checks.push(await checkMcpConfig(input.workspaceRoot, input.paths, input.projectTrust));
+  checks.push(await checkSkills(input.paths, input.projectTrust));
   checks.push(checkProviderPlugins(input.providerPluginDiagnostics ?? []));
   checks.push(await checkExecutable("rg", ["--version"], "ripgrep", "Install ripgrep and ensure rg is on PATH.", runCommand, "fail"));
   checks.push(await checkExecutable("git", ["--version"], "git", "Install Git and ensure git is on PATH.", runCommand, "warn"));
-  checks.push(await checkAlyceDirectoryWritable(input.paths.alyceDirectory));
+  checks.push(await checkAlyceDirectoryWritable(input.paths.workspaceRuntimeDirectory));
   checks.push(checkSnapshotStore(input.snapshotDiagnostics));
   checks.push(checkRequestPatches(input.requestPatchCount));
 
@@ -550,7 +552,8 @@ function checkApprovalRisk(settings: SessionSettings, allowedRoots: string[]): D
 
 async function checkMcpConfig(
   workspaceRoot: string,
-  paths: RuntimePaths
+  paths: RuntimePaths,
+  projectTrust?: ProjectTrustState
 ): Promise<DoctorCheck> {
   const configPaths = getMcpConfigPaths(workspaceRoot, path.dirname(paths.userAlyceDirectory));
   const [projectFile, localFile, userFile] = await Promise.all([
@@ -567,7 +570,8 @@ async function checkMcpConfig(
 
   try {
     const state = await loadMcpConfigState(workspaceRoot, {
-      homeDirectory: path.dirname(paths.userAlyceDirectory)
+      homeDirectory: path.dirname(paths.userAlyceDirectory),
+      trustedProject: projectTrust?.trusted !== false
     });
     const serverNames = Object.keys(state.effective.mcpServers);
     return {
@@ -579,9 +583,15 @@ async function checkMcpConfig(
         : anyConfigExists
           ? "MCP config files are valid, but no servers are configured yet."
           : "No MCP config files found yet.",
-      details: serverNames.length > 0
-        ? [...details, ...serverNames.map((serverName) => `Server: ${serverName}`)]
-        : details,
+      details: [
+        ...details,
+        ...(projectTrust?.trusted === false
+          ? ["Project MCP config is present but disabled until this workspace is trusted."]
+          : []),
+        ...(serverNames.length > 0
+          ? serverNames.map((serverName) => `Server: ${serverName}`)
+          : [])
+      ],
       ...(anyConfigExists
         ? {}
         : { suggestion: "Use /mcp add to create the first MCP server entry." })
@@ -599,11 +609,11 @@ async function checkMcpConfig(
 }
 
 async function checkSkills(
-  workspaceRoot: string,
-  paths: RuntimePaths
+  paths: RuntimePaths,
+  projectTrust?: ProjectTrustState
 ): Promise<DoctorCheck> {
-  const projectRoot = path.join(workspaceRoot, ".alyce", "skills");
-  const userRoot = path.join(paths.userAlyceDirectory, "skills");
+  const projectRoot = paths.projectSkillsDirectory;
+  const userRoot = paths.userSkillsDirectory;
   const [projectAccess, userAccess] = await Promise.all([
     checkDirectory(projectRoot),
     checkDirectory(userRoot)
@@ -622,10 +632,16 @@ async function checkSkills(
     };
   }
 
-  const discovery = await discoverSkills({ projectRoot, userRoot });
+  const discovery = await discoverSkills({
+    projectRoot: projectTrust?.trusted === false ? path.join(paths.workspaceRuntimeDirectory, "__disabled-project-skills") : projectRoot,
+    userRoot
+  });
   const details = [
     formatDirectoryStatus("Project root", projectAccess),
     formatDirectoryStatus("User root", userAccess),
+    ...(projectTrust?.trusted === false && projectAccess.exists
+      ? ["Project skills are present but disabled until this workspace is trusted."]
+      : []),
     ...discovery.duplicateWarnings
   ];
 
@@ -702,30 +718,30 @@ async function checkAlyceDirectoryWritable(alyceDirectory: string): Promise<Doct
     if (!stat.isDirectory()) {
       return {
         id: "storage.alyce",
-        title: ".alyce storage",
+        title: "Runtime storage",
         status: "fail",
-        summary: ".alyce path exists but is not a directory.",
+        summary: "Runtime storage path exists but is not a directory.",
         details: [alyceDirectory],
-        suggestion: "Remove the file at .alyce or move Alyce to a valid workspace."
+        suggestion: "Remove the file or move Alyce to a valid workspace."
       };
     }
 
     await fs.access(alyceDirectory, fsConstants.W_OK);
     return {
       id: "storage.alyce",
-      title: ".alyce storage",
+      title: "Runtime storage",
       status: "ok",
-      summary: ".alyce directory is writable.",
+      summary: "Runtime storage directory is writable.",
       details: [alyceDirectory]
     };
   } catch (error) {
     return {
       id: "storage.alyce",
-      title: ".alyce storage",
+      title: "Runtime storage",
       status: "fail",
-      summary: ".alyce directory is missing or not writable.",
+      summary: "Runtime storage directory is missing or not writable.",
       details: [formatError(error), alyceDirectory],
-      suggestion: "Fix directory permissions or start Alyce in a writable workspace."
+      suggestion: "Fix directory permissions or start Alyce with a writable user config directory."
     };
   }
 }

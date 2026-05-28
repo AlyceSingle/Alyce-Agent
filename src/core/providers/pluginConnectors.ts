@@ -26,6 +26,7 @@ export interface ConnectorPluginLoadOptions {
   userPluginsDirectory: string;
   projectPluginsDirectory?: string;
   enableProjectPlugins?: boolean;
+  projectTrustDisabledReason?: string;
 }
 
 const PROVIDER_KINDS: ProviderKind[] = [
@@ -143,17 +144,24 @@ export async function loadConnectorPlugins(
   loaded.push(...await loadPluginDirectory(
     options.userPluginsDirectory,
     "user",
-    true,
     diagnostics
   ));
 
   if (options.projectPluginsDirectory) {
-    loaded.push(...await loadPluginDirectory(
-      options.projectPluginsDirectory,
-      "project",
-      options.enableProjectPlugins === true,
-      diagnostics
-    ));
+    if (options.enableProjectPlugins === true) {
+      loaded.push(...await loadPluginDirectory(
+        options.projectPluginsDirectory,
+        "project",
+        diagnostics
+      ));
+    } else if (await pathExists(options.projectPluginsDirectory)) {
+      diagnostics.push({
+        severity: "info",
+        source: "project",
+        pluginPath: options.projectPluginsDirectory,
+        message: options.projectTrustDisabledReason ?? "Project connector plugins are disabled by default."
+      });
+    }
   }
 
   const connectors: ProviderConnector[] = [];
@@ -184,7 +192,6 @@ export async function loadConnectorPlugins(
 async function loadPluginDirectory(
   root: string,
   source: ConnectorPluginSource,
-  enabled: boolean,
   diagnostics: ConnectorPluginDiagnostic[]
 ) {
   const entries = await readDirectoryEntries(root, source, diagnostics);
@@ -203,16 +210,6 @@ async function loadPluginDirectory(
     }
 
     const pluginPath = path.join(root, entry.name);
-    if (!enabled) {
-      diagnostics.push({
-        severity: "info",
-        source,
-        pluginPath,
-        message: "Project connector plugins are disabled by default."
-      });
-      continue;
-    }
-
     const manifestPath = await findManifestPath(pluginPath);
     if (!manifestPath) {
       diagnostics.push({

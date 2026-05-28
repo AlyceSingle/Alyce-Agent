@@ -72,6 +72,10 @@ export class SkillService {
     return this.manager.getRoots();
   }
 
+  setProjectTrusted(trusted: boolean) {
+    this.manager.setProjectTrusted(trusted);
+  }
+
   async discoverSkills(options: {
     activationContext?: SkillActivationContext;
   } = {}): Promise<SkillCatalog> {

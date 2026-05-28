@@ -8,6 +8,7 @@ import { loadConnectorPlugins } from "./pluginConnectors.js";
 
 async function runTests() {
   await testUserPluginLoadsDeclarativeConnector();
+  await testMissingProjectPluginDirectoryDoesNotEmitSkipDiagnostic();
   await testProjectPluginsAreSkippedByDefault();
   await testInvalidPluginReportsDiagnosticWithoutBlockingValidPlugins();
   console.log("plugin connector tests passed");
@@ -89,6 +90,7 @@ async function testProjectPluginsAreSkippedByDefault() {
   });
   assert.equal(skipped.connectors.length, 0);
   assert.match(skipped.diagnostics[0]?.message ?? "", /disabled by default/);
+  assert.equal(skipped.diagnostics[0]?.pluginPath, projectPlugins);
 
   const enabled = await loadConnectorPlugins({
     userPluginsDirectory: path.join(root, "user-plugins"),
@@ -96,6 +98,17 @@ async function testProjectPluginsAreSkippedByDefault() {
     enableProjectPlugins: true
   });
   assert.equal(enabled.connectors[0]?.id, "project-provider");
+}
+
+async function testMissingProjectPluginDirectoryDoesNotEmitSkipDiagnostic() {
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), "alyce-plugin-project-missing-"));
+  const result = await loadConnectorPlugins({
+    userPluginsDirectory: path.join(root, "user-plugins"),
+    projectPluginsDirectory: path.join(root, ".alyce", "plugins")
+  });
+
+  assert.equal(result.connectors.length, 0);
+  assert.equal(result.diagnostics.length, 0);
 }
 
 async function testInvalidPluginReportsDiagnosticWithoutBlockingValidPlugins() {

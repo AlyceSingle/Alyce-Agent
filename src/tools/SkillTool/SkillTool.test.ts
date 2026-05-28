@@ -22,6 +22,7 @@ async function runTests() {
   await testExecutionIncludesPluginIdAndDependencyWarnings();
   await testExecutionWarnsWhenMcpToolIsMissing();
   await testSuccessfulExecutionReturnsSupplementalMessage();
+  await testProjectSkillRequiresTrustedWorkspace();
   console.log("SkillTool tests passed");
 }
 
@@ -150,7 +151,7 @@ async function testUnknownSkillListsAvailableSkills() {
 
   const result = await executeSkillTool(
     { name: "missing" },
-    createTestContext(workspaceRoot)
+    createTestContext(workspaceRoot, { trustedProject: true })
   ) as {
     status: string;
     availableSkills: Array<{ name: string }>;
@@ -181,6 +182,7 @@ async function testExecutionIncludesPluginIdAndDependencyWarnings() {
   const result = await executeSkillTool(
     { name: "known" },
     createTestContext(workspaceRoot, {
+      trustedProject: true,
       mcpRuntime: createMcpRuntime({
         getStatus: async () => ({ servers: [] })
       })
@@ -215,6 +217,7 @@ async function testExecutionWarnsWhenMcpToolIsMissing() {
   const result = await executeSkillTool(
     { name: "deploy" },
     createTestContext(workspaceRoot, {
+      trustedProject: true,
       mcpRuntime: createMcpRuntime({
         getStatus: async () => ({
           servers: [{
@@ -267,7 +270,7 @@ async function testSuccessfulExecutionReturnsSupplementalMessage() {
 
   const result = await executeSkillTool(
     { name: "known" },
-    createTestContext(workspaceRoot)
+    createTestContext(workspaceRoot, { trustedProject: true })
   );
 
   assert.equal(isToolResultEnvelope(result), true);
@@ -276,6 +279,25 @@ async function testSuccessfulExecutionReturnsSupplementalMessage() {
   assert.equal(message?.role, "user");
   assert.equal(message?.name, "alyce_skill_context");
   assert.match(String(message?.content), /<skill_content name="known">/);
+}
+
+async function testProjectSkillRequiresTrustedWorkspace() {
+  const tempRoot = await createTempRoot();
+  const workspaceRoot = path.join(tempRoot, "workspace");
+  await writeSkill(path.join(workspaceRoot, ".alyce", "skills", "known"), "known", "Known skill");
+
+  const result = await executeSkillTool(
+    { name: "known" },
+    createTestContext(workspaceRoot)
+  ) as {
+    status: string;
+    error: string;
+    availableSkills: Array<{ name: string }>;
+  };
+
+  assert.equal(result.status, "error");
+  assert.equal(result.error, "unknown_skill");
+  assert.equal(result.availableSkills.some((skill) => skill.name === "known"), false);
 }
 
 function formatFixtureSkill(name: string, description: string) {

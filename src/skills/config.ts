@@ -41,9 +41,13 @@ export function getSkillSettingsPaths(
   };
 }
 
-export async function loadSkillSettings(paths: SkillSettingsPaths): Promise<SkillSettingsState> {
+export async function loadSkillSettings(
+  paths: SkillSettingsPaths,
+  options: { trustedProject?: boolean } = {}
+): Promise<SkillSettingsState> {
+  const trustedProject = options.trustedProject !== false;
   const [projectRaw, userRaw] = await Promise.all([
-    readSkillSettingsFile(paths.projectPath),
+    trustedProject ? readSkillSettingsFile(paths.projectPath) : Promise.resolve({}),
     readSkillSettingsFile(paths.userPath)
   ]);
   const project = normalizeSkillSettingsLayer(projectRaw);

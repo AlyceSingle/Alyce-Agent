@@ -188,8 +188,13 @@ export function formatSubagentList() {
   ).join("\n");
 }
 
-export async function loadSubagentDefinitions(workspaceRoot: string): Promise<SubagentDefinition[]> {
-  const custom = await loadCustomSubagents(workspaceRoot);
+export async function loadSubagentDefinitions(
+  workspaceRoot: string,
+  options: { trustedProject?: boolean } = {}
+): Promise<SubagentDefinition[]> {
+  const custom = options.trustedProject === false
+    ? []
+    : await loadCustomSubagents(workspaceRoot);
   const merged = new Map<string, SubagentDefinition>();
   for (const agent of SUBAGENT_DEFINITIONS) {
     merged.set(agent.type, { ...agent, source: "built-in" });
@@ -215,9 +220,10 @@ export function isInternalSubagentType(type: string) {
 
 export async function loadSubagentDefinition(
   workspaceRoot: string,
-  type: string
+  type: string,
+  options: { trustedProject?: boolean } = {}
 ): Promise<SubagentDefinition | undefined> {
-  const definitions = await loadSubagentDefinitions(workspaceRoot);
+  const definitions = await loadSubagentDefinitions(workspaceRoot, options);
   return definitions.find((agent) => agent.type === type);
 }
 

@@ -29,7 +29,7 @@ export const ReadMcpResourceInputSchema = z
 
 export const READ_MCP_RESOURCE_TOOL_DESCRIPTION = [
   "Read a resource from a configured MCP server by server name and URI.",
-  "Text resources are returned inline; binary blob resources are written under .alyce/mcp-output/ and returned as file paths with MIME and size metadata."
+  "Text resources are returned inline; binary blob resources are written to the configured MCP output directory and returned as file paths with MIME and size metadata."
 ].join("\n");
 
 export async function executeReadMcpResourceTool(

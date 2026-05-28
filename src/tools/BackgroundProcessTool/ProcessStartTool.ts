@@ -113,7 +113,7 @@ export async function executeProcessStartTool(
       `Startup observation window: ${startupTimeoutMs} ms`,
       "This command may open a local server port.",
       `Command: ${input.command}`,
-      `Logs: ${path.join(".alyce", "background-processes", "<process_id>")}`,
+      `Logs: runtime background-process storage for process <process_id>`,
       "Stop command: ProcessStop with the returned process_id",
       ...formatCommandSafetyDetails(safety)
     ],

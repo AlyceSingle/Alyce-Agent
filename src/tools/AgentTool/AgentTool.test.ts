@@ -31,6 +31,7 @@ async function runTests() {
   testBuiltInVerifyAgentDefinition();
   testAutoReviewerIsInternalOnly();
   await testCustomAgentCannotOverrideAutoReviewer();
+  await testCustomAgentsRequireTrustedWorkspace();
   await testRequiresRuntimeHook();
   await testForegroundRequiresRuntimeHookBeforeApproval();
   await testBackgroundRequiresRuntimeHookBeforeApproval();
@@ -103,6 +104,35 @@ async function testCustomAgentCannotOverrideAutoReviewer() {
     assert.equal(autoReviewer.internal, true);
     assert.equal(autoReviewer.label, "Auto Reviewer");
     assert.deepEqual(autoReviewer.allowedTools, []);
+  } finally {
+    await fs.rm(workspaceRoot, { recursive: true, force: true });
+  }
+}
+
+async function testCustomAgentsRequireTrustedWorkspace() {
+  const workspaceRoot = await fs.mkdtemp(path.join(tmpdir(), "alyce-agent-tool-"));
+  try {
+    await fs.mkdir(path.join(workspaceRoot, ".alyce", "agents"), { recursive: true });
+    await fs.writeFile(
+      path.join(workspaceRoot, ".alyce", "agents", "custom.json"),
+      JSON.stringify({
+        type: "custom",
+        description: "Custom agent",
+        allowedTools: ["Read"],
+        systemPrompt: "Custom prompt."
+      }),
+      "utf8"
+    );
+
+    const untrusted = await loadSubagentDefinitions(workspaceRoot, {
+      trustedProject: false
+    });
+    const trusted = await loadSubagentDefinitions(workspaceRoot, {
+      trustedProject: true
+    });
+
+    assert.equal(untrusted.some((agent) => agent.type === "custom"), false);
+    assert.equal(trusted.some((agent) => agent.type === "custom"), true);
   } finally {
     await fs.rm(workspaceRoot, { recursive: true, force: true });
   }

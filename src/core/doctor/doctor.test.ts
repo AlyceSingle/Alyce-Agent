@@ -332,6 +332,7 @@ async function createWorkspace(options: { includeDist: boolean }): Promise<strin
     await fs.mkdir(path.join(workspaceRoot, "dist"), { recursive: true });
     await fs.writeFile(path.join(workspaceRoot, "dist", "index.js"), "export {};\n", "utf8");
   }
+  await fs.mkdir(createRuntimePathsForTest(workspaceRoot).workspaceRuntimeDirectory, { recursive: true });
   return workspaceRoot;
 }
 
@@ -398,7 +399,19 @@ function createRuntimePathsForTest(workspaceRoot: string) {
     userAlyceDirectory: path.join(userHomeDirectory, ".alyce"),
     userConnectionConfigPath: path.join(userHomeDirectory, ".alyce", "config.json"),
     userSettingsConfigPath: path.join(userHomeDirectory, ".alyce", "settings.json"),
-    userPluginsDirectory: path.join(userHomeDirectory, ".alyce", "plugins")
+    userSkillsDirectory: path.join(userHomeDirectory, ".alyce", "skills"),
+    userPluginsDirectory: path.join(userHomeDirectory, ".alyce", "plugins"),
+    workspaceRuntimeDirectory: path.join(userHomeDirectory, ".alyce", "workspace-state", "workspace"),
+    memoryDirectory: path.join(userHomeDirectory, ".alyce", "workspace-state", "workspace", "memory"),
+    sessionsDirectory: path.join(userHomeDirectory, ".alyce", "workspace-state", "workspace", "sessions"),
+    backgroundProcessesDirectory: path.join(userHomeDirectory, ".alyce", "workspace-state", "workspace", "background-processes"),
+    mcpOutputDirectory: path.join(userHomeDirectory, ".alyce", "workspace-state", "workspace", "mcp-output"),
+    snapshotsDirectory: path.join(userHomeDirectory, ".alyce", "workspace-state", "workspace", "snapshots"),
+    gitSnapshotsDirectory: path.join(userHomeDirectory, ".alyce", "workspace-state", "workspace", "snapshots", "git"),
+    fileHistoryDirectory: path.join(userHomeDirectory, ".alyce", "workspace-state", "workspace", "file-history"),
+    tasksDirectory: path.join(userHomeDirectory, ".alyce", "workspace-state", "workspace", "tasks"),
+    usageLogPath: path.join(userHomeDirectory, ".alyce", "workspace-state", "workspace", "usage.jsonl"),
+    projectTrustStorePath: path.join(userHomeDirectory, ".alyce", "trusted-projects.json")
   };
 }
 

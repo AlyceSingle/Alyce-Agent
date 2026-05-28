@@ -64,6 +64,15 @@ function testParserHandlesRepresentedCommands() {
     input: "/permissions default",
     message: "Unsupported /permissions argument. Use /permissions."
   });
+  assert.deepEqual(parseReplCommand("/trust"), {
+    type: "project-trust-set",
+    trusted: true
+  });
+  assert.deepEqual(parseReplCommand("/trust status"), { type: "trust-status" });
+  assert.deepEqual(parseReplCommand("/untrust"), {
+    type: "project-trust-set",
+    trusted: false
+  });
   assert.deepEqual(parseReplCommand("/setup"), {
     type: "command-error",
     input: "/setup",

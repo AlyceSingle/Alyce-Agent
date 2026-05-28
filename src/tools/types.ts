@@ -197,6 +197,7 @@ export interface FileReadState {
 export interface ToolExecutionContext {
   workspaceRoot: string;
   allowedRoots: string[];
+  trustedProject?: boolean;
   requestApproval: (request: ToolApprovalRequest) => Promise<boolean>;
   askUserQuestions: (
     request: AskUserQuestionRequest,

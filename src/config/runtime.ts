@@ -28,6 +28,11 @@ import {
 import { getBuiltInProviderConnectors } from "../core/providers/connectors/index.js";
 import type { ProviderConnector } from "../core/providers/providerAuth.js";
 import type { ProviderProfileMap } from "../core/providers/types.js";
+import {
+  getProjectTrustKey,
+  getProjectTrustState,
+  type ProjectTrustState
+} from "../core/trust/projectTrustStore.js";
 
 export interface PromptOverrideConfig {
   languagePreference?: string;
@@ -139,14 +144,29 @@ export interface SessionSettingsState {
 
 export interface RuntimePaths {
   workspaceRoot: string;
+  projectAlyceDirectory: string;
   alyceDirectory: string;
   connectionConfigPath: string;
   settingsConfigPath: string;
+  projectSkillsDirectory: string;
+  projectAgentsDirectory: string;
   projectPluginsDirectory: string;
   userAlyceDirectory: string;
   userConnectionConfigPath: string;
   userSettingsConfigPath: string;
+  userSkillsDirectory: string;
   userPluginsDirectory: string;
+  workspaceRuntimeDirectory: string;
+  memoryDirectory: string;
+  sessionsDirectory: string;
+  backgroundProcessesDirectory: string;
+  mcpOutputDirectory: string;
+  snapshotsDirectory: string;
+  gitSnapshotsDirectory: string;
+  fileHistoryDirectory: string;
+  tasksDirectory: string;
+  usageLogPath: string;
+  projectTrustStorePath: string;
 }
 
 export interface RuntimeBootstrapFailure {
@@ -164,6 +184,7 @@ export interface RuntimeBootstrapReport {
 export interface RuntimeConfig {
   paths: RuntimePaths;
   bootstrap: RuntimeBootstrapReport;
+  projectTrust: ProjectTrustState;
   connection: ConnectionConfig;
   connectionState: ConnectionConfigState;
   settings: SessionSettings;
@@ -311,16 +332,28 @@ export async function loadRuntimeConfig(
   const workspaceRoot = path.resolve(getArgValue(argv, "--cwd") || env.AGENT_WORKSPACE || ".");
   const paths = getRuntimePaths(workspaceRoot);
   const bootstrap = await ensureRuntimeStoragePaths(paths);
+  const projectTrust = await getProjectTrustState(workspaceRoot, {
+    userAlyceDirectory: paths.userAlyceDirectory
+  });
+  const projectTrusted = projectTrust.trusted;
   const [projectConnection, userConnection, projectSettingsFile, userSettingsFile, pluginResult] =
     await Promise.all([
-      readJsonConfig(paths.connectionConfigPath, ConnectionConfigFileSchema),
+      projectTrusted
+        ? readJsonConfig(paths.connectionConfigPath, ConnectionConfigFileSchema)
+        : Promise.resolve({} as Partial<ConnectionConfigLayer>),
       readJsonConfig(paths.userConnectionConfigPath, ConnectionConfigFileSchema),
-      readJsonConfig(paths.settingsConfigPath, SessionSettingsFileSchema),
+      projectTrusted
+        ? readJsonConfig(paths.settingsConfigPath, SessionSettingsFileSchema)
+        : Promise.resolve({} as Partial<SessionSettingsFile>),
       readJsonConfig(paths.userSettingsConfigPath, SessionSettingsFileSchema),
       loadConnectorPlugins({
         userPluginsDirectory: paths.userPluginsDirectory,
         projectPluginsDirectory: paths.projectPluginsDirectory,
-        enableProjectPlugins: parseBoolean(env.ALYCE_ENABLE_PROJECT_PROVIDER_PLUGINS, false)
+        enableProjectPlugins: projectTrusted &&
+          parseBoolean(env.ALYCE_ENABLE_PROJECT_PROVIDER_PLUGINS, false),
+        projectTrustDisabledReason: projectTrusted
+          ? undefined
+          : "Project connector plugins are disabled until this workspace is trusted."
       })
     ]);
   const projectSettings = normalizeSessionSettingsFile(projectSettingsFile);
@@ -343,6 +376,7 @@ export async function loadRuntimeConfig(
   return {
     paths,
     bootstrap,
+    projectTrust,
     connection: connectionState.effective,
     connectionState,
     settings: settingsState.effective,
@@ -355,7 +389,10 @@ export async function loadRuntimeConfig(
     providerPluginDiagnostics: pluginResult.diagnostics,
     requestPatches: resolveRequestPatches(argv, env),
     memory: {
-      directory: env.AGENT_MEMORY_DIR || ".alyce/memory",
+      directory: env.AGENT_MEMORY_DIR || configRelativePath(
+        paths.workspaceRoot,
+        paths.memoryDirectory
+      ),
       fileName: env.AGENT_MEMORY_FILE || "MEMORY.md",
       sessionMemoryFileName: env.AGENT_SESSION_MEMORY_FILE || "SESSION_MEMORY.md",
       maxSessionEntries: parsePositiveInt(env.AGENT_MEMORY_MAX_SESSION, 30),
@@ -380,19 +417,40 @@ export async function loadRuntimeConfig(
 }
 
 export function getRuntimePaths(workspaceRoot: string): RuntimePaths {
-  const alyceDirectory = path.join(workspaceRoot, ".alyce");
+  const resolvedWorkspaceRoot = path.resolve(workspaceRoot);
+  const projectAlyceDirectory = path.join(resolvedWorkspaceRoot, ".alyce");
   const userAlyceDirectory = path.join(os.homedir(), ".alyce");
+  const workspaceRuntimeDirectory = path.join(
+    userAlyceDirectory,
+    "workspace-state",
+    getProjectTrustKey(resolvedWorkspaceRoot)
+  );
 
   return {
-    workspaceRoot,
-    alyceDirectory,
-    connectionConfigPath: path.join(alyceDirectory, "config.json"),
-    settingsConfigPath: path.join(alyceDirectory, "settings.json"),
-    projectPluginsDirectory: path.join(alyceDirectory, "plugins"),
+    workspaceRoot: resolvedWorkspaceRoot,
+    projectAlyceDirectory,
+    alyceDirectory: workspaceRuntimeDirectory,
+    connectionConfigPath: path.join(projectAlyceDirectory, "config.json"),
+    settingsConfigPath: path.join(projectAlyceDirectory, "settings.json"),
+    projectSkillsDirectory: path.join(projectAlyceDirectory, "skills"),
+    projectAgentsDirectory: path.join(projectAlyceDirectory, "agents"),
+    projectPluginsDirectory: path.join(projectAlyceDirectory, "plugins"),
     userAlyceDirectory,
     userConnectionConfigPath: path.join(userAlyceDirectory, "config.json"),
     userSettingsConfigPath: path.join(userAlyceDirectory, "settings.json"),
-    userPluginsDirectory: path.join(userAlyceDirectory, "plugins")
+    userSkillsDirectory: path.join(userAlyceDirectory, "skills"),
+    userPluginsDirectory: path.join(userAlyceDirectory, "plugins"),
+    workspaceRuntimeDirectory,
+    memoryDirectory: path.join(workspaceRuntimeDirectory, "memory"),
+    sessionsDirectory: path.join(workspaceRuntimeDirectory, "sessions"),
+    backgroundProcessesDirectory: path.join(workspaceRuntimeDirectory, "background-processes"),
+    mcpOutputDirectory: path.join(workspaceRuntimeDirectory, "mcp-output"),
+    snapshotsDirectory: path.join(workspaceRuntimeDirectory, "snapshots"),
+    gitSnapshotsDirectory: path.join(workspaceRuntimeDirectory, "snapshots", "git"),
+    fileHistoryDirectory: path.join(workspaceRuntimeDirectory, "file-history"),
+    tasksDirectory: path.join(workspaceRuntimeDirectory, "tasks"),
+    usageLogPath: path.join(workspaceRuntimeDirectory, "usage.jsonl"),
+    projectTrustStorePath: path.join(userAlyceDirectory, "trusted-projects.json")
   };
 }
 
@@ -1092,26 +1150,24 @@ async function ensureRuntimeStoragePaths(paths: RuntimePaths): Promise<RuntimeBo
     createdPaths,
     existingPaths,
     failedPaths,
-    firstRun: createdPaths.includes(paths.alyceDirectory) || createdPaths.includes(paths.userAlyceDirectory)
+    firstRun: createdPaths.includes(paths.userAlyceDirectory) ||
+      createdPaths.includes(paths.workspaceRuntimeDirectory)
   };
 }
 
 function getRuntimeBootstrapDirectories(paths: RuntimePaths): string[] {
   return [
-    paths.alyceDirectory,
-    path.join(paths.alyceDirectory, "skills"),
-    paths.projectPluginsDirectory,
-    path.join(paths.alyceDirectory, "agents"),
-    path.join(paths.alyceDirectory, "memory"),
-    path.join(paths.alyceDirectory, "sessions"),
-    path.join(paths.alyceDirectory, "background-processes"),
-    path.join(paths.alyceDirectory, "mcp-output"),
-    path.join(paths.alyceDirectory, "snapshots", "git"),
-    path.join(paths.alyceDirectory, "file-history"),
-    path.join(paths.alyceDirectory, "tasks"),
     paths.userAlyceDirectory,
-    path.join(paths.userAlyceDirectory, "skills"),
-    paths.userPluginsDirectory
+    paths.userSkillsDirectory,
+    paths.userPluginsDirectory,
+    paths.workspaceRuntimeDirectory,
+    paths.memoryDirectory,
+    paths.sessionsDirectory,
+    paths.backgroundProcessesDirectory,
+    paths.mcpOutputDirectory,
+    paths.gitSnapshotsDirectory,
+    paths.fileHistoryDirectory,
+    paths.tasksDirectory
   ];
 }
 
@@ -1269,6 +1325,15 @@ function compactObject<T extends object>(value: Partial<T>): Partial<T> {
   return Object.fromEntries(
     Object.entries(value).filter(([, entryValue]) => entryValue !== undefined)
   ) as Partial<T>;
+}
+
+function configRelativePath(workspaceRoot: string, absolutePath: string) {
+  const relative = path.relative(workspaceRoot, absolutePath);
+  if (!relative || relative.startsWith("..") || path.isAbsolute(relative)) {
+    return absolutePath;
+  }
+
+  return relative;
 }
 
 function compactObjectExcept<T extends object>(

@@ -92,6 +92,7 @@ export interface SkillServiceOptions {
   userHomeDirectory?: string;
   promptCharBudget?: number;
   watch?: boolean;
+  trustedProject?: boolean;
 }
 
 export type SkillConfigTarget = "project" | "user";

@@ -61,6 +61,7 @@ export async function executeSkillTool(
 ) {
   const skillService = new SkillService({
     workspaceRoot: context.workspaceRoot,
+    trustedProject: context.trustedProject === true,
     watch: false
   });
   const requestedName = input.name.trim();
