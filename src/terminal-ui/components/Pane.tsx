@@ -1,5 +1,6 @@
 import React from "react";
-import { Box, Text } from "../runtime/ink.js";
+import Box from "../runtime/ink-runtime/components/Box.js";
+import Text from "../runtime/ink-runtime/components/Text.js";
 import { terminalUiTheme } from "../theme/theme.js";
 
 export function Pane(props: {

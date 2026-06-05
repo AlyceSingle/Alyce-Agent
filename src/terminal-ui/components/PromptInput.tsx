@@ -3,7 +3,9 @@ import {
   REPL_COMMAND_DEFINITIONS,
   type ReplCommandDefinition
 } from "../../cli/commandRouter.js";
-import { Box, Text, useTerminalSize } from "../runtime/ink.js";
+import Box from "../runtime/ink-runtime/components/Box.js";
+import Text from "../runtime/ink-runtime/components/Text.js";
+import useTerminalSize from "../runtime/ink-runtime/hooks/use-terminal-size.js";
 import type { TerminalKey } from "../runtime/input.js";
 import { logLayoutTrace } from "../runtime/utils/layoutTrace.js";
 import { terminalUiTheme } from "../theme/theme.js";

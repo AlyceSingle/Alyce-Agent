@@ -90,13 +90,11 @@ import type {
   MemoryVolatileSnapshot,
   SessionMemoryFileState
 } from "../core/memory/types.js";
-import { buildPatchedChatCompletionRequest } from "../core/api/sendChatCompletion.js";
 import { createSkillContextMessage } from "../core/api/generatedMessages.js";
-import {
-  createModelAdapter,
-  getModelAdapterAvailability,
-  type ChatCompletionAdapter,
-  type ChatCompletionTransport
+import { getModelAdapterAvailability } from "../core/api/modelAdapterAvailability.js";
+import type {
+  ChatCompletionAdapter,
+  ChatCompletionTransport
 } from "../core/api/modelAdapters.js";
 import { getFunctionToolNames } from "../core/api/openaiFunctionTools.js";
 import { cloneJson } from "../core/json/clone.js";
@@ -110,7 +108,6 @@ import {
   refreshProviderModels,
   type ProviderModelRefreshResult
 } from "../core/providers/modelDiscovery.js";
-import { runAgentTurn } from "../core/agent/runAgentTurn.js";
 import type { AgentQuerySource } from "../core/agent/querySource.js";
 import { formatUsageReport } from "../core/usage/formatUsage.js";
 import { UsageLedger } from "../core/usage/usageLedger.js";
@@ -141,7 +138,6 @@ import {
 } from "../core/subagent-history/types.js";
 import { formatCurrentDateLabel, formatSystemDateTime, getSystemTimeZone } from "../core/time/systemTime.js";
 import { getReplCommandHelpLines } from "./commandRouter.js";
-import { createProjectMcpRuntime } from "../mcp/runtime.js";
 import type {
   McpConfigMutationResult,
   McpConfigScope,
@@ -155,7 +151,8 @@ import type {
   McpLoginResult,
   McpPromptResult,
   McpServerConfig,
-  McpStatusResult
+  McpStatusResult,
+  McpToolRuntime
 } from "../mcp/types.js";
 import {
   type SkillActivationContext,
@@ -172,8 +169,10 @@ import {
   collectSkillDependencyNotices,
   formatSkillDependencyNotices
 } from "../skills/dependencies.js";
-import { getRegisteredToolNames, getToolSchemasByName } from "../tools/registry.js";
-import { TOOL_SCHEMAS } from "../tools.js";
+import {
+  logStartupTiming,
+  measureStartupTiming
+} from "../core/startup/startupTiming.js";
 import {
   isInternalSubagentType,
   loadSubagentDefinition,
@@ -181,10 +180,11 @@ import {
   type SubagentDefinition
 } from "../tools/AgentTool/agents.js";
 import { isToolSchemaAllowedByPolicy } from "../tools/toolPolicy.js";
-import { isKnownToolName } from "../tools/toolNames.js";
+import { KNOWN_TOOL_NAMES, isKnownToolName } from "../tools/toolNames.js";
 import type {
   AskUserQuestionRequest,
   AskUserQuestionResponse,
+  BackgroundProcessManagerLike,
   FileReadState,
   SubagentProgressEvent,
   SubagentTaskInfo,
@@ -195,9 +195,9 @@ import type {
   SubagentRunResult,
   TodoItem,
   ToolApprovalRequest,
-  ToolExecutionContext
+  ToolExecutionContext,
+  PtyManagerLike
 } from "../tools/types.js";
-import { buildNextTurnContextPreview } from "./contextPreview.js";
 import type { ProviderConnectionPlan } from "./connectCommand.js";
 import { resolveSubagentAllowedRoots } from "./subagentAllowedRoots.js";
 import {
@@ -277,6 +277,14 @@ interface SubagentPromptInput {
   description: string;
   model?: string;
 }
+
+interface LazyProjectMcpRuntimeOptions {
+  homeDirectory?: string;
+  outputDirectory?: string;
+  trusted?: boolean;
+}
+
+type McpInteractionHandlers = Parameters<NonNullable<McpToolRuntime["setInteractionHandlers"]>>[0];
 
 // SessionRuntime 统一封装会话消息、持久化配置、记忆系统和工具执行依赖。
 export interface SessionRuntime {
@@ -471,7 +479,7 @@ export interface SessionRuntime {
     model?: string;
     resolvedModel?: ResolvedModelProfile;
     gcliGeminiCompat?: boolean;
-  }) => ContextBudgetSnapshot;
+  }) => Promise<ContextBudgetSnapshot>;
   recordUsage: (event: UsageRecordInput) => void;
   formatUsageReport: () => string;
   maybeCompactConversation: (options: {
@@ -529,6 +537,230 @@ const HISTORICAL_SUBAGENT_RUNNING_ERROR = "Task is not running in this process."
 function getCurrentDateLabel(now = new Date()) {
   // 不用 UTC 截日，避免本地时间接近零点时把 prompt 里的日期算错一天。
   return formatCurrentDateLabel(now);
+}
+
+function createLazyProjectMcpRuntime(
+  workspaceRoot: string,
+  options: LazyProjectMcpRuntimeOptions = {}
+): McpToolRuntime {
+  let runtimePromise: Promise<McpToolRuntime> | undefined;
+  let loadedRuntime: McpToolRuntime | undefined;
+  let interactionHandlers: McpInteractionHandlers | undefined;
+  let trusted = options.trusted !== false;
+
+  const getRuntime = async () => {
+    if (!runtimePromise) {
+      runtimePromise = measureStartupTiming("sessionRuntime:loadProjectMcpRuntime", async () => {
+        const { createProjectMcpRuntime } = await import("../mcp/runtime.js");
+        const runtime = await createProjectMcpRuntime(workspaceRoot, {
+          ...options,
+          trusted
+        });
+        if (interactionHandlers) {
+          runtime.setInteractionHandlers?.(interactionHandlers);
+        }
+        loadedRuntime = runtime;
+        return runtime;
+      });
+    }
+
+    return runtimePromise;
+  };
+
+  return {
+    getToolSchemas: async (requestOptions = {}) => {
+      if (requestOptions.initialize === false && !runtimePromise) {
+        return [];
+      }
+
+      return (await getRuntime()).getToolSchemas(requestOptions);
+    },
+    canExecuteTool: (toolName) => {
+      return loadedRuntime?.canExecuteTool(toolName) ?? false;
+    },
+    executeNamedToolCall: async (...args) =>
+      (await getRuntime()).executeNamedToolCall(...args),
+    executeToolCall: async (...args) =>
+      (await getRuntime()).executeToolCall(...args),
+    getStatus: async (requestOptions = {}) => {
+      if (requestOptions.initialize === false && !runtimePromise) {
+        return {
+          servers: [],
+          message: "MCP runtime has not been loaded yet."
+        };
+      }
+
+      return (await getRuntime()).getStatus(requestOptions);
+    },
+    listTools: async (requestOptions = {}) =>
+      (await getRuntime()).listTools(requestOptions),
+    listResources: async (requestOptions = {}) =>
+      (await getRuntime()).listResources(requestOptions),
+    listPrompts: async (requestOptions = {}) =>
+      (await getRuntime()).listPrompts(requestOptions),
+    getPrompt: async (...args) =>
+      (await getRuntime()).getPrompt(...args),
+    listResourceTemplates: async (requestOptions = {}) =>
+      (await getRuntime()).listResourceTemplates(requestOptions),
+    readResource: async (...args) =>
+      (await getRuntime()).readResource(...args),
+    reloadConfig: async () =>
+      (await getRuntime()).reloadConfig(),
+    setProjectTrusted: async (nextTrusted) => {
+      trusted = nextTrusted;
+      if (runtimePromise) {
+        await (await getRuntime()).setProjectTrusted?.(nextTrusted);
+      }
+    },
+    addServer: async (...args) =>
+      (await getRuntime()).addServer(...args),
+    removeServer: async (...args) =>
+      (await getRuntime()).removeServer(...args),
+    setServerEnabled: async (...args) =>
+      (await getRuntime()).setServerEnabled(...args),
+    loginServer: async (...args) =>
+      (await getRuntime()).loginServer(...args),
+    setInteractionHandlers: (handlers) => {
+      interactionHandlers = handlers;
+      if (runtimePromise) {
+        void runtimePromise.then((runtime) => {
+          runtime.setInteractionHandlers?.(handlers);
+        });
+      }
+    },
+    close: async () => {
+      if (!runtimePromise) {
+        return;
+      }
+
+      await (await runtimePromise).close();
+    }
+  };
+}
+
+function createLazyBackgroundProcessManager(options: {
+  workspaceRoot: string;
+  storageRoot: string;
+}): BackgroundProcessManagerLike {
+  let managerPromise: Promise<BackgroundProcessManager> | undefined;
+  let loadedManager: BackgroundProcessManager | undefined;
+
+  const getManager = async () => {
+    if (!managerPromise) {
+      managerPromise = measureStartupTiming("sessionRuntime:loadBackgroundProcessManager", async () => {
+        const { BackgroundProcessManager } = await import("../core/background-process/backgroundProcessManager.js");
+        loadedManager = new BackgroundProcessManager(options);
+        return loadedManager;
+      });
+    }
+
+    return managerPromise;
+  };
+
+  return {
+    startProcess: async (startOptions: Parameters<BackgroundProcessManagerLike["startProcess"]>[0]) =>
+      (await getManager()).startProcess(startOptions),
+    listProcesses: (listOptions: Parameters<BackgroundProcessManagerLike["listProcesses"]>[0] = {}) =>
+      loadedManager?.listProcesses(listOptions) ?? [],
+    getProcess: (processId: string) => loadedManager?.getProcess(processId),
+    readProcessLog: async (
+      processId: string,
+      readOptions: Parameters<BackgroundProcessManagerLike["readProcessLog"]>[1] = {}
+    ) =>
+      (await getManager()).readProcessLog(processId, readOptions),
+    stopProcess: async (
+      processId: string,
+      stopOptions: Parameters<BackgroundProcessManagerLike["stopProcess"]>[1] = {}
+    ) => (await getManager()).stopProcess(processId, stopOptions),
+    stopAll: async (
+      stopOptions: Parameters<BackgroundProcessManagerLike["stopAll"]>[0] = {}
+    ) => (await getManager()).stopAll(stopOptions)
+  };
+}
+
+function createLazyPtyManager(options: {
+  workspaceRoot: string;
+}): PtyManagerLike {
+  let managerPromise: Promise<PtyManager> | undefined;
+  let loadedManager: PtyManager | undefined;
+
+  const getManager = async () => {
+    if (!managerPromise) {
+      managerPromise = measureStartupTiming("sessionRuntime:loadPtyManager", async () => {
+        const { PtyManager } = await import("../core/pty/ptyManager.js");
+        loadedManager = new PtyManager(options);
+        return loadedManager;
+      });
+    }
+
+    return managerPromise;
+  };
+
+  return {
+    createSession: (createOptions: Parameters<PtyManagerLike["createSession"]>[0] = {}) =>
+      loadedManager?.createSession(createOptions) ?? (() => {
+        throw new Error("PTY manager has not been loaded yet.");
+      })(),
+    listSessions: () => loadedManager?.listSessions() ?? [],
+    getSession: (id: string) => loadedManager?.getSession(id),
+    readSession: (
+      id: string,
+      readOptions: Parameters<PtyManagerLike["readSession"]>[1] = {}
+    ) =>
+      loadedManager?.readSession(id, readOptions) ?? (() => {
+        throw new Error("PTY manager has not been loaded yet.");
+      })(),
+    writeSession: (id: string, data: string) =>
+      loadedManager?.writeSession(id, data) ?? (() => {
+        throw new Error("PTY manager has not been loaded yet.");
+      })(),
+    resizeSession: (id: string, cols: number, rows: number) =>
+      loadedManager?.resizeSession(id, cols, rows) ?? (() => {
+        throw new Error("PTY manager has not been loaded yet.");
+      })(),
+    closeSession: (id: string) =>
+      loadedManager?.closeSession(id) ?? (() => {
+        throw new Error("PTY manager has not been loaded yet.");
+      })(),
+    closeAll: () => loadedManager?.closeAll() ?? []
+  };
+}
+
+function createLazyModelAdapter(resolvedModel: ResolvedModelProfile): ChatCompletionAdapter {
+  let adapterPromise: Promise<ChatCompletionAdapter> | undefined;
+
+  const getAdapter = async () => {
+    if (!adapterPromise) {
+      adapterPromise = measureStartupTiming("sessionRuntime:loadModelAdapter", async () => {
+        const { createModelAdapter } = await import("../core/api/modelAdapters.js");
+        return createModelAdapter(resolvedModel);
+      });
+    }
+
+    return adapterPromise;
+  };
+
+  return {
+    providerId: resolvedModel.providerId,
+    modelId: resolvedModel.modelId,
+    kind: resolvedModel.kind,
+    sendChatCompletion: async (request, options) =>
+      (await getAdapter()).sendChatCompletion(request, options)
+  };
+}
+
+function getBuiltInToolNames() {
+  return [...KNOWN_TOOL_NAMES].sort((left, right) => left.localeCompare(right));
+}
+
+async function getToolSchemas() {
+  const { TOOL_SCHEMAS } = await import("../tools.js");
+  return TOOL_SCHEMAS;
+}
+
+async function getToolSchemasByNames(toolNames: readonly string[]) {
+  const { getToolSchemasByName } = await import("../tools/registry.js");
+  return getToolSchemasByName(toolNames);
 }
 
 function isUserVisibleSubagentAgentType(agentType: string) {
@@ -591,8 +823,15 @@ export async function createSessionRuntime(
   argv: string[],
   env: NodeJS.ProcessEnv
 ): Promise<SessionRuntime> {
-  const config = await loadRuntimeConfig(argv, env);
-  const authStore = await AuthStore.load(getAuthStorePath(config.paths.userAlyceDirectory));
+  logStartupTiming("sessionRuntime:create:start", {
+    argvLength: argv.length
+  });
+  const config = await measureStartupTiming("sessionRuntime:loadRuntimeConfig", () =>
+    loadRuntimeConfig(argv, env)
+  );
+  const authStore = await measureStartupTiming("sessionRuntime:loadAuthStore", () =>
+    AuthStore.load(getAuthStorePath(config.paths.userAlyceDirectory))
+  );
   const providerAuthService = new ProviderAuthService(config.providerConnectors, authStore);
   let runtimeProviderModelOverrides: Record<string, Record<string, ModelProfile>> = {};
   // 运行时维护一份可变快照，避免直接在初始配置对象上原地修改。
@@ -629,18 +868,18 @@ export async function createSessionRuntime(
   const usageLedger = new UsageLedger({
     jsonlPath: config.paths.usageLogPath
   });
-  const backgroundProcessManager = new BackgroundProcessManager({
+  const backgroundProcessManager = createLazyBackgroundProcessManager({
     workspaceRoot: config.paths.workspaceRoot,
     storageRoot: config.paths.backgroundProcessesDirectory
   });
-  const ptyManager = new PtyManager({
+  const ptyManager = createLazyPtyManager({
     workspaceRoot: config.paths.workspaceRoot
   });
   const sessionMemoryTrigger = new SessionMemoryTrigger(
-    createSessionMemoryTriggerConfig(config, settings)
+    createSessionMemoryConfig(config, settings)
   );
   const sessionMemoryExtractor = new SessionMemoryExtractor(
-    createSessionMemoryExtractorConfig(config, settings)
+    createSessionMemoryConfig(config, settings)
   );
   const sessionHistory = new SessionHistoryStore({
     sessionsDirectory: config.paths.sessionsDirectory,
@@ -650,26 +889,33 @@ export async function createSessionRuntime(
     "session history: " +
     path.relative(config.paths.workspaceRoot, sessionHistory.getCurrentSessionFilePath());
   let latestSnapshotCleanupError: string | undefined;
-  await cleanupSnapshotStorage({
-    alyceDirectory: config.paths.alyceDirectory,
-    retentionDays: settings.snapshot.retentionDays,
-    apply: true,
-    excludePaths: [turnSnapshotService.getGitDirectory()]
-  }).catch((error: unknown) => {
-    latestSnapshotCleanupError = error instanceof Error ? error.message : String(error);
-  });
+  await measureStartupTiming("sessionRuntime:cleanupSnapshotStorage", () =>
+    cleanupSnapshotStorage({
+      alyceDirectory: config.paths.alyceDirectory,
+      retentionDays: settings.snapshot.retentionDays,
+      apply: true,
+      excludePaths: [turnSnapshotService.getGitDirectory()]
+    }).catch((error: unknown) => {
+      latestSnapshotCleanupError = error instanceof Error ? error.message : String(error);
+    })
+  );
   const memoryService = new MemoryService({
     workspaceRoot: config.paths.workspaceRoot,
     ...config.memory
   });
   memoryService.setSessionMemoryEnabled(settings.sessionMemoryEnabled);
   memoryService.setSessionMemorySourcePath(getSessionMemorySourcePath());
-  await memoryService.initialize();
-  const mcpRuntime = await createProjectMcpRuntime(config.paths.workspaceRoot, {
-    homeDirectory: getUserHomeFromAlyceDirectory(config.paths.userAlyceDirectory),
-    outputDirectory: config.paths.mcpOutputDirectory,
-    trusted: projectTrust.trusted
-  });
+  await measureStartupTiming("sessionRuntime:memoryServiceInitialize", () =>
+    memoryService.initialize()
+  );
+  const mcpRuntime = createLazyProjectMcpRuntime(
+    config.paths.workspaceRoot,
+    {
+      homeDirectory: getUserHomeFromAlyceDirectory(config.paths.userAlyceDirectory),
+      outputDirectory: config.paths.mcpOutputDirectory,
+      trusted: projectTrust.trusted
+    }
+  );
   const fileReadState = new Map<string, FileReadState>();
   const subagentSessions = new Map<string, SubagentSession>();
   // 只缓存“当前主会话”的轻量任务索引，用于 TaskList/TaskGet 的跨重启恢复。
@@ -687,10 +933,16 @@ export async function createSessionRuntime(
   });
   const getWorktreesDirectory = () =>
     path.join(os.tmpdir(), "alyce-agent-worktrees", sessionHistory.getCurrentSessionId());
-  await migrateLegacySubagentTasks({
-    storage: subagentTaskStorage,
-    historyStore: subagentHistoryStore
-  }).catch(() => undefined);
+  await measureStartupTiming("sessionRuntime:migrateLegacySubagentTasks", () =>
+    migrateLegacySubagentTasks({
+      storage: subagentTaskStorage,
+      historyStore: subagentHistoryStore
+    }).catch(() => undefined)
+  );
+  logStartupTiming("sessionRuntime:create:end", {
+    workspaceRoot: config.paths.workspaceRoot,
+    snapshotCleanupError: latestSnapshotCleanupError
+  });
   const subagentMemoryGcTimer = setInterval(
     () => {
       evictExpiredSubagentSessionsFromMemory();
@@ -703,9 +955,10 @@ export async function createSessionRuntime(
     resolveAllowedRoots(config.paths.workspaceRoot, settings, sessionAdditionalDirectories);
 
   const getMainAgentToolSchemas = async (options: { abortSignal?: AbortSignal } = {}) => {
+    const toolSchemas = await getToolSchemas();
     const staticSchemas = planModeState.enabled
-      ? TOOL_SCHEMAS.filter((tool) => isToolAllowedInPlanMode(tool.function.name))
-      : TOOL_SCHEMAS;
+      ? toolSchemas.filter((tool) => isToolAllowedInPlanMode(tool.function.name))
+      : toolSchemas;
     const mcpSchemas = planModeState.enabled
       ? []
       : await mcpRuntime.getToolSchemas({
@@ -724,7 +977,7 @@ export async function createSessionRuntime(
   ) => getFunctionToolNames(tools).sort((left, right) => left.localeCompare(right));
 
   const getAvailableToolNamesForPrompt = (availableTools?: string[]) =>
-    availableTools ?? getRegisteredToolNames();
+    availableTools ?? getBuiltInToolNames();
 
   const getRecentOpenedSkillPaths = () =>
     [...fileReadState.entries()]
@@ -1262,7 +1515,7 @@ export async function createSessionRuntime(
       );
       await resetSystemMessage();
     },
-    requireChatCompletionAdapter: () => createModelAdapter(resolveModelProfileFor()),
+    requireChatCompletionAdapter: () => createLazyModelAdapter(resolveModelProfileFor()),
     getCurrentModel: () => connection.model,
     getCurrentModelRef: () => parseModelRef(connection.model),
     getResolvedModelProfile: () => resolveModelProfileFor(),
@@ -1292,8 +1545,8 @@ export async function createSessionRuntime(
       settings = settingsState.effective;
       contextBudgetService.setModelContextWindowOverrides(settings.modelContextWindowOverrides);
       conversationCompactor.updateConfig(createConversationCompactionConfig(settings));
-      sessionMemoryTrigger.updateConfig(createSessionMemoryTriggerConfig(config, settings));
-      sessionMemoryExtractor.updateConfig(createSessionMemoryExtractorConfig(config, settings));
+      sessionMemoryTrigger.updateConfig(createSessionMemoryConfig(config, settings));
+      sessionMemoryExtractor.updateConfig(createSessionMemoryConfig(config, settings));
       turnSnapshotService.updateConfig(settings.snapshot);
       for (const session of subagentSessions.values()) {
         session.contextBudgetService.setModelContextWindowOverrides(settings.modelContextWindowOverrides);
@@ -1432,6 +1685,7 @@ export async function createSessionRuntime(
       };
       const resolvedModel = resolveModelProfileFor(connection.model);
 
+      const { buildNextTurnContextPreview } = await import("./contextPreview.js");
       return buildNextTurnContextPreview({
         currentModel: connection.model,
         resolvedModel,
@@ -1482,14 +1736,15 @@ export async function createSessionRuntime(
     },
     preparePromptSkillContext,
     getContextBudgetService: () => contextBudgetService,
-    estimateContextBudget: (options = {}) => {
+    estimateContextBudget: async (options = {}) => {
+      const { buildPatchedChatCompletionRequest } = await import("../core/api/sendChatCompletion.js");
       const model = options.model ?? connection.model;
       const resolvedModel = options.resolvedModel ?? resolveModelProfileFor(model);
       return contextBudgetService.estimateRequest(buildPatchedChatCompletionRequest({
         model,
         resolvedModel,
         messages: options.messages ?? messages,
-        tools: options.tools ?? TOOL_SCHEMAS,
+        tools: options.tools ?? [],
         temperature: 0.2,
         toolChoice: "auto",
         gcliGeminiCompat: options.gcliGeminiCompat ??
@@ -1531,37 +1786,37 @@ export async function createSessionRuntime(
       if (querySource !== "main") {
         return;
       }
-      const effectiveResolvedModel = resolvedModel ?? resolveModelProfileFor(model);
-
-      const snapshot = contextBudgetService.estimateRequest(buildPatchedChatCompletionRequest({
-        model,
-        resolvedModel: effectiveResolvedModel,
-        messages,
-        tools: TOOL_SCHEMAS,
-        temperature: 0.2,
-        toolChoice: "auto",
-        gcliGeminiCompat: shouldUseGcliGeminiCompat(
-          effectiveResolvedModel.baseURL,
-          effectiveResolvedModel.modelId
-        ),
-        messageTimestampsEnabled: settings.messageTimestampsEnabled,
-        requestPatches: config.requestPatches
-      }), {
-        resolvedModel: effectiveResolvedModel
-      });
-      const decision = sessionMemoryTrigger.shouldExtract({
-        messages,
-        currentTokens: snapshot.estimatedInputTokens
-      });
-      if (!decision.shouldExtract) {
-        return;
-      }
-
-      const extractionMessages = cloneJson(messages);
-      const expectedSessionId = sessionHistory.getCurrentSessionId();
-      const expectedMessageCount = messages.length;
-      const currentTokens = decision.currentTokens;
       void (async () => {
+        const effectiveResolvedModel = resolvedModel ?? resolveModelProfileFor(model);
+        const { buildPatchedChatCompletionRequest } = await import("../core/api/sendChatCompletion.js");
+        const snapshot = contextBudgetService.estimateRequest(buildPatchedChatCompletionRequest({
+          model,
+          resolvedModel: effectiveResolvedModel,
+          messages,
+          tools: [],
+          temperature: 0.2,
+          toolChoice: "auto",
+          gcliGeminiCompat: shouldUseGcliGeminiCompat(
+            effectiveResolvedModel.baseURL,
+            effectiveResolvedModel.modelId
+          ),
+          messageTimestampsEnabled: settings.messageTimestampsEnabled,
+          requestPatches: config.requestPatches
+        }), {
+          resolvedModel: effectiveResolvedModel
+        });
+        const decision = sessionMemoryTrigger.shouldExtract({
+          messages,
+          currentTokens: snapshot.estimatedInputTokens
+        });
+        if (!decision.shouldExtract) {
+          return;
+        }
+
+        const extractionMessages = cloneJson(messages);
+        const expectedSessionId = sessionHistory.getCurrentSessionId();
+        const expectedMessageCount = messages.length;
+        const currentTokens = decision.currentTokens;
         const currentMemory = memoryService.getSessionMemory();
         const extraction = sessionMemoryExtractor.schedule({
           client: extractionClient,
@@ -1700,14 +1955,18 @@ export async function createSessionRuntime(
       }),
       listSubagentTasks: () => listSubagentTasks(),
       getSubagentTask: (taskId) => getSubagentTask(taskId),
-      recordSubagentTaskRetrieved: async (taskId) => {
+      recordSubagentTaskRetrieved: async (taskId, task) => {
         const session = subagentSessions.get(taskId);
         if (!session || !isCurrentSessionSubagent(session)) {
           return;
         }
 
         try {
-          await recordSubagentSessionEvent(session, "subagent-retrieved", "Task output retrieved via TaskGet.");
+          await recordSubagentSessionEvent(
+            session,
+            "subagent-retrieved",
+            `Task output retrieved via TaskGet. Status: ${task.status}, agent: ${task.agentType}.`
+          );
         } catch {
           // Retrieval logging is best-effort and must not fail TaskGet.
         }
@@ -2287,7 +2546,7 @@ export async function createSessionRuntime(
     }
 
     const resolvedSubagentModel = resolveModelProfileFor(session.model);
-    const clientForSubagent = createModelAdapter(resolvedSubagentModel);
+    const clientForSubagent = createLazyModelAdapter(resolvedSubagentModel);
 
     const runToken = session.runToken;
     const isCurrentRun = () => session.runToken === runToken;
@@ -2362,6 +2621,8 @@ export async function createSessionRuntime(
     };
 
     try {
+      const { runAgentTurn } = await import("../core/agent/runAgentTurn.js");
+      const subagentToolSchemas = await getToolSchemasByNames(getAllowedToolNamesForSubagent(agent));
       const output = await runAgentTurn(clientForSubagent, session.messages, {
         model: session.model,
         resolvedModel: resolvedSubagentModel,
@@ -2373,10 +2634,10 @@ export async function createSessionRuntime(
         usageLabel: session.agentType,
         onUsage: recordUsage,
         context: subagentContext,
-        tools: getToolSchemasByName(getAllowedToolNamesForSubagent(agent)),
+        tools: subagentToolSchemas,
         requestPatches: config.requestPatches,
         contextBudgetService: session.contextBudgetService,
-        refreshTools: async () => getToolSchemasByName(getAllowedToolNamesForSubagent(agent)),
+        refreshTools: async () => getToolSchemasByNames(getAllowedToolNamesForSubagent(agent)),
         preflightCompactConversation: async ({ abortSignal, querySource }) => {
           if (querySource === "compact" || querySource === "session_memory") {
             return false;
@@ -2688,8 +2949,9 @@ export async function createSessionRuntime(
     message: string,
     patch: Partial<SubagentProgressEvent> = {}
   ) {
+    const timestamp = new Date().toISOString();
     session.progress.push({
-      timestamp: new Date().toISOString(),
+      timestamp,
       type,
       message: truncateProgressText(message, MAX_SUBAGENT_PROGRESS_MESSAGE_CHARS),
       ...(patch.toolName !== undefined
@@ -2705,7 +2967,7 @@ export async function createSessionRuntime(
     if (session.progress.length > MAX_SUBAGENT_PROGRESS_EVENTS) {
       session.progress.splice(0, session.progress.length - MAX_SUBAGENT_PROGRESS_EVENTS);
     }
-    session.updatedAt = new Date().toISOString();
+    session.updatedAt = timestamp;
   }
 
   function createSubagentMetadata(session: SubagentSession): SubagentMetadataV1 {
@@ -3184,17 +3446,7 @@ function createConversationCompactionConfig(
   };
 }
 
-function createSessionMemoryTriggerConfig(
-  config: RuntimeConfig,
-  settings: SessionSettings
-) {
-  return {
-    ...config.memory.sessionMemory,
-    enabled: config.memory.sessionMemory.enabled && settings.sessionMemoryEnabled
-  };
-}
-
-function createSessionMemoryExtractorConfig(
+function createSessionMemoryConfig(
   config: RuntimeConfig,
   settings: SessionSettings
 ) {
@@ -3310,11 +3562,11 @@ function normalizeSettingsPatch(
   }
 
   if ("autoCompactTimeoutMs" in patch) {
-    normalized.autoCompactTimeoutMs = patch.autoCompactTimeoutMs;
+    normalized.autoCompactTimeoutMs = clampPositiveInt(patch.autoCompactTimeoutMs, 180_000);
   }
 
   if ("autoCompactMaxFailures" in patch) {
-    normalized.autoCompactMaxFailures = patch.autoCompactMaxFailures;
+    normalized.autoCompactMaxFailures = clampPositiveInt(patch.autoCompactMaxFailures, 3);
   }
 
   if ("modelContextWindowOverrides" in patch) {
@@ -3392,6 +3644,14 @@ function resolveAllowedRoots(
   return [...deduped];
 }
 
+function clampPositiveInt(value: number | undefined, fallback: number): number {
+  if (!Number.isFinite(value)) {
+    return fallback;
+  }
+
+  return Math.max(1, Math.trunc(value!));
+}
+
 function messagesContainPrefix(
   currentMessages: readonly SessionMessage[],
   expectedPrefix: readonly SessionMessage[]
@@ -3401,7 +3661,12 @@ function messagesContainPrefix(
   }
 
   for (let index = 0; index < expectedPrefix.length; index += 1) {
-    if (JSON.stringify(currentMessages[index]) !== JSON.stringify(expectedPrefix[index])) {
+    const current = currentMessages[index];
+    const expected = expectedPrefix[index];
+    if (current === expected) {
+      continue;
+    }
+    if (JSON.stringify(current) !== JSON.stringify(expected)) {
       return false;
     }
   }

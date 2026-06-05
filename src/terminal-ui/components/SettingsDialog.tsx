@@ -5,7 +5,9 @@ import type {
 } from "../../config/runtime.js";
 import { getBuiltinPersonaPresetNames } from "../../core/prompt/fragments/personaPresets.js";
 import { useRegisterOverlay } from "../context/overlayContext.js";
-import { Box, Text, useInput } from "../runtime/ink.js";
+import Box from "../runtime/ink-runtime/components/Box.js";
+import Text from "../runtime/ink-runtime/components/Text.js";
+import useInput from "../runtime/ink-runtime/hooks/use-input.js";
 import { terminalUiTheme } from "../theme/theme.js";
 import { normalizeInlineValue } from "../utils/text.js";
 import { Pane } from "./Pane.js";
@@ -508,43 +510,37 @@ export function SettingsDialog(props: {
 
   function commitFieldValue(field: FieldDefinition) {
     try {
-      setConfig((current) => {
-        if (field.type === "number") {
-          const parsed = Number(draftValue);
-          if (!Number.isFinite(parsed) || parsed <= 0) {
-            throw new Error(`${field.label} must be a positive number.`);
-          }
-
-          if (field.key === "scrollSpeed" && parsed > 8) {
-            throw new Error("Scroll Speed must be between 1 and 8.");
-          }
-
-          return {
-            ...current,
-            [field.key]: Math.trunc(parsed)
-          };
+      if (field.type === "number") {
+        const parsed = Number(draftValue);
+        if (!Number.isFinite(parsed) || parsed <= 0) {
+          throw new Error(`${field.label} must be a positive number.`);
         }
 
-        if (field.type === "toggle") {
-          return {
-            ...current,
-            [field.key]: draftValue.trim().toLowerCase() === "on"
-          };
+        if (field.key === "scrollSpeed" && parsed > 8) {
+          throw new Error("Scroll Speed must be between 1 and 8.");
         }
 
-        if (field.key === "modelContextWindowOverrides") {
-          return {
-            ...current,
-            [field.key]: decodeContextWindowOverrides(draftValue)
-          };
-        }
-
+        setConfig((current) => ({
+          ...current,
+          [field.key]: Math.trunc(parsed)
+        }));
+      } else if (field.type === "toggle") {
+        setConfig((current) => ({
+          ...current,
+          [field.key]: draftValue.trim().toLowerCase() === "on"
+        }));
+      } else if (field.key === "modelContextWindowOverrides") {
+        setConfig((current) => ({
+          ...current,
+          [field.key]: decodeContextWindowOverrides(draftValue)
+        }));
+      } else {
         const textValue = decodeTextValue(draftValue);
-        return {
+        setConfig((current) => ({
           ...current,
           [field.key]: textValue
-        };
-      });
+        }));
+      }
 
       setErrorText(null);
       setIsEditing(false);

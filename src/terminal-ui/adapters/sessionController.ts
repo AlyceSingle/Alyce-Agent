@@ -3,7 +3,6 @@ import { promises as fs } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import process from "node:process";
-import { runAgentTurn } from "../../agent.js";
 import { createBackgroundDiagnosticsMessage } from "../../core/api/generatedMessages.js";
 import { getFunctionToolNames } from "../../core/api/openaiFunctionTools.js";
 import { isTurnInterruptedError, throwIfAborted, TurnInterruptedError } from "../../core/abort.js";
@@ -372,6 +371,7 @@ export interface SessionController {
   saveConfig: (settingsPatch: Partial<SessionSettings>) => Promise<void>;
   requestExit: () => void;
   setExitHandler: (handler: (() => void) | null) => void;
+  dispose: () => void;
 }
 
 export interface SessionControllerOptions {
@@ -1115,7 +1115,7 @@ export function createSessionController(
       { restored: 0, removed: 0, conflicts: 0, alreadyRestored: 0 }
     );
     const conflictLines = options.fileRestoreResults.flatMap((entry) =>
-      formatRestoreConflictLines(entry.result.conflicts, undefined, 5)
+      formatRestoreConflictLines(entry.result.conflicts, 5)
         .map((line) => `${line} (turn ${entry.turnId})`)
     );
 
@@ -2912,7 +2912,7 @@ export function createSessionController(
         });
         store.updateState((state) => setStatusText(state, "Estimating context..."));
         throwIfAborted(controller.signal);
-        const initialBudget = runtime.estimateContextBudget({
+        const initialBudget = await runtime.estimateContextBudget({
           model: currentModel,
           resolvedModel,
           messages: runtime.messages,
@@ -2923,6 +2923,7 @@ export function createSessionController(
           setContextBudget(state, initialBudget)
         );
         store.updateState((state) => setStatusText(state, "Thinking..."));
+        const { runAgentTurn } = await import("../../agent.js");
         const reply = await runAgentTurn(client, runtime.messages, {
           model: currentModel,
           resolvedModel,
@@ -3340,6 +3341,13 @@ export function createSessionController(
     },
     setExitHandler: (handler) => {
       exitHandler = handler;
+    },
+    dispose: () => {
+      stopTaskSync();
+      if (disposeDiagnosticsSubscription) {
+        disposeDiagnosticsSubscription();
+        disposeDiagnosticsSubscription = null;
+      }
     }
   };
 }
@@ -3498,12 +3506,11 @@ function formatSessionTime(value: string): string {
 
 function formatRestoreConflictLines(
   conflicts: FileHistoryRestoreResult["conflicts"],
-  report?: TurnDiffReport,
   limit = 20
 ): string[] {
   const visibleConflicts = conflicts.slice(0, limit);
   const lines = visibleConflicts.map((conflict) =>
-    `- ${formatRestoreConflictPath(conflict.absolutePath, report)}: ${formatRestoreConflictReason(conflict.reason)}`
+    `- ${formatRestoreConflictPath(conflict.absolutePath)}: ${formatRestoreConflictReason(conflict.reason)}`
   );
   const hiddenCount = conflicts.length - visibleConflicts.length;
   if (hiddenCount > 0) {
@@ -3513,15 +3520,7 @@ function formatRestoreConflictLines(
   return lines;
 }
 
-function formatRestoreConflictPath(absolutePath: string, report?: TurnDiffReport) {
-  const normalized = normalizeRestorePath(absolutePath);
-  const file = report?.files.find((entry) =>
-    entry.absolutePath && normalizeRestorePath(entry.absolutePath) === normalized
-  );
-  if (file) {
-    return file.path;
-  }
-
+function formatRestoreConflictPath(absolutePath: string) {
   const relative = path.relative(process.cwd(), absolutePath);
   return relative && !relative.startsWith("..") && !path.isAbsolute(relative)
     ? relative.replace(/\\/g, "/")
@@ -3537,11 +3536,6 @@ function formatRestoreConflictReason(reason: FileHistoryRestoreResult["conflicts
     case "current-content-changed":
       return "current content changed after the turn";
   }
-}
-
-function normalizeRestorePath(absolutePath: string) {
-  const resolved = path.resolve(absolutePath);
-  return process.platform === "win32" ? resolved.toLowerCase() : resolved;
 }
 
 function extractMessageText(value: unknown): string {

@@ -13,7 +13,9 @@ import {
   type MarkdownRenderPlan
 } from "./MarkdownRenderer.js";
 import { VirtualMessageList } from "./VirtualMessageList.js";
-import { Box, ScrollBox, Text, type ScrollBoxHandle } from "../runtime/ink.js";
+import Box from "../runtime/ink-runtime/components/Box.js";
+import ScrollBox, { type ScrollBoxHandle } from "../runtime/ink-runtime/components/ScrollBox.js";
+import Text from "../runtime/ink-runtime/components/Text.js";
 import { useSelection } from "../runtime/ink-runtime/hooks/use-selection.js";
 import type { MouseEvent as TerminalMouseEvent } from "../runtime/ink-runtime/events/mouse-event.js";
 import type { ClickEvent as TerminalClickEvent } from "../runtime/ink-runtime/events/click-event.js";

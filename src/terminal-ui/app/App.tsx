@@ -1,5 +1,5 @@
 import type { SessionController } from "../adapters/sessionController.js";
-import { AlternateScreen } from "../runtime/ink.js";
+import { AlternateScreen } from "../runtime/ink-runtime/components/AlternateScreen.js";
 import { AgentScreen } from "../screens/AgentScreen.js";
 import { TerminalUiStoreProvider, type TerminalUiStore } from "../state/store.js";
 

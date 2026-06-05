@@ -1,7 +1,7 @@
 import crypto from "node:crypto";
+import { createRequire } from "node:module";
 import fsSync from "node:fs";
 import path from "node:path";
-import { spawn as spawnPty, type IPty } from "@lydell/node-pty";
 import type {
   PtyCloseResult,
   PtyCreateOptions,
@@ -15,6 +15,30 @@ import type {
 const DEFAULT_BUFFER_LIMIT = 2 * 1024 * 1024;
 const DEFAULT_COLS = 80;
 const DEFAULT_ROWS = 24;
+const require = createRequire(import.meta.url);
+
+interface PtyProcess {
+  pid?: number;
+  write: (data: string) => void;
+  resize: (cols: number, rows: number) => void;
+  kill: () => void;
+  onData: (handler: (chunk: string) => void) => void;
+  onExit: (handler: (event: { exitCode: number; signal?: number }) => void) => void;
+}
+
+type SpawnPty = (
+  command: string,
+  args: string[],
+  options: {
+    name: string;
+    cwd: string;
+    env: Record<string, string | undefined>;
+    cols: number;
+    rows: number;
+  }
+) => PtyProcess;
+
+let cachedSpawnPty: SpawnPty | undefined;
 
 export interface PtyManagerOptions {
   workspaceRoot: string;
@@ -23,7 +47,7 @@ export interface PtyManagerOptions {
 
 interface ActivePtySession {
   info: PtySessionInfo;
-  process: IPty;
+  process: PtyProcess;
   buffer: string;
   bufferCursor: number;
   cursor: number;
@@ -62,9 +86,9 @@ export class PtyManager {
       });
     }
 
-    let proc: IPty;
+    let proc: PtyProcess;
     try {
-      proc = spawnPty(command, args, {
+      proc = getSpawnPty()(command, args, {
         name: "xterm-256color",
         cwd,
         env: buildPtyEnv(options.env),
@@ -287,6 +311,11 @@ export class PtyManager {
     } while (this.sessions.has(id));
     return id;
   }
+}
+
+function getSpawnPty(): SpawnPty {
+  cachedSpawnPty ??= require("@lydell/node-pty").spawn as SpawnPty;
+  return cachedSpawnPty;
 }
 
 export function getPreferredShell(): string {

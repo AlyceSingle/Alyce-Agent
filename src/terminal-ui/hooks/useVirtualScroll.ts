@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState, type RefObject } from "react";
-import type { ScrollBoxHandle } from "../runtime/ink.js";
+import type { ScrollBoxHandle } from "../runtime/ink-runtime/components/ScrollBox.js";
 
 export type VirtualScrollRange = {
   startIndex: number;

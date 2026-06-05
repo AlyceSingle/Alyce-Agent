@@ -1,4 +1,5 @@
-import { Text, useTerminalSize } from "../runtime/ink.js";
+import Text from "../runtime/ink-runtime/components/Text.js";
+import useTerminalSize from "../runtime/ink-runtime/hooks/use-terminal-size.js";
 import { terminalUiTheme } from "../theme/theme.js";
 
 const DEFAULT_DIVIDER_CHAR = "─";

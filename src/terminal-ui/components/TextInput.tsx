@@ -1,5 +1,5 @@
 import React, { useEffect } from "react";
-import { useTerminalSize } from "../runtime/ink.js";
+import useTerminalSize from "../runtime/ink-runtime/hooks/use-terminal-size.js";
 import { logLayoutTrace } from "../runtime/utils/layoutTrace.js";
 import { useTextInput } from "../hooks/useTextInput.js";
 import type { BaseTextInputProps } from "../types/textInputTypes.js";

@@ -1,7 +1,8 @@
 import React from "react";
 import { createHash } from "node:crypto";
 import { Marked, type TokenizerAndRendererExtension } from "marked";
-import { Box, Text } from "../runtime/ink.js";
+import Box from "../runtime/ink-runtime/components/Box.js";
+import Text from "../runtime/ink-runtime/components/Text.js";
 import type { TerminalUiMessageKind } from "../state/types.js";
 import { terminalUiTheme } from "../theme/theme.js";
 import { normalizeMarkdownInput } from "../utils/htmlEntities.js";

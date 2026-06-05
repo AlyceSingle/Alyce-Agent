@@ -14,7 +14,10 @@ import type {
   ProviderConnector
 } from "../../core/providers/providerAuth.js";
 import type { ProviderProfile } from "../../core/providers/types.js";
-import { Box, Text, useInput, useTerminalSize } from "../runtime/ink.js";
+import Box from "../runtime/ink-runtime/components/Box.js";
+import Text from "../runtime/ink-runtime/components/Text.js";
+import useInput from "../runtime/ink-runtime/hooks/use-input.js";
+import useTerminalSize from "../runtime/ink-runtime/hooks/use-terminal-size.js";
 import { terminalUiTheme } from "../theme/theme.js";
 import { Pane } from "./Pane.js";
 
@@ -434,7 +437,7 @@ export function ConnectProviderDialog(props: {
         return;
       }
 
-      if (!props.onAuthCallback) {
+      if (!onAuthCallbackRef.current) {
         setError("This provider does not support interactive auth yet.");
         return;
       }
@@ -442,7 +445,7 @@ export function ConnectProviderDialog(props: {
       setSubmitting(true);
       const abortController = new AbortController();
       authCallbackAbortRef.current = abortController;
-      props.onAuthCallback(authFlow.provider, authFlow.methodIndex, code, {
+      onAuthCallbackRef.current(authFlow.provider, authFlow.methodIndex, code, {
         signal: abortController.signal
       })
         .then((result) => {

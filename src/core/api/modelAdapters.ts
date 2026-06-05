@@ -1,6 +1,10 @@
 import type OpenAI from "openai";
 import type { ResolvedModelProfile } from "../providers/types.js";
 import { resolveModelAdapterFactory } from "./adapterRegistry.js";
+export {
+  getModelAdapterAvailability,
+  type ModelAdapterAvailability
+} from "./modelAdapterAvailability.js";
 
 export type ChatCreateParams = OpenAI.Chat.Completions.ChatCompletionCreateParamsNonStreaming;
 
@@ -19,11 +23,6 @@ export interface ChatCompletionAdapter {
 
 export type ChatCompletionTransport = OpenAI | ChatCompletionAdapter;
 
-export interface ModelAdapterAvailability {
-  available: boolean;
-  reason?: string;
-}
-
 export function createModelAdapter(resolvedModel: ResolvedModelProfile): ChatCompletionAdapter {
   const factory = resolveModelAdapterFactory(resolvedModel);
   const availability = factory.availability(resolvedModel);
@@ -34,13 +33,6 @@ export function createModelAdapter(resolvedModel: ResolvedModelProfile): ChatCom
   }
 
   return factory.create(resolvedModel);
-}
-
-export function getModelAdapterAvailability(
-  resolvedModel: ResolvedModelProfile
-): ModelAdapterAvailability {
-  const factory = resolveModelAdapterFactory(resolvedModel);
-  return factory.availability(resolvedModel);
 }
 
 export function isChatCompletionAdapter(

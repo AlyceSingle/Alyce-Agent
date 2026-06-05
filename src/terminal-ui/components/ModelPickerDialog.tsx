@@ -4,7 +4,10 @@ import { getModelAdapterAvailability } from "../../core/api/modelAdapters.js";
 import { formatModelRef, parseModelRef, resolveModelProfile } from "../../core/providers/resolveModel.js";
 import type { ModelRef, ProviderProfile } from "../../core/providers/types.js";
 import type { ModelPickerDialogState } from "../state/types.js";
-import { Box, Text, useInput, useTerminalSize } from "../runtime/ink.js";
+import Box from "../runtime/ink-runtime/components/Box.js";
+import Text from "../runtime/ink-runtime/components/Text.js";
+import useInput from "../runtime/ink-runtime/hooks/use-input.js";
+import useTerminalSize from "../runtime/ink-runtime/hooks/use-terminal-size.js";
 import { terminalUiTheme } from "../theme/theme.js";
 import { Pane } from "./Pane.js";
 
@@ -103,8 +106,8 @@ export function ModelPickerDialog(props: {
       setError(null);
       props.onSelect(selected.modelRef)
         .then((result) => {
+          setSubmitting(false);
           if (!result.ok) {
-            setSubmitting(false);
             setError(result.message);
           }
         })

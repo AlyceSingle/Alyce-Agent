@@ -1,5 +1,6 @@
 import type { TodoItem } from "../../tools/types.js";
-import { Box, Text } from "../runtime/ink.js";
+import Box from "../runtime/ink-runtime/components/Box.js";
+import Text from "../runtime/ink-runtime/components/Text.js";
 import { terminalUiTheme } from "../theme/theme.js";
 
 const MAX_VISIBLE_TODOS = 5;
@@ -15,9 +16,9 @@ export function TodoPanel(props: { todos: TodoItem[] }) {
       <Text color={terminalUiTheme.colors.info} wrap="truncate-end">
         Tasks {completedCount}/{props.todos.length}
       </Text>
-      {visibleTodos.map((todo) => (
+      {visibleTodos.map((todo, index) => (
         <Text
-          key={todo.content}
+          key={`${todo.status}-${todo.content}-${index}`}
           color={getTodoColor(todo.status)}
           wrap="truncate-end"
         >

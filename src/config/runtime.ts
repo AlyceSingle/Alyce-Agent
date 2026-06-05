@@ -33,6 +33,10 @@ import {
   getProjectTrustState,
   type ProjectTrustState
 } from "../core/trust/projectTrustStore.js";
+import {
+  logStartupTiming,
+  measureStartupTiming
+} from "../core/startup/startupTiming.js";
 
 export interface PromptOverrideConfig {
   languagePreference?: string;
@@ -330,47 +334,104 @@ export async function loadRuntimeConfig(
   env: NodeJS.ProcessEnv
 ): Promise<RuntimeConfig> {
   const workspaceRoot = path.resolve(getArgValue(argv, "--cwd") || env.AGENT_WORKSPACE || ".");
-  const paths = getRuntimePaths(workspaceRoot);
-  const bootstrap = await ensureRuntimeStoragePaths(paths);
-  const projectTrust = await getProjectTrustState(workspaceRoot, {
-    userAlyceDirectory: paths.userAlyceDirectory
+  logStartupTiming("runtime:load:start", { workspaceRoot });
+  const paths = await measureStartupTiming("runtime:getRuntimePaths", () =>
+    Promise.resolve(getRuntimePaths(workspaceRoot))
+  );
+  logStartupTiming("runtime:paths", {
+    workspaceRoot: paths.workspaceRoot,
+    projectAlyceDirectory: paths.projectAlyceDirectory,
+    userAlyceDirectory: paths.userAlyceDirectory,
+    sameProjectAndUserAlyce: paths.projectAlyceDirectory === paths.userAlyceDirectory
   });
+  const bootstrap = await measureStartupTiming("runtime:ensureStoragePaths", () =>
+    ensureRuntimeStoragePaths(paths)
+  );
+  logStartupTiming("runtime:bootstrap", {
+    firstRun: bootstrap.firstRun,
+    createdCount: bootstrap.createdPaths.length,
+    existingCount: bootstrap.existingPaths.length,
+    failedCount: bootstrap.failedPaths.length
+  });
+  const projectTrust = await measureStartupTiming("runtime:getProjectTrustState", () =>
+    getProjectTrustState(workspaceRoot, {
+      userAlyceDirectory: paths.userAlyceDirectory
+    })
+  );
   const projectTrusted = projectTrust.trusted;
+  logStartupTiming("runtime:projectTrust", {
+    trusted: projectTrusted
+  });
+  const enableProjectPlugins = projectTrusted &&
+    parseBoolean(env.ALYCE_ENABLE_PROJECT_PROVIDER_PLUGINS, false);
   const [projectConnection, userConnection, projectSettingsFile, userSettingsFile, pluginResult] =
-    await Promise.all([
-      projectTrusted
-        ? readJsonConfig(paths.connectionConfigPath, ConnectionConfigFileSchema)
-        : Promise.resolve({} as Partial<ConnectionConfigLayer>),
-      readJsonConfig(paths.userConnectionConfigPath, ConnectionConfigFileSchema),
-      projectTrusted
-        ? readJsonConfig(paths.settingsConfigPath, SessionSettingsFileSchema)
-        : Promise.resolve({} as Partial<SessionSettingsFile>),
-      readJsonConfig(paths.userSettingsConfigPath, SessionSettingsFileSchema),
-      loadConnectorPlugins({
-        userPluginsDirectory: paths.userPluginsDirectory,
-        projectPluginsDirectory: paths.projectPluginsDirectory,
-        enableProjectPlugins: projectTrusted &&
-          parseBoolean(env.ALYCE_ENABLE_PROJECT_PROVIDER_PLUGINS, false),
-        projectTrustDisabledReason: projectTrusted
-          ? undefined
-          : "Project connector plugins are disabled until this workspace is trusted."
-      })
-    ]);
+    await measureStartupTiming("runtime:loadConfigAndPlugins", () =>
+      Promise.all([
+        measureStartupTiming(
+          "runtime:readProjectConnectionConfig",
+          () => projectTrusted
+            ? readJsonConfig(paths.connectionConfigPath, ConnectionConfigFileSchema)
+            : Promise.resolve({} as Partial<ConnectionConfigLayer>),
+          { path: paths.connectionConfigPath, enabled: projectTrusted }
+        ),
+        measureStartupTiming(
+          "runtime:readUserConnectionConfig",
+          () => readJsonConfig(paths.userConnectionConfigPath, ConnectionConfigFileSchema),
+          { path: paths.userConnectionConfigPath }
+        ),
+        measureStartupTiming(
+          "runtime:readProjectSettings",
+          () => projectTrusted
+            ? readJsonConfig(paths.settingsConfigPath, SessionSettingsFileSchema)
+            : Promise.resolve({} as Partial<SessionSettingsFile>),
+          { path: paths.settingsConfigPath, enabled: projectTrusted }
+        ),
+        measureStartupTiming(
+          "runtime:readUserSettings",
+          () => readJsonConfig(paths.userSettingsConfigPath, SessionSettingsFileSchema),
+          { path: paths.userSettingsConfigPath }
+        ),
+        measureStartupTiming(
+          "runtime:loadConnectorPlugins",
+          () => loadConnectorPlugins({
+            userPluginsDirectory: paths.userPluginsDirectory,
+            projectPluginsDirectory: paths.projectPluginsDirectory,
+            enableProjectPlugins,
+            projectTrustDisabledReason: projectTrusted
+              ? undefined
+              : "Project connector plugins are disabled until this workspace is trusted."
+          }),
+          {
+            userPluginsDirectory: paths.userPluginsDirectory,
+            projectPluginsDirectory: paths.projectPluginsDirectory,
+            enableProjectPlugins
+          }
+        )
+      ])
+    );
   const projectSettings = normalizeSessionSettingsFile(projectSettingsFile);
   const userSettings = normalizeSessionSettingsFile(userSettingsFile);
 
-  const connectionState = buildConnectionConfigState(paths, {
-    user: userConnection,
-    project: projectConnection,
-    env: resolveConnectionFromEnv(env),
-    cli: resolveConnectionFromCli(argv),
-    pluginProviders: pluginResult.providerProfiles
-  });
-  const settingsState = buildSessionSettingsState(paths, {
-    project: projectSettings,
-    user: userSettings,
-    env: resolveSettingsFromEnv(env),
-    cli: resolveSettingsFromCli(argv)
+  const connectionState = await measureStartupTiming("runtime:buildConnectionConfigState", () =>
+    Promise.resolve(buildConnectionConfigState(paths, {
+      user: userConnection,
+      project: projectConnection,
+      env: resolveConnectionFromEnv(env),
+      cli: resolveConnectionFromCli(argv),
+      pluginProviders: pluginResult.providerProfiles
+    }))
+  );
+  const settingsState = await measureStartupTiming("runtime:buildSessionSettingsState", () =>
+    Promise.resolve(buildSessionSettingsState(paths, {
+      project: projectSettings,
+      user: userSettings,
+      env: resolveSettingsFromEnv(env),
+      cli: resolveSettingsFromCli(argv)
+    }))
+  );
+  logStartupTiming("runtime:load:end", {
+    providerConnectorCount: pluginResult.connectors.length,
+    providerPluginDiagnosticCount: pluginResult.diagnostics.length
   });
 
   return {
@@ -1114,6 +1175,7 @@ async function ensureRuntimeStoragePaths(paths: RuntimePaths): Promise<RuntimeBo
   const failedPaths: RuntimeBootstrapFailure[] = [];
 
   for (const directory of getRuntimeBootstrapDirectories(paths)) {
+    logStartupTiming("runtime:ensureStoragePath:start", { directory });
     try {
       const stat = await fs.stat(directory);
       if (!stat.isDirectory()) {
@@ -1121,15 +1183,27 @@ async function ensureRuntimeStoragePaths(paths: RuntimePaths): Promise<RuntimeBo
           path: directory,
           error: "path exists but is not a directory"
         });
+        logStartupTiming("runtime:ensureStoragePath:end", {
+          directory,
+          status: "failed-not-directory"
+        });
         continue;
       }
 
       existingPaths.push(directory);
+      logStartupTiming("runtime:ensureStoragePath:end", {
+        directory,
+        status: "existing"
+      });
     } catch (error) {
       if (!isMissingFileError(error)) {
         failedPaths.push({
           path: directory,
           error: error instanceof Error ? error.message : String(error)
+        });
+        logStartupTiming("runtime:ensureStoragePath:end", {
+          directory,
+          status: "failed-stat"
         });
         continue;
       }
@@ -1137,10 +1211,18 @@ async function ensureRuntimeStoragePaths(paths: RuntimePaths): Promise<RuntimeBo
       try {
         await fs.mkdir(directory, { recursive: true });
         createdPaths.push(directory);
+        logStartupTiming("runtime:ensureStoragePath:end", {
+          directory,
+          status: "created"
+        });
       } catch (mkdirError) {
         failedPaths.push({
           path: directory,
           error: mkdirError instanceof Error ? mkdirError.message : String(mkdirError)
+        });
+        logStartupTiming("runtime:ensureStoragePath:end", {
+          directory,
+          status: "failed-mkdir"
         });
       }
     }
@@ -1361,5 +1443,5 @@ function resolveConnectionSaveTarget(options: {
     return "user";
   }
 
-  return "user";
+  return "project";
 }

@@ -1,7 +1,8 @@
 import type { ApprovalMode, ConnectionConfigState } from "../../config/runtime.js";
 import { isConnectionStateReady } from "../../cli/modelCommand.js";
 import type { ContextBudgetSnapshot } from "../../core/context/contextBudget.js";
-import { Box, Text } from "../runtime/ink.js";
+import Box from "../runtime/ink-runtime/components/Box.js";
+import Text from "../runtime/ink-runtime/components/Text.js";
 import { terminalUiTheme } from "../theme/theme.js";
 
 function formatApprovalMode(

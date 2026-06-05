@@ -1,7 +1,11 @@
 import type { McpToolRuntime } from "../mcp/types.js";
 import type { PermissionRequest } from "../core/permissions/permissionRules.js";
-import type { BackgroundProcessManager } from "../core/background-process/backgroundProcessManager.js";
-import type { PtyManager } from "../core/pty/ptyManager.js";
+import type {
+  BackgroundProcessRecord,
+  BackgroundProcessStopOptions,
+  BackgroundProcessStopResult
+} from "../core/background-process/backgroundProcessTypes.js";
+import type { PtyCloseResult, PtySessionInfo } from "../core/pty/ptyTypes.js";
 
 export type ToolPermissionKind =
   | "agent"
@@ -35,6 +39,83 @@ export interface AskUserQuestionOption {
   label: string;
   description: string;
   preview?: string;
+}
+
+export interface BackgroundProcessManagerLike {
+  startProcess: (options: {
+    command: string;
+    cwd: string;
+    startupTimeoutMs?: number;
+    waitFor?: string[];
+    env?: Record<string, string | undefined>;
+    label?: string;
+  }) => Promise<BackgroundProcessRecord>;
+  listProcesses: (options?: { includeExited?: boolean }) => BackgroundProcessRecord[];
+  getProcess: (processId: string) => BackgroundProcessRecord | undefined;
+  readProcessLog: (
+    processId: string,
+    options?: {
+      stream?: "combined" | "stdout" | "stderr";
+      offset?: number;
+      limit?: number;
+      tailLines?: number;
+    }
+  ) => Promise<{
+    processId: string;
+    stream: "combined" | "stdout" | "stderr";
+    logPath: string;
+    content: string;
+    offset: number;
+    bytes: number;
+    eof: boolean;
+  }>;
+  stopProcess: (processId: string, options?: BackgroundProcessStopOptions) => Promise<BackgroundProcessStopResult>;
+  stopAll: (options?: BackgroundProcessStopOptions) => Promise<BackgroundProcessStopResult[]>;
+}
+
+export interface PtyManagerLike {
+  createSession: (options?: {
+    command?: string;
+    args?: string[];
+    cwd?: string;
+    title?: string;
+    env?: Record<string, string | undefined>;
+    cols?: number;
+    rows?: number;
+  }) => PtySessionInfo;
+  listSessions: () => PtySessionInfo[];
+  getSession: (id: string) => PtySessionInfo | undefined;
+  readSession: (
+    id: string,
+    options?: {
+      cursor?: number;
+      limit?: number;
+      tailLines?: number;
+    }
+  ) => {
+    ptyId: string;
+    content: string;
+    cursor: number;
+    nextCursor: number;
+    bufferCursor: number;
+    bytes: number;
+    eof: boolean;
+    info: PtySessionInfo;
+  };
+  writeSession: (id: string, data: string) => {
+    ptyId: string;
+    bytes: number;
+    cursor: number;
+    info: PtySessionInfo;
+  };
+  resizeSession: (id: string, cols: number, rows: number) => {
+    ptyId: string;
+    cols: number;
+    rows: number;
+    info: PtySessionInfo;
+  };
+  closeSession: (id: string) => PtyCloseResult;
+  closeAll: () => PtyCloseResult[];
 }
 
 export interface AskUserQuestion {
@@ -208,8 +289,8 @@ export interface ToolExecutionContext {
   getTodos: () => TodoItem[];
   setTodos: (todos: TodoItem[]) => void;
   recordToolActivity?: (toolName: string) => void;
-  backgroundProcessManager?: BackgroundProcessManager;
-  ptyManager?: PtyManager;
+  backgroundProcessManager?: BackgroundProcessManagerLike;
+  ptyManager?: PtyManagerLike;
   mcpRuntime?: McpToolRuntime;
   toolPolicy?: ToolPermissionPolicy;
   planMode?: boolean;

@@ -1,6 +1,8 @@
 import { useEffect, useState } from "react";
 import type { SessionHistoryListItem } from "../../core/session-history/types.js";
-import { Box, Text, useInput } from "../runtime/ink.js";
+import Box from "../runtime/ink-runtime/components/Box.js";
+import Text from "../runtime/ink-runtime/components/Text.js";
+import useInput from "../runtime/ink-runtime/hooks/use-input.js";
 import { terminalUiTheme } from "../theme/theme.js";
 import { Pane } from "./Pane.js";
 

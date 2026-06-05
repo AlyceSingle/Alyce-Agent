@@ -1,5 +1,5 @@
 import React from "react";
-import { Box } from "../runtime/ink.js";
+import Box from "../runtime/ink-runtime/components/Box.js";
 import type { VirtualScrollRange } from "../hooks/useVirtualScroll.js";
 
 export function VirtualMessageList<T>(props: {

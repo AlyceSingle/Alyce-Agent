@@ -7,7 +7,6 @@ import {
   type ContextBudgetService
 } from "../core/context/contextBudget.js";
 import type { RequestPatchOperation } from "../core/api/requestPatch.js";
-import { TOOL_SCHEMAS } from "../tools/registry.js";
 import type { ResolvedModelProfile } from "../core/providers/types.js";
 
 export function buildNextTurnContextPreview(options: {
@@ -18,7 +17,7 @@ export function buildNextTurnContextPreview(options: {
   gcliGeminiCompat?: boolean;
   messageTimestampsEnabled?: boolean;
   currentRequestTimestamp?: string;
-  tools?: OpenAI.Chat.Completions.ChatCompletionTool[];
+  tools: OpenAI.Chat.Completions.ChatCompletionTool[];
   requestPatches?: RequestPatchOperation[];
   contextBudgetService?: ContextBudgetService;
 }) {
@@ -40,7 +39,7 @@ export function buildNextTurnContextPreview(options: {
     resolvedModel: options.resolvedModel,
     temperature: 0.2,
     toolChoice: "auto",
-    tools: options.tools ?? TOOL_SCHEMAS,
+    tools: options.tools,
     messages: nextMessages,
     gcliGeminiCompat: options.gcliGeminiCompat,
     messageTimestampsEnabled: options.messageTimestampsEnabled,

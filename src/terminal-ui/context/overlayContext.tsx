@@ -1,5 +1,5 @@
 import { useEffect, useLayoutEffect } from "react";
-import { useStdout } from "../runtime/ink.js";
+import useStdout from "../runtime/ink-runtime/hooks/use-stdout.js";
 import { invalidateInkPrevFrame } from "../runtime/instances.js";
 import { setOverlayActive } from "../state/actions.js";
 import { useTerminalUiSelector, useTerminalUiStore } from "../state/store.js";

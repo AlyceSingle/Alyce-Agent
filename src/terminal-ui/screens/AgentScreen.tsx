@@ -1,6 +1,10 @@
 import process from "node:process";
 import React, { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
-import { Box, useApp, useStdout, useTerminalSize, Text } from "../runtime/ink.js";
+import Box from "../runtime/ink-runtime/components/Box.js";
+import Text from "../runtime/ink-runtime/components/Text.js";
+import useApp from "../runtime/ink-runtime/hooks/use-app.js";
+import useStdout from "../runtime/ink-runtime/hooks/use-stdout.js";
+import useTerminalSize from "../runtime/ink-runtime/hooks/use-terminal-size.js";
 import { FullscreenLayout } from "../components/FullscreenLayout.js";
 import { MessageList, type MessageListHandle } from "../components/MessageList.js";
 import { INPUT_LOCKED_PLACEHOLDER, PromptInput } from "../components/PromptInput.js";
@@ -124,7 +128,7 @@ export function AgentScreen(props: { controller: SessionController }) {
   const scrollAccelerationEnabled = useTerminalUiSelector(
     (value) => value.settings.scrollAccelerationEnabled
   );
-  const messages = useTerminalUiSelector((value) => value.messages);
+  const messageCount = useTerminalUiSelector((value) => value.messages.length);
   const clearOnCtrlCRef = useRef(false);
   const transcriptRef = useRef<MessageListHandle | null>(null);
   const scrollAccelerationRef = useRef<{
@@ -408,7 +412,7 @@ export function AgentScreen(props: { controller: SessionController }) {
     }
 
     transcriptRef.current?.scrollToBottom();
-  }, [hasDialog, messages.length, terminalHeight, terminalWidth, transcriptSticky]);
+  }, [hasDialog, messageCount, terminalHeight, terminalWidth, transcriptSticky]);
 
   const displayedStatusText =
     copyStatusText ?? (historyEscPending ? "Press ESC again to open revert history." : statusText);
