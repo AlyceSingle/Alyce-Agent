@@ -2862,18 +2862,20 @@ export function createSessionController(
         userCancelled: false
       };
 
+      // 先立即显示用户消息，再执行异步准备，消除回车后的显示延迟。
+      store.updateState((state) => setTranscriptSticky(state, true));
+      appendUiMessage(createUserMessage(normalized));
+
       await runtime.beginTurn(turnId);
       activeTurn = checkpoint;
       resetTurnEphemeralMessages();
 
-      store.updateState((state) => setTranscriptSticky(state, true));
       const promptSkillContext = await runtime.preparePromptSkillContext(normalized);
       const userMessage = {
         role: "user",
         content: normalized
       } as const;
       runtime.messages.push(...promptSkillContext.generatedMessages, userMessage);
-      appendUiMessage(createUserMessage(normalized));
       const promptSkillSummary = formatPromptSkillSummary(promptSkillContext);
       if (promptSkillSummary) {
         appendUiMessage(createSystemMessage(promptSkillSummary, "Skills"));

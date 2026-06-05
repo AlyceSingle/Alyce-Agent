@@ -889,25 +889,12 @@ export async function createSessionRuntime(
     "session history: " +
     path.relative(config.paths.workspaceRoot, sessionHistory.getCurrentSessionFilePath());
   let latestSnapshotCleanupError: string | undefined;
-  await measureStartupTiming("sessionRuntime:cleanupSnapshotStorage", () =>
-    cleanupSnapshotStorage({
-      alyceDirectory: config.paths.alyceDirectory,
-      retentionDays: settings.snapshot.retentionDays,
-      apply: true,
-      excludePaths: [turnSnapshotService.getGitDirectory()]
-    }).catch((error: unknown) => {
-      latestSnapshotCleanupError = error instanceof Error ? error.message : String(error);
-    })
-  );
   const memoryService = new MemoryService({
     workspaceRoot: config.paths.workspaceRoot,
     ...config.memory
   });
   memoryService.setSessionMemoryEnabled(settings.sessionMemoryEnabled);
   memoryService.setSessionMemorySourcePath(getSessionMemorySourcePath());
-  await measureStartupTiming("sessionRuntime:memoryServiceInitialize", () =>
-    memoryService.initialize()
-  );
   const mcpRuntime = createLazyProjectMcpRuntime(
     config.paths.workspaceRoot,
     {
@@ -918,7 +905,7 @@ export async function createSessionRuntime(
   );
   const fileReadState = new Map<string, FileReadState>();
   const subagentSessions = new Map<string, SubagentSession>();
-  // 只缓存“当前主会话”的轻量任务索引，用于 TaskList/TaskGet 的跨重启恢复。
+  // 只缓存"当前主会话"的轻量任务索引，用于 TaskList/TaskGet 的跨重启恢复。
   const currentSessionTaskIndex = new Map<string, SessionHistorySubagentTaskIndexItem>();
   const subagentTaskStorage = new SubagentTaskStorage({
     alyceDirectory: config.paths.alyceDirectory,
@@ -933,12 +920,28 @@ export async function createSessionRuntime(
   });
   const getWorktreesDirectory = () =>
     path.join(os.tmpdir(), "alyce-agent-worktrees", sessionHistory.getCurrentSessionId());
-  await measureStartupTiming("sessionRuntime:migrateLegacySubagentTasks", () =>
-    migrateLegacySubagentTasks({
-      storage: subagentTaskStorage,
-      historyStore: subagentHistoryStore
-    }).catch(() => undefined)
-  );
+  // 三个异步操作互不依赖，并行执行以加速启动。
+  await Promise.all([
+    measureStartupTiming("sessionRuntime:cleanupSnapshotStorage", () =>
+      cleanupSnapshotStorage({
+        alyceDirectory: config.paths.alyceDirectory,
+        retentionDays: settings.snapshot.retentionDays,
+        apply: true,
+        excludePaths: [turnSnapshotService.getGitDirectory()]
+      }).catch((error: unknown) => {
+        latestSnapshotCleanupError = error instanceof Error ? error.message : String(error);
+      })
+    ),
+    measureStartupTiming("sessionRuntime:memoryServiceInitialize", () =>
+      memoryService.initialize()
+    ),
+    measureStartupTiming("sessionRuntime:migrateLegacySubagentTasks", () =>
+      migrateLegacySubagentTasks({
+        storage: subagentTaskStorage,
+        historyStore: subagentHistoryStore
+      }).catch(() => undefined)
+    )
+  ]);
   logStartupTiming("sessionRuntime:create:end", {
     workspaceRoot: config.paths.workspaceRoot,
     snapshotCleanupError: latestSnapshotCleanupError
@@ -1248,7 +1251,7 @@ export async function createSessionRuntime(
     patch: Partial<ConnectionConfig>,
     target = connectionSaveTarget
   ) => {
-    // 任何连接更新都重新走一遍“分层合并 -> 归一化 -> 重建 client”的全流程，
+    // 任何连接更新都重新走一遍"分层合并 -> 归一化 -> 重建 client"的全流程，
     // 保证 effective / sources / saveTarget 始终一致。
     const sourcePatch = normalizeConnectionPatch(patch, connection);
     rebuildConnectionState({
@@ -2784,7 +2787,7 @@ export async function createSessionRuntime(
     evictExpiredSubagentSessionsFromMemory();
     const merged = new Map<string, SubagentTaskInfo>();
 
-    // 先放入轻量索引，保证“历史任务”在没有活跃内存会话时仍可见。
+    // 先放入轻量索引，保证"历史任务"在没有活跃内存会话时仍可见。
     for (const item of currentSessionTaskIndex.values()) {
       if (!isUserVisibleSubagentAgentType(item.agentType)) {
         continue;
@@ -3606,7 +3609,7 @@ function normalizeSettingsPatch(
 }
 
 function normalizeOptionalSessionTextPatch(value: string | undefined): string {
-  // 空字符串用于保留“显式清空”语义，避免删除用户层键后回退到项目默认。
+  // 空字符串用于保留"显式清空"语义，避免删除用户层键后回退到项目默认。
   if (value === undefined) {
     return "";
   }

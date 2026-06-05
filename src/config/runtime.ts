@@ -1,4 +1,4 @@
-import { promises as fs, readFileSync } from "node:fs";
+import { promises as fs } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { z } from "zod";
@@ -421,12 +421,13 @@ export async function loadRuntimeConfig(
       pluginProviders: pluginResult.providerProfiles
     }))
   );
+  const cliSettings = await resolveSettingsFromCli(argv);
   const settingsState = await measureStartupTiming("runtime:buildSessionSettingsState", () =>
     Promise.resolve(buildSessionSettingsState(paths, {
       project: projectSettings,
       user: userSettings,
       env: resolveSettingsFromEnv(env),
-      cli: resolveSettingsFromCli(argv)
+      cli: cliSettings
     }))
   );
   logStartupTiming("runtime:load:end", {
@@ -448,7 +449,7 @@ export async function loadRuntimeConfig(
     ],
     providerPluginProfiles: pluginResult.providerProfiles,
     providerPluginDiagnostics: pluginResult.diagnostics,
-    requestPatches: resolveRequestPatches(argv, env),
+    requestPatches: await resolveRequestPatches(argv, env),
     memory: {
       directory: env.AGENT_MEMORY_DIR || configRelativePath(
         paths.workspaceRoot,
@@ -638,7 +639,7 @@ function buildSourceMap<T extends object, Source extends string>(
 
   for (const key of Object.keys(effective) as Array<keyof T>) {
     let source = defaultSource;
-    // 这里故意与 mergeLayers 使用同一顺序，便于准确追踪“最终值来自哪一层”。
+    // 这里故意与 mergeLayers 使用同一顺序，便于准确追踪"最终值来自哪一层"。
     for (const layer of layers) {
       if (layer.values[key] !== undefined) {
         source = layer.source;
@@ -651,10 +652,10 @@ function buildSourceMap<T extends object, Source extends string>(
   return sources;
 }
 
-function resolveRequestPatches(
+async function resolveRequestPatches(
   argv: string[],
   env: NodeJS.ProcessEnv
-): RequestPatchOperation[] {
+): Promise<RequestPatchOperation[]> {
   const directValue = getArgValue(argv, "--request-patch") ?? env.AGENT_OPENAI_REQUEST_PATCH;
   const fileValue = getArgValue(argv, "--request-patch-file") ?? env.AGENT_OPENAI_REQUEST_PATCH_FILE;
 
@@ -669,7 +670,7 @@ function resolveRequestPatches(
   if (fileValue) {
     const absolutePath = path.resolve(fileValue);
     try {
-      const raw = readFileSync(absolutePath, "utf8");
+      const raw = await fs.readFile(absolutePath, "utf8");
       return parseRequestPatchOperations(raw, absolutePath);
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
@@ -683,12 +684,12 @@ function resolveRequestPatches(
   );
 }
 
-function resolvePromptTextFromCli(options: {
+async function resolvePromptTextFromCli(options: {
   argv: string[];
   directFlag: string;
   fileFlag: string;
   label: string;
-}): string | undefined {
+}): Promise<string | undefined> {
   const directValue = getArgValue(options.argv, options.directFlag);
   const fileValue = getArgValue(options.argv, options.fileFlag);
 
@@ -699,7 +700,7 @@ function resolvePromptTextFromCli(options: {
   if (fileValue) {
     const absolutePath = path.resolve(fileValue);
     try {
-      return readFileSync(absolutePath, "utf8");
+      return await fs.readFile(absolutePath, "utf8");
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       throw new Error(`Failed to read ${options.label} file: ${absolutePath}. ${message}`);
@@ -1039,7 +1040,7 @@ export function normalizeApprovalMode(value: ApprovalModeInput | undefined): App
 }
 
 function serializeOptionalTextSetting(value: string | undefined): string | undefined {
-  // 空字符串是“显式清空用户层值”的标记，用于覆盖项目层默认值。
+  // 空字符串是"显式清空用户层值"的标记，用于覆盖项目层默认值。
   if (value === "") {
     return "";
   }
@@ -1128,13 +1129,13 @@ function parseModelContextWindowOverridesFromEnv(
   return Object.keys(parsed).length > 0 ? parsed : undefined;
 }
 
-function resolveSettingsFromCli(argv: string[]): Partial<SessionSettings> {
+async function resolveSettingsFromCli(argv: string[]): Promise<Partial<SessionSettings>> {
   return compactObject({
     approvalMode: hasFlag(argv, "--yolo") ? "full-access" : undefined,
     languagePreference: getArgValue(argv, "--lang"),
     personaPreset: resolvePersonaPreset(getArgValue(argv, "--persona-preset")),
     aiPersonalityPrompt: getArgValue(argv, "--persona"),
-    appendSystemPrompt: resolvePromptTextFromCli({
+    appendSystemPrompt: await resolvePromptTextFromCli({
       argv,
       directFlag: "--append-system-prompt",
       fileFlag: "--append-system-prompt-file",
@@ -1174,57 +1175,59 @@ async function ensureRuntimeStoragePaths(paths: RuntimePaths): Promise<RuntimeBo
   const existingPaths: string[] = [];
   const failedPaths: RuntimeBootstrapFailure[] = [];
 
-  for (const directory of getRuntimeBootstrapDirectories(paths)) {
-    logStartupTiming("runtime:ensureStoragePath:start", { directory });
-    try {
-      const stat = await fs.stat(directory);
-      if (!stat.isDirectory()) {
-        failedPaths.push({
-          path: directory,
-          error: "path exists but is not a directory"
-        });
-        logStartupTiming("runtime:ensureStoragePath:end", {
-          directory,
-          status: "failed-not-directory"
-        });
-        continue;
-      }
-
-      existingPaths.push(directory);
-      logStartupTiming("runtime:ensureStoragePath:end", {
-        directory,
-        status: "existing"
-      });
-    } catch (error) {
-      if (!isMissingFileError(error)) {
-        failedPaths.push({
-          path: directory,
-          error: error instanceof Error ? error.message : String(error)
-        });
-        logStartupTiming("runtime:ensureStoragePath:end", {
-          directory,
-          status: "failed-stat"
-        });
-        continue;
-      }
-
+  // 所有目录创建操作互不依赖，并行执行以加速启动。
+  const results = await Promise.all(
+    getRuntimeBootstrapDirectories(paths).map(async (directory) => {
+      logStartupTiming("runtime:ensureStoragePath:start", { directory });
       try {
-        await fs.mkdir(directory, { recursive: true });
-        createdPaths.push(directory);
+        const stat = await fs.stat(directory);
+        if (!stat.isDirectory()) {
+          logStartupTiming("runtime:ensureStoragePath:end", {
+            directory,
+            status: "failed-not-directory"
+          });
+          return { type: "failed" as const, path: directory, error: "path exists but is not a directory" };
+        }
+
         logStartupTiming("runtime:ensureStoragePath:end", {
           directory,
-          status: "created"
+          status: "existing"
         });
-      } catch (mkdirError) {
-        failedPaths.push({
-          path: directory,
-          error: mkdirError instanceof Error ? mkdirError.message : String(mkdirError)
-        });
-        logStartupTiming("runtime:ensureStoragePath:end", {
-          directory,
-          status: "failed-mkdir"
-        });
+        return { type: "existing" as const, path: directory };
+      } catch (error) {
+        if (!isMissingFileError(error)) {
+          logStartupTiming("runtime:ensureStoragePath:end", {
+            directory,
+            status: "failed-stat"
+          });
+          return { type: "failed" as const, path: directory, error: error instanceof Error ? error.message : String(error) };
+        }
+
+        try {
+          await fs.mkdir(directory, { recursive: true });
+          logStartupTiming("runtime:ensureStoragePath:end", {
+            directory,
+            status: "created"
+          });
+          return { type: "created" as const, path: directory };
+        } catch (mkdirError) {
+          logStartupTiming("runtime:ensureStoragePath:end", {
+            directory,
+            status: "failed-mkdir"
+          });
+          return { type: "failed" as const, path: directory, error: mkdirError instanceof Error ? mkdirError.message : String(mkdirError) };
+        }
       }
+    })
+  );
+
+  for (const result of results) {
+    if (result.type === "failed") {
+      failedPaths.push({ path: result.path, error: result.error });
+    } else if (result.type === "created") {
+      createdPaths.push(result.path);
+    } else {
+      existingPaths.push(result.path);
     }
   }
 
