@@ -3502,6 +3502,10 @@ function normalizeSettingsPatch(
 ): Partial<SessionSettings> {
   const normalized: Partial<SessionSettings> = {};
 
+  if ("uiLanguage" in patch) {
+    normalized.uiLanguage = patch.uiLanguage === "zh" ? "zh" : "en";
+  }
+
   if ("approvalMode" in patch) {
     normalized.approvalMode = normalizeApprovalMode(patch.approvalMode);
   }

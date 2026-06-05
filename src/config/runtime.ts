@@ -92,7 +92,10 @@ export type ConnectionConfigSaveTarget = "user" | "project";
 export type ApprovalMode = "read-only" | "default" | "auto-review" | "full-access";
 type ApprovalModeInput = ApprovalMode | "manual" | "auto";
 
+export type UiLocale = "en" | "zh";
+
 export interface SessionSettings extends PromptOverrideConfig {
+  uiLanguage: UiLocale;
   approvalMode: ApprovalMode;
   maxSteps: number;
   commandTimeoutMs: number;
@@ -241,6 +244,7 @@ type SessionSettingsFile = Omit<Partial<SessionSettings>, "snapshot" | "approval
 
 const SessionSettingsFileSchema: z.ZodType<SessionSettingsFile> = z
   .object({
+    uiLanguage: z.union([z.literal("en"), z.literal("zh")]).optional(),
     approvalMode: z.union([
       z.literal("read-only"),
       z.literal("default"),
@@ -894,6 +898,7 @@ function normalizeSessionSettings(
   workspaceRoot: string
 ): SessionSettings {
   return {
+    uiLanguage: input.uiLanguage === "zh" ? "zh" : "en",
     approvalMode: normalizeApprovalMode(input.approvalMode),
     maxSteps: clampPositiveInt(input.maxSteps, 50),
     commandTimeoutMs: clampPositiveInt(input.commandTimeoutMs, 120_000),
@@ -929,6 +934,7 @@ function serializeSessionSettings(
   workspaceRoot: string
 ): Partial<SessionSettings> {
   const serialized: Partial<SessionSettings> = {
+    uiLanguage: "uiLanguage" in settings ? settings.uiLanguage : undefined,
     approvalMode: "approvalMode" in settings ? settings.approvalMode : undefined,
     maxSteps: "maxSteps" in settings ? settings.maxSteps : undefined,
     commandTimeoutMs: "commandTimeoutMs" in settings ? settings.commandTimeoutMs : undefined,
@@ -1092,6 +1098,7 @@ function resolveSettingsFromEnv(env: NodeJS.ProcessEnv): Partial<SessionSettings
     snapshot: resolveSnapshotSettingsFromEnv(env),
     autoCompactTimeoutMs: parseOptionalPositiveInt(env.AGENT_AUTO_COMPACT_TIMEOUT_MS),
     autoCompactMaxFailures: parseOptionalPositiveInt(env.AGENT_AUTO_COMPACT_MAX_FAILURES),
+    uiLanguage: env.AGENT_UI_LANGUAGE === "zh" ? "zh" : env.AGENT_UI_LANGUAGE === "en" ? "en" : undefined,
     languagePreference: env.AGENT_LANGUAGE,
     personaPreset: resolvePersonaPreset(env.AGENT_PERSONA_PRESET),
     aiPersonalityPrompt: env.AGENT_AI_PERSONALITY,
@@ -1132,6 +1139,7 @@ function parseModelContextWindowOverridesFromEnv(
 async function resolveSettingsFromCli(argv: string[]): Promise<Partial<SessionSettings>> {
   return compactObject({
     approvalMode: hasFlag(argv, "--yolo") ? "full-access" : undefined,
+    uiLanguage: getArgValue(argv, "--ui-lang") === "zh" ? "zh" : getArgValue(argv, "--ui-lang") === "en" ? "en" : undefined,
     languagePreference: getArgValue(argv, "--lang"),
     personaPreset: resolvePersonaPreset(getArgValue(argv, "--persona-preset")),
     aiPersonalityPrompt: getArgValue(argv, "--persona"),

@@ -1,4 +1,5 @@
 import type { TodoItem } from "../../tools/types.js";
+import { t } from "../../i18n/index.js";
 import Box from "../runtime/ink-runtime/components/Box.js";
 import Text from "../runtime/ink-runtime/components/Text.js";
 import { terminalUiTheme } from "../theme/theme.js";
@@ -14,7 +15,7 @@ export function TodoPanel(props: { todos: TodoItem[] }) {
   return (
     <Box flexDirection="column" width="100%">
       <Text color={terminalUiTheme.colors.info} wrap="truncate-end">
-        Tasks {completedCount}/{props.todos.length}
+        {t("todoPanel.title", { completed: completedCount, total: props.todos.length })}
       </Text>
       {visibleTodos.map((todo, index) => (
         <Text
@@ -22,14 +23,14 @@ export function TodoPanel(props: { todos: TodoItem[] }) {
           color={getTodoColor(todo.status)}
           wrap="truncate-end"
         >
-          {getTodoPrefix(todo.status)}
+          {t(`todoPanel.prefix.${todo.status}`)}
           {" "}
           {todo.status === "in_progress" ? todo.activeForm : todo.content}
         </Text>
       ))}
       {hiddenCount > 0 ? (
         <Text color={terminalUiTheme.colors.subtle} wrap="truncate-end">
-          +{hiddenCount} more task{hiddenCount === 1 ? "" : "s"}
+          {t("todoPanel.hiddenTasks", { count: hiddenCount })}
         </Text>
       ) : null}
     </Box>
@@ -51,18 +52,6 @@ function sortTodos(todos: TodoItem[]) {
 
     return left.content.localeCompare(right.content);
   });
-}
-
-function getTodoPrefix(status: TodoItem["status"]) {
-  if (status === "completed") {
-    return "[x]";
-  }
-
-  if (status === "in_progress") {
-    return "[>]";
-  }
-
-  return "[ ]";
 }
 
 function getTodoColor(status: TodoItem["status"]) {

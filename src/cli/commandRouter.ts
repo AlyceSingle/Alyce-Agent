@@ -1,9 +1,10 @@
 import type { McpConfigScope, McpServerConfig } from "../mcp/types.js";
+import { t } from "../i18n/index.js";
 
 export type ReplCommandDefinition = {
   command: string;
   usage: string;
-  description: string;
+  descriptionKey: string;
   completion: string;
   searchPrefixes?: string[];
   group: "Core" | "Session" | "Connection" | "Trust" | "Tasks" | "Skills & MCP";
@@ -13,49 +14,49 @@ export const REPL_COMMAND_DEFINITIONS: ReplCommandDefinition[] = [
   {
     command: "/help",
     usage: "/help",
-    description: "Show this help",
+    descriptionKey: "command.help.description",
     completion: "/help",
     group: "Core"
   },
   {
     command: "/doctor",
     usage: "/doctor",
-    description: "Run local health checks",
+    descriptionKey: "command.doctor.description",
     completion: "/doctor",
     group: "Core"
   },
   {
     command: "/plan",
     usage: "/plan",
-    description: "Enter read-only planning mode",
+    descriptionKey: "command.plan.description",
     completion: "/plan",
     group: "Core"
   },
   {
     command: "/build",
     usage: "/build",
-    description: "Exit planning mode after confirmation",
+    descriptionKey: "command.planExit.description",
     completion: "/build",
     group: "Core"
   },
   {
     command: "/settings",
     usage: "/settings [session|connection]",
-    description: "Open session settings or the connection picker",
+    descriptionKey: "command.settings.description",
     completion: "/settings",
     group: "Connection"
   },
   {
     command: "/permissions",
     usage: "/permissions",
-    description: "Switch approval and access mode",
+    descriptionKey: "command.permissions.description",
     completion: "/permissions",
     group: "Connection"
   },
   {
     command: "/trust",
     usage: "/trust [status]",
-    description: "Trust this workspace so project-local Alyce config and assets can load",
+    descriptionKey: "command.trust.description",
     completion: "/trust",
     searchPrefixes: ["/trust status"],
     group: "Trust"
@@ -63,14 +64,14 @@ export const REPL_COMMAND_DEFINITIONS: ReplCommandDefinition[] = [
   {
     command: "/untrust",
     usage: "/untrust",
-    description: "Disable project-local Alyce config and assets for this workspace",
+    descriptionKey: "command.untrust.description",
     completion: "/untrust",
     group: "Trust"
   },
   {
     command: "/connect",
     usage: "/connect [provider ...]",
-    description: "Open provider connection picker",
+    descriptionKey: "command.connect.description",
     completion: "/connect",
     searchPrefixes: ["/connect "],
     group: "Connection"
@@ -78,7 +79,7 @@ export const REPL_COMMAND_DEFINITIONS: ReplCommandDefinition[] = [
   {
     command: "/logout",
     usage: "/logout <provider>",
-    description: "Remove a provider credential",
+    descriptionKey: "command.logout.description",
     completion: "/logout",
     searchPrefixes: ["/logout "],
     group: "Connection"
@@ -86,28 +87,28 @@ export const REPL_COMMAND_DEFINITIONS: ReplCommandDefinition[] = [
   {
     command: "/clear",
     usage: "/clear",
-    description: "Clear chat history",
+    descriptionKey: "command.clear.description",
     completion: "/clear",
     group: "Core"
   },
   {
     command: "/revert",
     usage: "/revert",
-    description: "Open revert history and choose how to restore code or conversation",
+    descriptionKey: "command.revert.description",
     completion: "/revert",
     group: "Session"
   },
   {
     command: "/diff",
     usage: "/diff",
-    description: "Show last Alyce turn and working tree diff summaries",
+    descriptionKey: "command.diff.description",
     completion: "/diff",
     group: "Session"
   },
   {
     command: "/resume",
     usage: "/resume [id|text]",
-    description: "Resume a previous project session",
+    descriptionKey: "command.resume.description",
     completion: "/resume",
     searchPrefixes: ["/resume "],
     group: "Session"
@@ -115,14 +116,14 @@ export const REPL_COMMAND_DEFINITIONS: ReplCommandDefinition[] = [
   {
     command: "/sessions",
     usage: "/sessions",
-    description: "List saved project sessions",
+    descriptionKey: "command.sessions.description",
     completion: "/sessions",
     group: "Session"
   },
   {
     command: "/remember",
     usage: "/remember [--session] <text>",
-    description: "Save note to session memory, optionally without persisting it",
+    descriptionKey: "command.memory.description",
     completion: "/remember",
     searchPrefixes: ["/remember ", "/remember --session"],
     group: "Session"
@@ -130,7 +131,7 @@ export const REPL_COMMAND_DEFINITIONS: ReplCommandDefinition[] = [
   {
     command: "/memory",
     usage: "/memory [clear [--all]]",
-    description: "Show or clear memory state",
+    descriptionKey: "command.memories.description",
     completion: "/memory",
     searchPrefixes: ["/memory clear", "/memory clear --all"],
     group: "Session"
@@ -138,7 +139,7 @@ export const REPL_COMMAND_DEFINITIONS: ReplCommandDefinition[] = [
   {
     command: "/tasks",
     usage: "/tasks [get|stop <id> | cleanup [--apply]]",
-    description: "Inspect or manage background subagent tasks",
+    descriptionKey: "command.tasks.description",
     completion: "/tasks",
     searchPrefixes: [
       "/tasks get",
@@ -151,14 +152,14 @@ export const REPL_COMMAND_DEFINITIONS: ReplCommandDefinition[] = [
   {
     command: "/processes",
     usage: "/processes",
-    description: "List managed background processes",
+    descriptionKey: "command.bg.description",
     completion: "/processes",
     group: "Tasks"
   },
   {
     command: "/stop",
     usage: "/stop <id>",
-    description: "Stop a managed background process",
+    descriptionKey: "command.bgstop.description",
     completion: "/stop",
     searchPrefixes: ["/stop "],
     group: "Tasks"
@@ -166,14 +167,14 @@ export const REPL_COMMAND_DEFINITIONS: ReplCommandDefinition[] = [
   {
     command: "/usage",
     usage: "/usage",
-    description: "Show session token, duration, and estimated cost usage",
+    descriptionKey: "command.usage.description",
     completion: "/usage",
     group: "Session"
   },
   {
     command: "/context",
     usage: "/context [text]",
-    description: "Show full next-turn AI context payload",
+    descriptionKey: "command.context.description",
     completion: "/context",
     searchPrefixes: ["/context "],
     group: "Session"
@@ -181,7 +182,7 @@ export const REPL_COMMAND_DEFINITIONS: ReplCommandDefinition[] = [
   {
     command: "/skills",
     usage: "/skills [<name> | enable|disable ... | refresh]",
-    description: "List, inspect, or enable local skills",
+    descriptionKey: "command.skills.description",
     completion: "/skills",
     searchPrefixes: ["/skills ", "/skills enable", "/skills disable", "/skills refresh"],
     group: "Skills & MCP"
@@ -189,7 +190,7 @@ export const REPL_COMMAND_DEFINITIONS: ReplCommandDefinition[] = [
   {
     command: "/mcp",
     usage: "/mcp <status|tools|resources|prompts|prompt|templates|login|add|remove|enable|disable> ...",
-    description: "Inspect or manage MCP servers",
+    descriptionKey: "command.mcp.description",
     completion: "/mcp",
     searchPrefixes: [
       "/mcp ",
@@ -210,14 +211,14 @@ export const REPL_COMMAND_DEFINITIONS: ReplCommandDefinition[] = [
   {
     command: "/model",
     usage: "/model [provider/model]",
-    description: "Open model picker or switch provider/model",
+    descriptionKey: "command.model.description",
     completion: "/model",
     group: "Connection"
   },
   {
     command: "/add-dir",
     usage: "/add-dir [--save] <path>",
-    description: "Allow an extra directory for this session",
+    descriptionKey: "command.allowDir.description",
     completion: "/add-dir",
     searchPrefixes: ["/add-dir ", "/add-dir --save"],
     group: "Connection"
@@ -225,7 +226,7 @@ export const REPL_COMMAND_DEFINITIONS: ReplCommandDefinition[] = [
   {
     command: "/exit",
     usage: "/exit",
-    description: "Quit",
+    descriptionKey: "command.quit.description",
     completion: "/exit",
     group: "Core"
   }
@@ -245,6 +246,14 @@ export function getReplCommandHelpLines(currentModel: string) {
     "Tasks",
     "Skills & MCP"
   ];
+  const groupLabels: Record<ReplCommandDefinition["group"], string> = {
+    "Core": t("command.group.core"),
+    "Session": t("command.group.session"),
+    "Connection": t("command.group.connection"),
+    "Trust": t("command.group.trust"),
+    "Tasks": t("command.group.tasks"),
+    "Skills & MCP": t("command.group.skillsMcp")
+  };
 
   for (const group of groups) {
     const commands = REPL_COMMAND_DEFINITIONS.filter((command) => command.group === group);
@@ -255,10 +264,10 @@ export function getReplCommandHelpLines(currentModel: string) {
     if (lines.length > 0) {
       lines.push("");
     }
-    lines.push(`${group}:`);
+    lines.push(`${groupLabels[group]}:`);
     lines.push(...commands.map((command) => {
       const suffix = command.command === "/model" ? ` (current: ${currentModel})` : "";
-      return `  ${command.usage.padEnd(usageWidth)}  ${command.description}${suffix}`;
+      return `  ${command.usage.padEnd(usageWidth)}  ${t(command.descriptionKey)}${suffix}`;
     }));
   }
 

@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import type { SessionHistoryListItem } from "../../core/session-history/types.js";
+import { t, formatDateTime } from "../../i18n/index.js";
 import Box from "../runtime/ink-runtime/components/Box.js";
 import Text from "../runtime/ink-runtime/components/Text.js";
 import useInput from "../runtime/ink-runtime/hooks/use-input.js";
@@ -63,10 +64,10 @@ export function SessionPickerDialog(props: {
 
   return (
     <Pane
-      title="Resume Session"
-      subtitle={`${props.sessions.length} saved project session${props.sessions.length === 1 ? "" : "s"}`}
+      title={t("sessionPicker.title")}
+      subtitle={t("sessionPicker.subtitle", { count: props.sessions.length })}
       accentColor={terminalUiTheme.colors.info}
-      footer="↑/↓ choose | Enter resume | Esc cancel"
+      footer={t("sessionPicker.footer")}
     >
       <Box flexDirection="column" width="100%">
         {visibleSessions.map((session, index) => {
@@ -84,11 +85,11 @@ export function SessionPickerDialog(props: {
               >
                 {isSelected ? ">" : " "}
                 {" "}
-                {session.title || "(session)"}
+                {session.title || t("sessionPicker.defaultTitle")}
               </Text>
               <Text color={terminalUiTheme.colors.subtle} wrap="truncate-end">
                 {"  "}
-                {idLabel} | {updatedAt} | {session.messageCount} messages
+                {idLabel} | {updatedAt} | {session.messageCount} {t("sessionPicker.messages")}
               </Text>
             </Box>
           );
@@ -99,15 +100,5 @@ export function SessionPickerDialog(props: {
 }
 
 function formatSessionTime(value: string): string {
-  const date = new Date(value);
-  if (Number.isNaN(date.getTime())) {
-    return value;
-  }
-
-  return date.toLocaleString("zh-CN", {
-    month: "2-digit",
-    day: "2-digit",
-    hour: "2-digit",
-    minute: "2-digit"
-  });
+  return formatDateTime(value);
 }

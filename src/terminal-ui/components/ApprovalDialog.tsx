@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import type { ToolApprovalRequest } from "../../tools/types.js";
+import { t } from "../../i18n/index.js";
 import { useRegisterOverlay } from "../context/overlayContext.js";
 import Box from "../runtime/ink-runtime/components/Box.js";
 import Text from "../runtime/ink-runtime/components/Text.js";
@@ -10,91 +11,91 @@ import { Pane } from "./Pane.js";
 
 type ApprovalOption = {
   id: PermissionDecision;
-  label: string;
-  description: string;
+  labelKey: string;
+  descriptionKey: string;
 };
 
 const APPROVAL_OPTIONS: ApprovalOption[] = [
   {
     id: "allow-once",
-    label: "Allow once",
-    description: "Approve only this request."
+    labelKey: "approvalDialog.option.allowOnce.label",
+    descriptionKey: "approvalDialog.option.allowOnce.description"
   },
   {
     id: "reject-once",
-    label: "Reject once",
-    description: "Deny only this request."
+    labelKey: "approvalDialog.option.rejectOnce.label",
+    descriptionKey: "approvalDialog.option.rejectOnce.description"
   },
   {
     id: "allow-kind-session",
-    label: "Allow this kind for session",
-    description: "Skip ordinary prompts for this permission kind until restart."
+    labelKey: "approvalDialog.option.allowKindSession.label",
+    descriptionKey: "approvalDialog.option.allowKindSession.description"
   },
   {
     id: "full-access-session",
-    label: "Switch to Full Access",
-    description: "Use Full Access mode and approve this request."
+    labelKey: "approvalDialog.option.fullAccessSession.label",
+    descriptionKey: "approvalDialog.option.fullAccessSession.description"
   }
 ];
 
 const SCOPED_APPROVAL_OPTIONS: ApprovalOption[] = [
   {
     id: "allow-once",
-    label: "Allow once",
-    description: "Approve only this request."
+    labelKey: "approvalDialog.option.allowOnce.label",
+    descriptionKey: "approvalDialog.option.allowOnce.description"
   },
   {
     id: "reject-once",
-    label: "Reject once",
-    description: "Deny only this request."
+    labelKey: "approvalDialog.option.rejectOnce.label",
+    descriptionKey: "approvalDialog.option.rejectOnce.description"
   },
   {
     id: "allow-scope-session",
-    label: "Allow directory for session",
-    description: "Skip ordinary prompts for this external directory until restart."
+    labelKey: "approvalDialog.option.allowScopeSession.label",
+    descriptionKey: "approvalDialog.option.allowScopeSession.description"
   },
   {
     id: "full-access-session",
-    label: "Switch to Full Access",
-    description: "Use Full Access mode and approve this request."
+    labelKey: "approvalDialog.option.fullAccessSession.label",
+    descriptionKey: "approvalDialog.option.fullAccessSession.description"
   }
 ];
 
 const MCP_TOOL_APPROVAL_OPTIONS: ApprovalOption[] = [
   {
     id: "allow-once",
-    label: "Allow once",
-    description: "Approve only this MCP tool call."
+    labelKey: "approvalDialog.option.allowOnce.label",
+    descriptionKey: "approvalDialog.option.allowOnce.mcpDescription"
   },
   {
     id: "reject-once",
-    label: "Reject once",
-    description: "Deny only this MCP tool call."
+    labelKey: "approvalDialog.option.rejectOnce.label",
+    descriptionKey: "approvalDialog.option.rejectOnce.mcpDescription"
   },
   {
     id: "allow-tool-session",
-    label: "Allow tool for session",
-    description: "Skip ordinary prompts for this MCP tool until restart."
+    labelKey: "approvalDialog.option.allowToolSession.label",
+    descriptionKey: "approvalDialog.option.allowToolSession.description"
   },
   {
     id: "ask-tool-persistent",
-    label: "Always ask for tool",
-    description: "Persist a user rule that keeps this MCP tool on ask for future calls."
+    labelKey: "approvalDialog.option.askToolPersistent.label",
+    descriptionKey: "approvalDialog.option.askToolPersistent.description"
   },
   {
     id: "allow-tool-persistent",
-    label: "Always allow tool",
-    description: "Persist a user rule that auto-allows this MCP tool."
+    labelKey: "approvalDialog.option.allowToolPersistent.label",
+    descriptionKey: "approvalDialog.option.allowToolPersistent.description"
   },
   {
     id: "deny-tool-persistent",
-    label: "Disable tool",
-    description: "Persist a user rule that denies this MCP tool."
+    labelKey: "approvalDialog.option.denyToolPersistent.label",
+    descriptionKey: "approvalDialog.option.denyToolPersistent.description"
   },
   {
     id: "full-access-session",
-    label: "Switch to Full Access",
-    description: "Use Full Access mode and approve this request."
+    labelKey: "approvalDialog.option.fullAccessSession.label",
+    descriptionKey: "approvalDialog.option.fullAccessSession.description"
   }
 ];
 
@@ -158,10 +159,10 @@ export function ApprovalDialog(props: {
 
   return (
     <Pane
-      title={`Permission Request · ${props.request.toolName}`}
+      title={t("approvalDialog.title", { toolName: props.request.toolName })}
       subtitle={props.request.title}
       accentColor={terminalUiTheme.colors.warning}
-      footer={`↑/↓ choose | 1-${approvalOptions.length} shortcut | Enter confirm | Esc reject`}
+      footer={t("approvalDialog.footer", { count: approvalOptions.length })}
     >
       <Text color={terminalUiTheme.colors.muted} wrap="truncate-end">
         {props.request.summary}
@@ -183,7 +184,7 @@ export function ApprovalDialog(props: {
               >
                 {isSelected ? ">" : " "}
                 {" "}
-                [{index + 1}] {option.label} | {option.description}
+                [{index + 1}] {t(option.labelKey)} | {t(option.descriptionKey)}
               </Text>
             </Box>
           );

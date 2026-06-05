@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
+import { t } from "../../i18n/index.js";
 import type {
   McpElicitationField,
   McpElicitationRequest,
@@ -166,14 +167,14 @@ export function McpElicitationDialog(props: {
   if (props.request.mode === "url") {
     return (
       <Pane
-        title={`MCP URL Request | ${props.request.serverName}`}
-        subtitle="Open external URL"
+        title={t("mcpElicitation.urlTitle", { serverName: props.request.serverName })}
+        subtitle={t("mcpElicitation.openExternalUrl")}
         accentColor={terminalUiTheme.colors.warning}
-        footer="Enter accept | N decline | D decline | Esc cancel"
+        footer={t("mcpElicitation.footer.accept")}
       >
         <Text wrap="wrap">{props.request.message}</Text>
         <Box flexDirection="column" marginTop={1}>
-          <Text color={terminalUiTheme.colors.warning}>Review the target URL before proceeding.</Text>
+          <Text color={terminalUiTheme.colors.warning}>{t("mcpElicitation.reviewUrl")}</Text>
           <Text color={terminalUiTheme.colors.info} wrap="wrap">
             {props.request.url}
           </Text>
@@ -194,22 +195,22 @@ export function McpElicitationDialog(props: {
 
   return (
     <Pane
-      title={`MCP Input | ${activeFormRequest.serverName}`}
-      subtitle={`Field ${fieldIndex + 1} of ${activeFormRequest.fields.length}`}
+      title={t("mcpElicitation.inputTitle", { serverName: activeFormRequest.serverName })}
+      subtitle={t("mcpElicitation.fieldProgress", { current: fieldIndex + 1, total: activeFormRequest.fields.length })}
       accentColor={terminalUiTheme.colors.info}
       footer={
         isTextField
-          ? "Enter continue | D decline | Esc cancel"
+          ? t("mcpElicitation.footer.continue")
           : currentField.kind === "multi_enum"
-            ? "Up/Down move | Space toggle | Enter continue | D decline | Esc cancel"
-            : "Up/Down move | Enter choose | D decline | Esc cancel"
+            ? t("mcpElicitation.footer.checkbox")
+            : t("mcpElicitation.footer.select")
       }
     >
       <Text wrap="wrap">{activeFormRequest.message}</Text>
 
       {previousAnswers.length > 0 ? (
         <Box flexDirection="column" marginTop={1}>
-          <Text color={terminalUiTheme.colors.subtle}>Answered so far</Text>
+          <Text color={terminalUiTheme.colors.subtle}>{t("mcpElicitation.answeredSoFar")}</Text>
           {previousAnswers.map((entry) => (
             <Text key={entry.label} color={terminalUiTheme.colors.muted} wrap="truncate-end">
               {entry.label}
@@ -324,8 +325,8 @@ function requiresTextInput(field: McpElicitationField): field is McpTextElicitat
 function getBrowseOptions(field: McpElicitationField) {
   if (field.kind === "boolean") {
     return [
-      { value: "true", label: "Yes" },
-      { value: "false", label: "No" }
+      { value: "true", label: t("mcpElicitation.yes") },
+      { value: "false", label: t("mcpElicitation.no") }
     ];
   }
 
@@ -375,13 +376,13 @@ function toggleSelectedValue(selected: string[], value: string) {
 
 function validateMultiSelect(field: McpMultiEnumElicitationField, value: string[]) {
   if (field.required && value.length === 0) {
-    return "Choose at least one option.";
+    return t("mcpElicitation.error.chooseAtLeastOne");
   }
   if (field.minItems !== undefined && value.length < field.minItems) {
-    return `Choose at least ${field.minItems} option(s).`;
+    return t("mcpElicitation.error.minItems", { count: field.minItems });
   }
   if (field.maxItems !== undefined && value.length > field.maxItems) {
-    return `Choose at most ${field.maxItems} option(s).`;
+    return t("mcpElicitation.error.maxItems", { count: field.maxItems });
   }
 
   return null;
@@ -401,7 +402,7 @@ function parseTextFieldValue(
       return { value: field.defaultValue };
     }
     if (field.required) {
-      return { error: "This field is required." };
+      return { error: t("mcpElicitation.error.required") };
     }
 
     return { value: undefined };
@@ -409,26 +410,26 @@ function parseTextFieldValue(
 
   if (field.kind === "string") {
     if (field.minLength !== undefined && trimmed.length < field.minLength) {
-      return { error: `Enter at least ${field.minLength} characters.` };
+      return { error: t("mcpElicitation.error.minLength", { min: field.minLength }) };
     }
     if (field.maxLength !== undefined && trimmed.length > field.maxLength) {
-      return { error: `Enter at most ${field.maxLength} characters.` };
+      return { error: t("mcpElicitation.error.maxLength", { max: field.maxLength }) };
     }
     return { value: trimmed };
   }
 
   const numericValue = Number(trimmed);
   if (!Number.isFinite(numericValue)) {
-    return { error: "Enter a valid number." };
+    return { error: t("mcpElicitation.error.validNumber") };
   }
   if (field.kind === "integer" && !Number.isInteger(numericValue)) {
-    return { error: "Enter a whole number." };
+    return { error: t("mcpElicitation.error.wholeNumber") };
   }
   if (field.minimum !== undefined && numericValue < field.minimum) {
-    return { error: `Enter a value >= ${field.minimum}.` };
+    return { error: t("mcpElicitation.error.minimum", { min: field.minimum }) };
   }
   if (field.maximum !== undefined && numericValue > field.maximum) {
-    return { error: `Enter a value <= ${field.maximum}.` };
+    return { error: t("mcpElicitation.error.maximum", { max: field.maximum }) };
   }
 
   return { value: numericValue };
@@ -452,14 +453,14 @@ function getTextFieldHint(field: McpTextElicitationField) {
       field.minLength !== undefined ? `min=${field.minLength}` : "",
       field.maxLength !== undefined ? `max=${field.maxLength}` : ""
     ].filter(Boolean);
-    return parts.length > 0 ? parts.join(" | ") : "Enter a value.";
+    return parts.length > 0 ? parts.join(" | ") : t("mcpElicitation.typeValue");
   }
 
   const parts = [
     field.minimum !== undefined ? `min=${field.minimum}` : "",
     field.maximum !== undefined ? `max=${field.maximum}` : ""
   ].filter(Boolean);
-  return parts.length > 0 ? parts.join(" | ") : "Enter a numeric value.";
+  return parts.length > 0 ? parts.join(" | ") : t("mcpElicitation.enterNumeric");
 }
 
 function buildTextPlaceholder(field: McpTextElicitationField) {
@@ -470,7 +471,7 @@ function buildTextPlaceholder(field: McpTextElicitationField) {
     return String(field.defaultValue);
   }
 
-  return field.required ? "Type a value..." : "Leave blank to skip...";
+  return field.required ? t("mcpElicitation.typeValue") : t("mcpElicitation.leaveBlank");
 }
 
 function formatAnswerValue(value: string | number | boolean | string[] | undefined) {
@@ -478,7 +479,7 @@ function formatAnswerValue(value: string | number | boolean | string[] | undefin
     return value.join(", ");
   }
   if (typeof value === "boolean") {
-    return value ? "Yes" : "No";
+    return value ? t("mcpElicitation.yes") : t("mcpElicitation.no");
   }
   if (value === undefined) {
     return "";

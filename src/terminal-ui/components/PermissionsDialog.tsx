@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import type { ApprovalMode } from "../../config/runtime.js";
+import { t } from "../../i18n/index.js";
 import { useRegisterOverlay } from "../context/overlayContext.js";
 import Box from "../runtime/ink-runtime/components/Box.js";
 import Text from "../runtime/ink-runtime/components/Text.js";
@@ -9,33 +10,13 @@ import { Pane } from "./Pane.js";
 
 const PERMISSION_MODE_OPTIONS: Array<{
   id: ApprovalMode;
-  label: string;
-  description: string;
+  labelKey: string;
+  descriptionKey: string;
 }> = [
-  {
-    id: "read-only",
-    label: "Read Only",
-    description:
-      "Codex can read files in the current workspace. Approval is required to edit files or access the internet."
-  },
-  {
-    id: "default",
-    label: "Default",
-    description:
-      "Codex can read and edit files in the current workspace, and run commands. Approval is required to access the internet or edit other files."
-  },
-  {
-    id: "auto-review",
-    label: "Auto-review",
-    description:
-      "Same workspace-write permissions as Default, but eligible on-request approvals are routed through the auto-reviewer subagent."
-  },
-  {
-    id: "full-access",
-    label: "Full Access",
-    description:
-      "Codex can edit files outside this workspace and access the internet without asking for approval. Exercise caution when using."
-  }
+  { id: "read-only", labelKey: "permissionsDialog.option.readOnly.label", descriptionKey: "permissionsDialog.option.readOnly.description" },
+  { id: "default", labelKey: "permissionsDialog.option.default.label", descriptionKey: "permissionsDialog.option.default.description" },
+  { id: "auto-review", labelKey: "permissionsDialog.option.autoReview.label", descriptionKey: "permissionsDialog.option.autoReview.description" },
+  { id: "full-access", labelKey: "permissionsDialog.option.fullAccess.label", descriptionKey: "permissionsDialog.option.fullAccess.description" }
 ];
 
 export function PermissionsDialog(props: {
@@ -85,16 +66,16 @@ export function PermissionsDialog(props: {
 
   return (
     <Pane
-      title="Permissions"
-      subtitle="Choose approval mode"
+      title={t("permissionsDialog.title")}
+      subtitle={t("permissionsDialog.subtitle")}
       accentColor={terminalUiTheme.colors.chrome}
-      footer="↑/↓ choose | 1-4 shortcut | Enter confirm | Esc close"
+      footer={t("permissionsDialog.footer")}
     >
       <Box flexDirection="column" width="100%">
         {PERMISSION_MODE_OPTIONS.map((option, index) => {
           const isSelected = selectedIndex === index;
           const isCurrent = props.mode === option.id;
-          const label = `${option.label}${isCurrent ? " (current)" : ""}`;
+          const label = `${t(option.labelKey)}${isCurrent ? t("permissionsDialog.currentSuffix") : ""}`;
           const marker = isSelected ? ">" : " ";
           return (
             <Box key={option.id} width="100%" flexDirection="column" marginBottom={1}>
@@ -110,7 +91,7 @@ export function PermissionsDialog(props: {
                   color={isSelected ? terminalUiTheme.colors.chrome : terminalUiTheme.colors.subtle}
                   wrap="wrap"
                 >
-                  {option.description}
+                  {t(option.descriptionKey)}
                 </Text>
               </Box>
             </Box>

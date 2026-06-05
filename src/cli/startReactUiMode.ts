@@ -4,6 +4,7 @@ import {
   logStartupTiming,
   measureStartupTiming
 } from "../core/startup/startupTiming.js";
+import { setLocale } from "../i18n/index.js";
 
 export async function startReactUiMode(argv: string[], env: NodeJS.ProcessEnv) {
   logStartupTiming("startReactUiMode:entered", {
@@ -28,6 +29,7 @@ export async function startReactUiMode(argv: string[], env: NodeJS.ProcessEnv) {
   const runtime = await measureStartupTiming("startReactUiMode:createSessionRuntime", () =>
     createSessionRuntime(argv, env)
   );
+  setLocale(runtime.getSettings().uiLanguage);
   const startupContext = await measureStartupTiming(
     "startReactUiMode:loadStartupContext",
     () => loadStartupContextFromArgs(argv, {

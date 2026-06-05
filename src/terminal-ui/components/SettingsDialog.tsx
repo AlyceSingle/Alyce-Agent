@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { t } from "../../i18n/index.js";
 import type {
   SessionSettings,
   SessionSettingsState
@@ -17,6 +18,7 @@ type EditableConfig = SessionSettings;
 type FieldDefinition = {
   key: keyof SessionSettings;
   label: string;
+  labelKey?: string;
   type: "text" | "number" | "toggle" | "select";
   options?: string[];
 };
@@ -25,99 +27,123 @@ const PERSONA_OPTIONS = ["", ...getBuiltinPersonaPresetNames()];
 
 const FIELD_DEFINITIONS: FieldDefinition[] = [
   {
+    key: "uiLanguage",
+    label: "UI Language",
+    labelKey: "settingsDialog.field.uiLanguage",
+    type: "select",
+    options: ["en", "zh"]
+  },
+  {
     key: "approvalMode",
     label: "Approval Mode",
+    labelKey: "settingsDialog.field.approvalMode",
     type: "select",
     options: ["read-only", "default", "auto-review", "full-access"]
   },
   {
     key: "personaPreset",
     label: "Persona Preset",
+    labelKey: "settingsDialog.field.personaPreset",
     type: "select",
     options: PERSONA_OPTIONS
   },
   {
     key: "aiPersonalityPrompt",
     label: "Persona Overlay",
+    labelKey: "settingsDialog.field.personaOverlay",
     type: "text"
   },
   {
     key: "appendSystemPrompt",
     label: "Append Prompt",
+    labelKey: "settingsDialog.field.appendPrompt",
     type: "text"
   },
-  { key: "languagePreference", label: "Language", type: "text" },
-  { key: "sessionMemoryEnabled", label: "Session Memory", type: "toggle" },
+  { key: "languagePreference", label: "Language", labelKey: "settingsDialog.field.language", type: "text" },
+  { key: "sessionMemoryEnabled", label: "Session Memory", labelKey: "settingsDialog.field.sessionMemory", type: "toggle" },
   {
     key: "scrollAccelerationEnabled",
     label: "Scroll Acceleration",
+    labelKey: "settingsDialog.field.scrollAcceleration",
     type: "toggle"
   },
   {
     key: "historyPagingEnabled",
     label: "History Paging",
+    labelKey: "settingsDialog.field.historyPaging",
     type: "toggle"
   },
   {
     key: "messageTimestampsEnabled",
     label: "Current System Time",
+    labelKey: "settingsDialog.field.currentSystemTime",
     type: "toggle"
   },
   {
     key: "markdownMessageRenderingEnabled",
     label: "Markdown Messages",
+    labelKey: "settingsDialog.field.markdownMessages",
     type: "toggle"
   },
   {
     key: "markdownToolMessageRenderingEnabled",
     label: "Tool Markdown",
+    labelKey: "settingsDialog.field.toolMarkdown",
     type: "toggle"
   },
   {
     key: "thinkingMessagesExpandedByDefault",
     label: "THINK Default Expanded",
+    labelKey: "settingsDialog.field.thinkDefaultExpanded",
     type: "toggle"
   },
   {
     key: "conversationCompactionEnabled",
     label: "Conversation Compaction",
+    labelKey: "settingsDialog.field.conversationCompaction",
     type: "toggle"
   },
   {
     key: "modelContextWindowOverrides",
     label: "Context Window Overrides",
+    labelKey: "settingsDialog.field.contextWindowOverrides",
     type: "text"
   },
-  { key: "maxSteps", label: "Max Steps", type: "number" },
-  { key: "commandTimeoutMs", label: "Command Timeout", type: "number" },
-  { key: "scrollSpeed", label: "Scroll Speed", type: "number" },
+  { key: "maxSteps", label: "Max Steps", labelKey: "settingsDialog.field.maxSteps", type: "number" },
+  { key: "commandTimeoutMs", label: "Command Timeout", labelKey: "settingsDialog.field.commandTimeout", type: "number" },
+  { key: "scrollSpeed", label: "Scroll Speed", labelKey: "settingsDialog.field.scrollSpeed", type: "number" },
   {
     key: "maxMessagesWithoutVirtualization",
     label: "Max Non-Virtual Messages",
+    labelKey: "settingsDialog.field.maxNonVirtualMessages",
     type: "number"
   },
   {
     key: "markdownRenderMaxChars",
     label: "Markdown Max Chars",
+    labelKey: "settingsDialog.field.markdownMaxChars",
     type: "number"
   },
   {
     key: "diagnosticsPendingTimeoutMs",
     label: "Diagnostics Timeout",
+    labelKey: "settingsDialog.field.diagnosticsTimeout",
     type: "number"
   },
   {
     key: "diagnosticsFailureThreshold",
     label: "Diagnostics Fail Threshold",
+    labelKey: "settingsDialog.field.diagnosticsFailThreshold",
     type: "number"
   },
   {
     key: "diagnosticsFailureCooldownMs",
     label: "Diagnostics Cooldown",
+    labelKey: "settingsDialog.field.diagnosticsCooldown",
     type: "number"
   },
-  { key: "autoCompactTimeoutMs", label: "Auto Compact Timeout", type: "number" },
-  { key: "autoCompactMaxFailures", label: "Auto Compact Max Failures", type: "number" }
+  { key: "autoCompactTimeoutMs", label: "Auto Compact Timeout", labelKey: "settingsDialog.field.autoCompactTimeout", type: "number" },
+  { key: "autoCompactMaxFailures", label: "Auto Compact Max Failures", labelKey: "settingsDialog.field.autoCompactMaxFailures", type: "number" }
 ];
 
 function encodeTextValue(value: string | undefined) {
@@ -146,13 +172,13 @@ function decodeContextWindowOverrides(value: string): SessionSettings["modelCont
     // 允许 pattern 自身包含 "="，因此从最后一个 "=" 开始切分。
     const separatorIndex = entry.lastIndexOf("=");
     if (separatorIndex <= 0) {
-      throw new Error("Context Window Overrides must use pattern=tokens entries separated by commas.");
+      throw new Error(t("settingsDialog.error.contextWindowFormat"));
     }
 
     const pattern = entry.slice(0, separatorIndex).trim();
     const tokens = Number(entry.slice(separatorIndex + 1).trim());
     if (!pattern || !Number.isFinite(tokens) || tokens <= 0) {
-      throw new Error("Context Window Overrides entries must have a non-empty pattern and positive token count.");
+      throw new Error(t("settingsDialog.error.contextWindowEntry"));
     }
 
     overrides[pattern] = Math.trunc(tokens);
@@ -172,6 +198,9 @@ function getFieldValue(config: EditableConfig, field: FieldDefinition): string {
   }
 
   if (field.type === "select") {
+    if (field.key === "uiLanguage") {
+      return value === "zh" ? "中文" : "English";
+    }
     return String(value ?? "");
   }
 
@@ -189,15 +218,15 @@ function getFieldValue(config: EditableConfig, field: FieldDefinition): string {
 function getSourceLabel(source: string) {
   switch (source) {
     case "project":
-      return "project file";
+      return t("settingsDialog.source.projectFile");
     case "user":
-      return "user file";
+      return t("settingsDialog.source.userFile");
     case "env":
-      return "environment";
+      return t("settingsDialog.source.environment");
     case "cli":
-      return "CLI flag";
+      return t("settingsDialog.source.cliFlag");
     default:
-      return "built-in default";
+      return t("settingsDialog.source.builtInDefault");
   }
 }
 
@@ -396,10 +425,10 @@ export function SettingsDialog(props: {
 
   return (
     <Pane
-      title="Settings"
-      subtitle={props.reason ?? "Session settings"}
+      title={t("settingsDialog.title")}
+      subtitle={props.reason ?? t("settingsDialog.subtitle")}
       accentColor={terminalUiTheme.colors.chrome}
-      footer="↑/↓ move | Enter edit | S save | Esc close"
+      footer={t("settingsDialog.footer")}
     >
       <Box flexDirection="column" marginTop={1} width="100%">
         {visibleFields.map((field, index) => {
@@ -417,7 +446,7 @@ export function SettingsDialog(props: {
               >
                 {isSelected ? ">" : " "}
                 {" "}
-                {field.label}: {valueLabel}
+                {t(field.labelKey ?? field.label)}: {valueLabel}
               </Text>
             </Box>
           );
@@ -426,58 +455,58 @@ export function SettingsDialog(props: {
       {currentField && sourceInfo ? (
         <Box flexDirection="column" marginTop={1} width="100%">
           <Text color={terminalUiTheme.colors.subtle} wrap="truncate-end">
-            Current field: {currentField.label}
+            {t("settingsDialog.currentField")} {t(currentField.labelKey ?? currentField.label)}
           </Text>
           <Text color={terminalUiTheme.colors.subtle} wrap="truncate-end">
-            Source: {getSourceLabel(sourceInfo.source)}
+            {t("settingsDialog.source")} {getSourceLabel(sourceInfo.source)}
             {" | "}
-            Save target: {normalizeInlineValue(sourceInfo.saveTargetPath, "(none)")}
+            {t("settingsDialog.saveTarget")} {normalizeInlineValue(sourceInfo.saveTargetPath, "(none)")}
           </Text>
           {sourceInfo.fallbackPath ? (
             <Text color={terminalUiTheme.colors.subtle} wrap="truncate-end">
-              Project fallback: {normalizeInlineValue(sourceInfo.fallbackPath, "(none)")}
+              {t("settingsDialog.projectFallback")} {normalizeInlineValue(sourceInfo.fallbackPath, "(none)")}
             </Text>
           ) : null}
           {hasRuntimeOverride ? (
             <Text color={terminalUiTheme.colors.warning} wrap="truncate-end">
-              {`This field is currently overridden by ${sourceInfo.source}. Saved changes will apply after the override is removed.`}
+              {t("settingsDialog.overrideWarning", { source: sourceInfo.source })}
             </Text>
           ) : null}
           {isEditing ? (
             <Text color={terminalUiTheme.colors.chrome} wrap="truncate-end">
-              Draft: {normalizeInlineValue(draftValue, "")}
+              {t("settingsDialog.draft")} {normalizeInlineValue(draftValue, "")}
             </Text>
           ) : (
             <Text color={terminalUiTheme.colors.subtle} wrap="truncate-end">
               {currentField.key === "modelContextWindowOverrides"
-                  ? "Use comma-separated pattern=tokens entries, for example custom fast=512000."
+                  ? t("settingsDialog.help.contextWindowOverrides")
                   : currentField.key === "markdownToolMessageRenderingEnabled"
-                    ? "When off, tool results always use plain/code sections even if markdown-capable."
+                    ? t("settingsDialog.help.toolMarkdown")
                   : currentField.key === "thinkingMessagesExpandedByDefault"
-                    ? "When off, THINK messages start collapsed and can still be expanded by clicking them."
+                    ? t("settingsDialog.help.thinkDefaultExpanded")
                   : currentField.key === "diagnosticsPendingTimeoutMs"
-                    ? "Background diagnostics are marked failed after this timeout."
+                    ? t("settingsDialog.help.diagnosticsTimeout")
                     : currentField.key === "diagnosticsFailureThreshold"
-                      ? "Open diagnostics circuit breaker after this many consecutive failures."
+                      ? t("settingsDialog.help.diagnosticsFailThreshold")
                       : currentField.key === "diagnosticsFailureCooldownMs"
-                        ? "Circuit breaker cooldown before diagnostics retry automatically."
+                        ? t("settingsDialog.help.diagnosticsCooldown")
                     : currentField.key === "scrollSpeed"
-                      ? "Scroll speed applies to line-by-line scrolling. Valid range: 1-8."
+                      ? t("settingsDialog.help.scrollSpeed")
                       : currentField.key === "scrollAccelerationEnabled"
-                        ? "When on, consecutive line scroll input ramps speed up within a short window."
+                        ? t("settingsDialog.help.scrollAcceleration")
                         : currentField.key === "historyPagingEnabled"
-                          ? "Experimental: resume long sessions with recent messages first, then load older chunks near the top."
+                          ? t("settingsDialog.help.historyPaging")
                   : currentField.type === "text"
-                  ? "Text fields accept \\n for line breaks."
+                  ? t("settingsDialog.help.text")
                   : currentField.type === "number"
-                    ? "Number fields are persisted as positive integers."
-                    : "Toggle or cycle this field with Enter. Not set is saved as an explicit clear value."}
+                    ? t("settingsDialog.help.number")
+                    : t("settingsDialog.help.toggle")}
             </Text>
           )}
         </Box>
       ) : null}
       <Text color={terminalUiTheme.colors.subtle} wrap="truncate-end">
-        External path access is available directly on the local filesystem.
+        {t("settingsDialog.externalPath")}
       </Text>
       {errorText ? (
         <Text color={terminalUiTheme.colors.danger} wrap="truncate-end">
@@ -486,7 +515,7 @@ export function SettingsDialog(props: {
       ) : null}
       {isSaving ? (
         <Text color={terminalUiTheme.colors.info} wrap="truncate-end">
-          Saving...
+          {t("settingsDialog.saving")}
         </Text>
       ) : null}
     </Pane>
@@ -513,11 +542,11 @@ export function SettingsDialog(props: {
       if (field.type === "number") {
         const parsed = Number(draftValue);
         if (!Number.isFinite(parsed) || parsed <= 0) {
-          throw new Error(`${field.label} must be a positive number.`);
+          throw new Error(t("settingsDialog.error.positiveNumber", { field: t(field.labelKey ?? field.label) }));
         }
 
         if (field.key === "scrollSpeed" && parsed > 8) {
-          throw new Error("Scroll Speed must be between 1 and 8.");
+          throw new Error(t("settingsDialog.error.scrollSpeedRange"));
         }
 
         setConfig((current) => ({

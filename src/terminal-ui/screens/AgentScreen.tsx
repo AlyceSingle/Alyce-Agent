@@ -7,7 +7,7 @@ import useStdout from "../runtime/ink-runtime/hooks/use-stdout.js";
 import useTerminalSize from "../runtime/ink-runtime/hooks/use-terminal-size.js";
 import { FullscreenLayout } from "../components/FullscreenLayout.js";
 import { MessageList, type MessageListHandle } from "../components/MessageList.js";
-import { INPUT_LOCKED_PLACEHOLDER, PromptInput } from "../components/PromptInput.js";
+import { getInputLockedPlaceholder, PromptInput } from "../components/PromptInput.js";
 import { StatusBar } from "../components/StatusBar.js";
 import { TodoPanel } from "../components/TodoPanel.js";
 import { TaskPanel } from "../components/TaskPanel.js";
@@ -431,7 +431,7 @@ export function AgentScreen(props: { controller: SessionController }) {
       : undefined;
   const promptDisabledPlaceholder =
     isLoading && !hasDialog
-      ? INPUT_LOCKED_PLACEHOLDER
+      ? getInputLockedPlaceholder()
       : undefined;
 
   const overlay =

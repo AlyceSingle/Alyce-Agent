@@ -27,6 +27,7 @@ function createMessage(id: string): TerminalUiMessage {
 function createSettingsState(): SessionSettingsState {
   return {
     effective: {
+      uiLanguage: "en",
       approvalMode: "default",
       maxSteps: 50,
       commandTimeoutMs: 120_000,
@@ -64,6 +65,7 @@ function createSettingsState(): SessionSettingsState {
     env: {},
     cli: {},
     sources: {
+      uiLanguage: "default",
       approvalMode: "default",
       maxSteps: "default",
       commandTimeoutMs: "default",

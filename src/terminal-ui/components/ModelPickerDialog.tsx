@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
+import { t } from "../../i18n/index.js";
 import type { ConnectionConfigState, SessionSettings } from "../../config/runtime.js";
 import { getModelAdapterAvailability } from "../../core/api/modelAdapters.js";
 import { formatModelRef, parseModelRef, resolveModelProfile } from "../../core/providers/resolveModel.js";
@@ -152,14 +153,14 @@ export function ModelPickerDialog(props: {
         width={panelWidth}
       >
         <Pane
-          title="Switch model"
-          subtitle={`current ${currentDisplay}`}
+          title={t("modelPicker.title")}
+          subtitle={t("modelPicker.current", { model: currentDisplay })}
           accentColor={terminalUiTheme.colors.chrome}
-          footer="Type to search | Up/Down choose | Enter switch | Esc cancel"
+          footer={t("modelPicker.footer")}
         >
           {props.refreshState.status === "loading" ? (
             <Text color={terminalUiTheme.colors.info} wrap="truncate-end">
-              Refreshing {props.refreshState.providerLabel} models...
+              {t("modelPicker.refreshing", { provider: props.refreshState.providerLabel })}
             </Text>
           ) : (
             <ModelListView
@@ -170,12 +171,12 @@ export function ModelPickerDialog(props: {
           )}
           {props.refreshState.status === "ready" && props.refreshState.source === "fallback" ? (
             <Text color={terminalUiTheme.colors.warning} wrap="wrap">
-              Using local model list: {props.refreshState.error ?? "live refresh unavailable"}
+              {t("modelPicker.usingLocal", { error: props.refreshState.error ?? "live refresh unavailable" })}
             </Text>
           ) : null}
           {submitting ? (
             <Text color={terminalUiTheme.colors.info} wrap="truncate-end">
-              Switching model...
+              {t("modelPicker.switching")}
             </Text>
           ) : null}
           {error ? (
@@ -261,12 +262,12 @@ function ModelListView(props: {
   return (
     <Box flexDirection="column" width="100%">
       <Text color={terminalUiTheme.colors.muted} wrap="truncate-end">
-        Search {props.query}
+        {t("modelPicker.search")} {props.query}
         <Text inverse>{" "}</Text>
       </Text>
       {props.options.length === 0 ? (
         <Text color={terminalUiTheme.colors.warning} wrap="truncate-end">
-          No models match this search.
+          {t("modelPicker.noMatch")}
         </Text>
       ) : (
         window.options.map((option, index) => {
@@ -290,6 +291,17 @@ function ModelListView(props: {
       )}
     </Box>
   );
+}
+
+function translateStatusLabel(status: string): string {
+  switch (status) {
+    case "ready": return t("modelPicker.status.ready");
+    case "current": return t("modelPicker.status.current");
+    case "needs baseURL": return t("modelPicker.status.needsBaseURL");
+    case "needs key": return t("modelPicker.status.needsKey");
+    case "unavailable": return t("modelPicker.status.unavailable");
+    default: return status;
+  }
 }
 
 function ModelOptionLine(props: {
@@ -318,7 +330,7 @@ function ModelOptionLine(props: {
       {labelSuffix}
       {" "}
       <Text color={statusColor}>
-        {props.option.status}
+        {translateStatusLabel(props.option.status)}
       </Text>
       {props.selected ? <Text inverse>{" "}</Text> : null}
     </Text>

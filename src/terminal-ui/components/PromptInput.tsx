@@ -8,13 +8,16 @@ import Text from "../runtime/ink-runtime/components/Text.js";
 import useTerminalSize from "../runtime/ink-runtime/hooks/use-terminal-size.js";
 import type { TerminalKey } from "../runtime/input.js";
 import { logLayoutTrace } from "../runtime/utils/layoutTrace.js";
+import { t } from "../../i18n/index.js";
 import { terminalUiTheme } from "../theme/theme.js";
 import TextInput from "./TextInput.js";
 
 const PROMPT_INPUT_VIEWPORT_OFFSET = 8;
 const MAX_VISIBLE_SLASH_COMMAND_SUGGESTIONS = 10;
-const DEFAULT_PROMPT_PLACEHOLDER = "Ask Alyce to inspect, edit, or explain something...";
-export const INPUT_LOCKED_PLACEHOLDER = "Input locked while Alyce is working. Press ESC to interrupt.";
+
+export function getInputLockedPlaceholder(): string {
+  return t("promptInput.placeholder.locked");
+}
 
 const SLASH_COMMAND_SEARCH_INDEX = REPL_COMMAND_DEFINITIONS.map((command) => ({
   command,
@@ -95,7 +98,7 @@ export function resolvePromptPlaceholderState(options: {
     options.disabledPlaceholder.trim().length > 0;
 
   return {
-    text: useDisabledPlaceholder ? options.disabledPlaceholder! : DEFAULT_PROMPT_PLACEHOLDER,
+    text: useDisabledPlaceholder ? options.disabledPlaceholder! : t("promptInput.placeholder.default"),
     color: useDisabledPlaceholder
       ? terminalUiTheme.colors.warning
       : terminalUiTheme.colors.inputPlaceholder,
@@ -291,7 +294,7 @@ export function PromptInput(props: {
   const statusHint = hasDisabledReason
     ? props.disabledReason
     : !props.disabled && escClearPending
-      ? "Press Esc again to clear input."
+      ? t("promptInput.hint.escClear")
       : props.sublineText;
   const placeholderState = resolvePromptPlaceholderState({
     disabled: props.disabled,
@@ -383,7 +386,7 @@ function SlashCommandSuggestions(props: {
             {suggestion.command.padEnd(commandWidth)}
             {"  "}
             <Text color={selected ? terminalUiTheme.colors.chrome : terminalUiTheme.colors.subtle}>
-              {suggestion.description}
+              {t(suggestion.descriptionKey)}
             </Text>
           </Text>
         );

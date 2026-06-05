@@ -8,6 +8,7 @@ import Box from "../runtime/ink-runtime/components/Box.js";
 import Text from "../runtime/ink-runtime/components/Text.js";
 import useInput from "../runtime/ink-runtime/hooks/use-input.js";
 import { terminalUiTheme } from "../theme/theme.js";
+import { t, formatDateTime } from "../../i18n/index.js";
 import { Pane } from "./Pane.js";
 
 const VISIBLE_COUNT = 7;
@@ -49,31 +50,31 @@ export function RewindPickerDialog(props: {
     if (confirmingPoint.canRestoreCode) {
       options.push({
         mode: "code-and-conversation",
-        label: "Restore code and conversation",
-        description: "Restore tracked file edits and remove later messages."
+        label: t("rewindPicker.confirmOption.codeAndConversation.label"),
+        description: t("rewindPicker.confirmOption.codeAndConversation.description")
       });
     }
 
     if (confirmingPoint.canRestoreFilesOnly) {
       options.push({
         mode: "files-only",
-        label: "Restore code only",
-        description: "Restore tracked file edits and keep the conversation unchanged."
+        label: t("rewindPicker.confirmOption.filesOnly.label"),
+        description: t("rewindPicker.confirmOption.filesOnly.description")
       });
     }
 
     options.push({
       mode: "conversation",
-      label: "Restore conversation",
+      label: t("rewindPicker.confirmOption.conversation.label"),
       description: confirmingPoint.hasCodeChanges
-        ? "Remove later messages only; current file changes stay on disk."
-        : "Remove later messages and put this prompt back in the input."
+        ? t("rewindPicker.confirmOption.conversation.descriptionWithChanges")
+        : t("rewindPicker.confirmOption.conversation.descriptionWithoutChanges")
     });
 
     options.push({
       mode: "back",
-      label: "Back",
-      description: "Return to the rewind list."
+      label: t("rewindPicker.confirmOption.back.label"),
+      description: t("rewindPicker.confirmOption.back.description")
     });
 
     return options;
@@ -151,13 +152,13 @@ export function RewindPickerDialog(props: {
   const visiblePoints = props.points.slice(startIndex, startIndex + VISIBLE_COUNT);
 
   const footer = confirmingPoint
-    ? "↑/↓ choose | Enter restore | Esc back | q cancel"
-    : "↑/↓ choose | Enter options | Esc cancel | q cancel";
+    ? t("rewindPicker.footer.confirm")
+    : t("rewindPicker.footer.list");
 
   return (
     <Pane
-      title="Revert"
-      subtitle={`${props.points.length} restore point${props.points.length === 1 ? "" : "s"}`}
+      title={t("rewindPicker.title")}
+      subtitle={t("rewindPicker.subtitle", { count: props.points.length })}
       accentColor={terminalUiTheme.colors.warning}
       footer={footer}
     >
@@ -171,18 +172,18 @@ export function RewindPickerDialog(props: {
         ) : (
           <>
             <Text color={terminalUiTheme.colors.subtle} wrap="truncate-end">
-              Choose a restore point, then decide whether to restore code, conversation, or both.
+              {t("rewindPicker.instruction")}
             </Text>
             {visiblePoints.map((point, index) => {
               const actualIndex = startIndex + index;
               const isSelected = actualIndex === selectedIndex;
               const codeLabel = point.hasCodeChanges
                 ? point.canRestoreCode
-                  ? "full revert available"
+                  ? t("rewindPicker.codeLabel.fullRevertAvailable")
                   : point.canRestoreFilesOnly
-                    ? "code restore only"
-                    : "conversation only"
-                : "conversation restore";
+                    ? t("rewindPicker.codeLabel.codeRestoreOnly")
+                    : t("rewindPicker.codeLabel.conversationOnly")
+                : t("rewindPicker.codeLabel.conversationRestore");
 
               return (
                 <Box key={point.id} flexDirection="column" width="100%">
@@ -197,8 +198,7 @@ export function RewindPickerDialog(props: {
                   </Text>
                   <Text color={terminalUiTheme.colors.subtle} wrap="truncate-end">
                     {"  "}
-                    {formatPointTime(point.createdAt)} | removes {point.turnsRemoved} turn
-                    {point.turnsRemoved === 1 ? "" : "s"} | {codeLabel}
+                    {formatDateTime(point.createdAt)} | {t("rewindPicker.removes")} {point.turnsRemoved} {point.turnsRemoved === 1 ? t("rewindPicker.turnSingular") : t("rewindPicker.turnPlural")} | {codeLabel}
                   </Text>
                 </Box>
               );
@@ -218,25 +218,24 @@ function ConfirmView(props: {
   return (
     <Box flexDirection="column" width="100%">
       <Text color={terminalUiTheme.colors.subtle} wrap="truncate-end">
-        Restore to before:
+        {t("rewindPicker.confirmView.restoreToBefore")}
       </Text>
       <Box flexDirection="column" width="100%">
         <Text color={terminalUiTheme.colors.warning} wrap="truncate-end">
           {props.point.input}
         </Text>
         <Text color={terminalUiTheme.colors.subtle} wrap="truncate-end">
-          {formatPointTime(props.point.createdAt)} | removes {props.point.turnsRemoved} turn
-          {props.point.turnsRemoved === 1 ? "" : "s"}
+          {formatDateTime(props.point.createdAt)} | {t("rewindPicker.removes")} {props.point.turnsRemoved} {props.point.turnsRemoved === 1 ? t("rewindPicker.turnSingular") : t("rewindPicker.turnPlural")}
         </Text>
       </Box>
       {props.point.hasUnsafeToolActivity && !props.point.canRestoreCode ? (
         <Text color={terminalUiTheme.colors.warning} wrap="truncate-end">
-          Full revert is unavailable because some later side effects cannot be reversed. You can still restore tracked files only when snapshots are available.
+          {t("rewindPicker.warning.fullRevertUnavailable")}
         </Text>
       ) : null}
       {!props.point.canRestoreFilesOnly && props.point.hasCodeChanges ? (
         <Text color={terminalUiTheme.colors.warning} wrap="truncate-end">
-          Tracked file restore is unavailable because some snapshots were already restored or pruned.
+          {t("rewindPicker.warning.fileRestoreUnavailable")}
         </Text>
       ) : null}
       <Box flexDirection="column" width="100%">
@@ -263,18 +262,4 @@ function ConfirmView(props: {
       </Box>
     </Box>
   );
-}
-
-function formatPointTime(value: string): string {
-  const date = new Date(value);
-  if (Number.isNaN(date.getTime())) {
-    return value;
-  }
-
-  return date.toLocaleString("zh-CN", {
-    month: "2-digit",
-    day: "2-digit",
-    hour: "2-digit",
-    minute: "2-digit"
-  });
 }

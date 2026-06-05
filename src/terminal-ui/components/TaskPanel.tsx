@@ -1,4 +1,5 @@
 import type { TerminalUiTaskSummary } from "../state/types.js";
+import { t } from "../../i18n/index.js";
 import Box from "../runtime/ink-runtime/components/Box.js";
 import Text from "../runtime/ink-runtime/components/Text.js";
 import { terminalUiTheme } from "../theme/theme.js";
@@ -12,7 +13,7 @@ export function TaskPanel(props: { tasks: TerminalUiTaskSummary[] }) {
   return (
     <Box flexDirection="column" width="100%">
       <Text color={terminalUiTheme.colors.info} wrap="truncate-end">
-        Background Tasks ({props.tasks.length} running)
+        {t("taskPanel.title", { count: props.tasks.length })}
       </Text>
       {visibleTasks.map((task) => (
         <Text
@@ -27,7 +28,7 @@ export function TaskPanel(props: { tasks: TerminalUiTaskSummary[] }) {
       ))}
       {hiddenCount > 0 ? (
         <Text color={terminalUiTheme.colors.subtle} wrap="truncate-end">
-          +{hiddenCount} more background task{hiddenCount === 1 ? "" : "s"}
+          {t("taskPanel.hiddenTasks", { count: hiddenCount })}
         </Text>
       ) : null}
     </Box>

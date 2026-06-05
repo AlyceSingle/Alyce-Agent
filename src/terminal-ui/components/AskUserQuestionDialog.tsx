@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
+import { t } from "../../i18n/index.js";
 import type {
   AskUserQuestion,
   AskUserQuestionAnnotation,
@@ -106,7 +107,7 @@ export function AskUserQuestionDialog(props: {
           );
 
           if (!nextAnswer) {
-            setErrorText("Choose at least one option or add an Other answer.");
+            setErrorText(t("askUserQuestion.error.chooseAtLeast"));
             return;
           }
 
@@ -192,17 +193,17 @@ export function AskUserQuestionDialog(props: {
   const hasPreview = !currentQuestion.multiSelect && Boolean(highlightedOption?.preview);
   const footer =
     inputMode === "custom-answer"
-      ? "Enter save | Esc back"
+      ? t("askUserQuestion.footer.save")
       : inputMode === "notes"
-        ? "Enter save note | Esc back"
+        ? t("askUserQuestion.footer.saveNote")
         : currentQuestion.multiSelect
-          ? "Up/Down move | Space toggle | Enter continue | O Other | N note | Esc cancel"
-          : "Up/Down move | Enter choose | O Other | N note | Esc cancel";
+          ? t("askUserQuestion.footer.multiSelect")
+          : t("askUserQuestion.footer.singleSelect");
 
   return (
     <Pane
-      title={`Questions | ${props.request.toolName}`}
-      subtitle={`Question ${questionIndex + 1} of ${props.request.questions.length} | ${currentQuestion.header}`}
+      title={t("askUserQuestion.title", { toolName: props.request.toolName })}
+      subtitle={t("askUserQuestion.subtitle", { current: questionIndex + 1, total: props.request.questions.length, header: currentQuestion.header })}
       accentColor={terminalUiTheme.colors.info}
       footer={footer}
     >
@@ -210,7 +211,7 @@ export function AskUserQuestionDialog(props: {
 
       {previousAnswers.length > 0 ? (
         <Box flexDirection="column" marginTop={1}>
-          <Text color={terminalUiTheme.colors.subtle}>Answered so far</Text>
+          <Text color={terminalUiTheme.colors.subtle}>{t("askUserQuestion.answeredSoFar")}</Text>
           {previousAnswers.map((entry) => (
             <Text key={entry.question} color={terminalUiTheme.colors.muted} wrap="truncate-end">
               {entry.question}
@@ -239,18 +240,18 @@ export function AskUserQuestionDialog(props: {
             );
           })}
           <Text color={terminalUiTheme.colors.subtle} wrap="truncate-end">
-            Other: {currentCustomAnswer || "(none)"}
+            {t("askUserQuestion.other")}: {currentCustomAnswer || t("askUserQuestion.none")}
           </Text>
           <Text color={terminalUiTheme.colors.subtle} wrap="truncate-end">
-            Note: {currentNote || "(none)"}
+            {t("askUserQuestion.note")}: {currentNote || t("askUserQuestion.none")}
           </Text>
         </Box>
       ) : (
         <Box flexDirection="column" marginTop={1}>
           <Text color={terminalUiTheme.colors.subtle}>
             {inputMode === "custom-answer"
-              ? "Enter the Other answer for this question."
-              : "Add an optional note for this question."}
+              ? t("askUserQuestion.enterOtherAnswer")
+              : t("askUserQuestion.addNote")}
           </Text>
           <TextInput
             value={textValue}
@@ -271,7 +272,7 @@ export function AskUserQuestionDialog(props: {
             cursorOffset={cursorOffset}
             onChangeCursorOffset={setCursorOffset}
             placeholder={
-              inputMode === "custom-answer" ? "Type the custom answer..." : "Type an optional note..."
+              inputMode === "custom-answer" ? t("askUserQuestion.placeholder.customAnswer") : t("askUserQuestion.placeholder.note")
             }
           />
         </Box>
@@ -279,7 +280,7 @@ export function AskUserQuestionDialog(props: {
 
       {hasPreview ? (
         <Box flexDirection="column" marginTop={1}>
-          <Text color={terminalUiTheme.colors.subtle}>Preview</Text>
+          <Text color={terminalUiTheme.colors.subtle}>{t("askUserQuestion.preview")}</Text>
           {(highlightedOption?.preview?.split("\n") ?? []).map((line, index) => (
             <Text key={`preview-${index}`} color={terminalUiTheme.colors.info}>
               {line.length > 0 ? line : " "}
@@ -340,7 +341,7 @@ export function AskUserQuestionDialog(props: {
 
     const trimmedValue = rawValue.trim();
     if (!trimmedValue) {
-      setErrorText("Other answer cannot be empty.");
+      setErrorText(t("askUserQuestion.error.otherEmpty"));
       return;
     }
 

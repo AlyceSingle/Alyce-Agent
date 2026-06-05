@@ -1,6 +1,7 @@
 import type { ApprovalMode, ConnectionConfigState } from "../../config/runtime.js";
 import { isConnectionStateReady } from "../../cli/modelCommand.js";
 import type { ContextBudgetSnapshot } from "../../core/context/contextBudget.js";
+import { t } from "../../i18n/index.js";
 import Box from "../runtime/ink-runtime/components/Box.js";
 import Text from "../runtime/ink-runtime/components/Text.js";
 import { terminalUiTheme } from "../theme/theme.js";
@@ -34,21 +35,21 @@ export function StatusBar(props: {
     : terminalUiTheme.colors.warning;
   const requestPatchText =
     props.requestPatchCount > 0
-      ? ` | Request patches ${props.requestPatchCount}`
+      ? ` | ${t("statusBar.requestPatches")} ${props.requestPatchCount}`
       : "";
   const todoSummaryText =
     props.todoSummary && props.todoSummary.trim().length > 0
-      ? ` | Todos ${props.todoSummary}`
+      ? ` | ${t("statusBar.todos")} ${props.todoSummary}`
       : "";
   const taskSummaryText =
     props.taskSummary && props.taskSummary.trim().length > 0
-      ? ` | Bg ${props.taskSummary}`
+      ? ` | ${t("statusBar.backgroundTasks")} ${props.taskSummary}`
       : "";
   const backgroundProcessText =
     props.backgroundProcessCount && props.backgroundProcessCount > 0
-      ? ` | BG ${props.backgroundProcessCount}`
+      ? ` | ${t("statusBar.backgroundProcesses")} ${props.backgroundProcessCount}`
       : "";
-  const contextText = ` | Context ${
+  const contextText = ` | ${t("statusBar.context")} ${
     props.contextBudget ? `${Math.round(props.contextBudget.usedPercent)}%` : "--"
   }`;
   const contextColor =
@@ -66,17 +67,17 @@ export function StatusBar(props: {
   return (
     <Box width="100%">
       <Text color={terminalUiTheme.colors.muted} wrap="truncate-end">
-        Alyce
+        {t("statusBar.appName")}
         {requestPatchText}
         {" | "}
-        <Text color={connectionColor}>{isReady ? "Ready" : "Setup required"}</Text>
+        <Text color={connectionColor}>{isReady ? t("statusBar.connectionReady") : t("statusBar.connectionSetupRequired")}</Text>
         {" | "}
-        Approval {formatApprovalMode(
+        {t("statusBar.approvalLabel")} {formatApprovalMode(
           props.sessionApprovalMode,
           props.sessionAllowedKinds
         )}
         {" | "}
-        Mode {props.planModeEnabled ? "Plan" : "Build"}
+        {t("statusBar.modeLabel")} {props.planModeEnabled ? t("statusBar.modePlan") : t("statusBar.modeBuild")}
         {todoSummaryText}
         {taskSummaryText}
         {backgroundProcessText}

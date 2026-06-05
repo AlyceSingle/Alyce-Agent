@@ -7,6 +7,7 @@ import React, {
   useRef,
   useState
 } from "react";
+import { formatTime, t } from "../../i18n/index.js";
 import {
   buildMarkdownRenderPlan,
   MarkdownRenderer,
@@ -182,16 +183,16 @@ export type MessageListHandle = {
 function getMessageBadge(kind: TerminalUiMessage["kind"]) {
   switch (kind) {
     case "user":
-      return { label: "USER" };
+      return { label: t("messageList.badge.user") };
     case "thinking":
-      return { label: "THINK" };
+      return { label: t("messageList.badge.think") };
     case "tool":
-      return { label: "TOOL" };
+      return { label: t("messageList.badge.tool") };
     case "error":
-      return { label: "ERROR" };
+      return { label: t("messageList.badge.error") };
     case "system":
     default:
-      return { label: "SYSTEM" };
+      return { label: t("messageList.badge.system") };
   }
 }
 
@@ -795,7 +796,7 @@ function buildCollapsibleSystemPreviewBlock(message: TerminalUiMessage): Termina
     .split(/\r?\n/)
     .find((line) => line.trim().length > 0);
   return {
-    content: contentPreview ?? "(empty)"
+    content: contentPreview ?? t("messageList.emptyOutput")
   };
 }
 
@@ -853,8 +854,8 @@ function renderCollapsibleSystemMessageState(
     countRenderedSectionRows(expandedSections) > countRenderedSectionRows(collapsedSections);
   const toggleHint = expandable
     ? expanded
-      ? "Click to collapse"
-      : "Click to expand"
+      ? t("messageList.clickToCollapse")
+      : t("messageList.clickToExpand")
     : undefined;
 
   return {
@@ -900,8 +901,8 @@ function renderHeaderOnlyExpandableState(
   const expandable = countRenderedSectionRows(expandedSections) > 0;
   const toggleHint = expandable
     ? expanded
-      ? "Click to collapse"
-      : "Click to expand"
+      ? t("messageList.clickToCollapse")
+      : t("messageList.clickToExpand")
     : undefined;
 
   return {
@@ -921,8 +922,8 @@ function renderContextPreviewMessageState(
   const sections = renderSections(expanded ? message.blocks : collapsedPreview.blocks, width);
   const toggleHint = collapsedPreview.truncated
     ? expanded
-      ? "Click to collapse"
-      : "Click to expand"
+      ? t("messageList.clickToCollapse")
+      : t("messageList.clickToExpand")
     : undefined;
 
   return {
@@ -966,8 +967,8 @@ function buildCollapsedMessageBlocks(
 
   if (previewBlocks.length === 0) {
     previewBlocks.push({
-      label: "Output",
-      content: "(empty)",
+      label: t("messageList.output"),
+      content: t("messageList.emptyOutput"),
       tone: "muted"
     });
   }
@@ -995,7 +996,7 @@ function buildCollapsedToolBlocks(
 
       const blocks: TerminalUiMessageBlock[] = [
         {
-          label: "Command",
+          label: t("messageList.command"),
           content: `$ ${shell.command}`,
           style: "code"
         }
@@ -1003,7 +1004,7 @@ function buildCollapsedToolBlocks(
       const combinedOutput = combineShellOutput(shell.stdout, shell.stderr);
       if (!combinedOutput) {
         blocks.push({
-          content: "(no output)",
+          content: t("messageList.noOutput"),
           tone: "muted"
         });
         return buildCollapsedMessageBlocks(blocks, width, 3);
@@ -1041,7 +1042,7 @@ function combineShellOutput(stdout: string, stderr: string): {
 
   if (trimmedStdout && trimmedStderr) {
     return {
-      label: "Output",
+      label: t("messageList.output"),
       text: `${trimmedStdout}\n\n[stderr]\n${trimmedStderr}`,
       tone: "warning"
     };
@@ -1049,7 +1050,7 @@ function combineShellOutput(stdout: string, stderr: string): {
 
   if (trimmedStdout) {
     return {
-      label: "Stdout",
+      label: t("messageList.stdout"),
       text: trimmedStdout,
       tone: "success"
     };
@@ -1057,7 +1058,7 @@ function combineShellOutput(stdout: string, stderr: string): {
 
   if (trimmedStderr) {
     return {
-      label: "Stderr",
+      label: t("messageList.stderr"),
       text: trimmedStderr,
       tone: "warning"
     };
@@ -1402,10 +1403,7 @@ const TranscriptRows = React.memo(function TranscriptRows(props: {
   onExpandableMessageClick: (message: TerminalUiMessage, event: TerminalClickEvent) => void;
 }) {
   const renderMessageEntry = useCallback((entry: RenderedMessageEntry) => {
-    const timestamp = new Date(entry.message.createdAt).toLocaleTimeString("zh-CN", {
-      hour: "2-digit",
-      minute: "2-digit"
-    });
+    const timestamp = formatTime(entry.message.createdAt);
     const railRowCount = Math.max(
       1,
       entry.rowCount - entry.leadingSpacingRows - entry.unseenDividerRows
@@ -1429,7 +1427,7 @@ const TranscriptRows = React.memo(function TranscriptRows(props: {
         ))}
         {entry.unseenDividerRows > 0 ? (
           <Text color={terminalUiTheme.colors.warning} wrap="truncate-end">
-            -- {props.unseenMessageCount} new message{props.unseenMessageCount === 1 ? "" : "s"} --
+            -- {props.unseenMessageCount} {props.unseenMessageCount === 1 ? t("messageList.newMessage") : t("messageList.newMessages")} --
           </Text>
         ) : null}
         <Box
@@ -1538,9 +1536,9 @@ const TranscriptRows = React.memo(function TranscriptRows(props: {
   if (props.renderedEntries.length === 0) {
     return (
       <Box flexDirection="column" width="100%" paddingBottom={1}>
-        <Text color={terminalUiTheme.colors.muted}>No messages yet.</Text>
+        <Text color={terminalUiTheme.colors.muted}>{t("messageList.empty")}</Text>
         <Text color={terminalUiTheme.colors.subtle}>
-          Type a prompt below, or open settings before the first model request.
+          {t("messageList.emptyHint")}
         </Text>
       </Box>
     );

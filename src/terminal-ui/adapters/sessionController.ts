@@ -14,6 +14,7 @@ import {
   type TurnDiffReport
 } from "../../core/diff/diffService.js";
 import type { FileHistoryRestoreResult } from "../../core/file-history/fileHistoryManager.js";
+import { formatDateTime, setLocale, t } from "../../i18n/index.js";
 import { createPlanModeOverlayRules } from "../../core/planMode/planMode.js";
 import {
   createDefaultPermissionRuleSet,
@@ -602,7 +603,7 @@ export function createSessionController(
       runningPtyCount = 0;
     }
     if (runningProcessCount > 0 || runningPtyCount > 0) {
-      store.updateState((state) => setStatusText(state, "Stopping background terminal sessions..."));
+      store.updateState((state) => setStatusText(state, t("status.stopping")));
     }
 
     void (async () => {
@@ -672,7 +673,7 @@ export function createSessionController(
       store.updateState((state) =>
         setStatusText(
           state,
-          activeTurn ? "Interrupting and exiting..." : "Waiting for current turn to finish before exiting..."
+          activeTurn ? t("status.interrupting") : t("status.waitingExit")
         )
       );
       return;
@@ -1046,7 +1047,7 @@ export function createSessionController(
           : [];
 
       if (mode === "files-only") {
-        store.updateState((state) => setStatusText(closeDialog(state), "Reverted"));
+        store.updateState((state) => setStatusText(closeDialog(state), t("status.reverted")));
         await runtime.recordSessionRewind({
           apiMessageCount: Math.max(0, runtime.messages.length - 1),
           uiMessageCount: store.getState().messages.length,
@@ -1060,7 +1061,7 @@ export function createSessionController(
           setDraftInput(
             setTranscriptSticky(
               setContextBudget(
-                replaceMessages(setStatusText(closeDialog(state), "Reverted"), baseMessages),
+                replaceMessages(setStatusText(closeDialog(state), t("status.reverted")), baseMessages),
                 null
               ),
               true
@@ -1095,7 +1096,7 @@ export function createSessionController(
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       appendUiMessage(createErrorMessage(`Failed to revert: ${message}`));
-      store.updateState((state) => setStatusText(state, "Error"));
+      store.updateState((state) => setStatusText(state, t("status.error")));
     }
   };
 
@@ -1364,7 +1365,7 @@ export function createSessionController(
     }
 
     throwIfAborted(options.signal);
-    store.updateState((state) => setStatusText(state, "Auto-reviewing permission request..."));
+    store.updateState((state) => setStatusText(state, t("status.autoReviewing")));
     try {
       const result = await runtime.runSubagent({
         agentType: "auto-reviewer",
@@ -1860,7 +1861,7 @@ export function createSessionController(
     );
     store.updateState((uiState) =>
       setPlanModeEnabled(
-        setStatusText(uiState, state.enabled ? "Plan Mode" : "Idle"),
+        setStatusText(uiState, state.enabled ? "Plan Mode" : t("status.idle")),
         state.enabled
       )
     );
@@ -1919,7 +1920,7 @@ export function createSessionController(
       await runtime.applyProviderConnection(result.plan);
       store.updateState((state) => {
         const nextState = setConnectionConfigState(
-          setStatusText(state, "Idle"),
+          setStatusText(state, t("status.idle")),
           runtime.getConnectionConfigState()
         );
         return options.closeActiveDialog ? closeDialog(nextState) : nextState;
@@ -1940,7 +1941,7 @@ export function createSessionController(
       if (options.appendErrorMessage) {
         appendUiMessage(createErrorMessage(message));
       }
-      store.updateState((state) => setStatusText(state, "Error"));
+      store.updateState((state) => setStatusText(state, t("status.error")));
       return { ok: false, message };
     }
   };
@@ -1952,7 +1953,7 @@ export function createSessionController(
   ) => {
     store.updateState((state) => {
       const nextState = setConnectionConfigState(
-        setStatusText(state, "Idle"),
+        setStatusText(state, t("status.idle")),
         runtime.getConnectionConfigState()
       );
       return closeActiveDialog ? closeDialog(nextState) : nextState;
@@ -1981,7 +1982,7 @@ export function createSessionController(
     try {
       const result = await runtime.authorizeProviderAuth(provider, methodIndex, inputs);
       if (result.type === "flow") {
-        store.updateState((state) => setStatusText(state, "Waiting for provider authorization"));
+        store.updateState((state) => setStatusText(state, t("status.waitingAuth")));
         return {
           ok: true,
           type: "flow",
@@ -1995,7 +1996,7 @@ export function createSessionController(
       return { ok: true, type: "stored" };
     } catch (error) {
       const message = `Connect failed: ${getErrorMessage(error)}`;
-      store.updateState((state) => setStatusText(state, "Error"));
+      store.updateState((state) => setStatusText(state, t("status.error")));
       return { ok: false, message };
     }
   };
@@ -2012,14 +2013,14 @@ export function createSessionController(
       return { ok: true };
     } catch (error) {
       const message = `Connect failed: ${getErrorMessage(error)}`;
-      store.updateState((state) => setStatusText(state, "Error"));
+      store.updateState((state) => setStatusText(state, t("status.error")));
       return { ok: false, message };
     }
   };
 
   const cancelProviderAuthFromDialog = (provider: string, _methodIndex: number) => {
     runtime.clearProviderAuthFlow(provider);
-    store.updateState((state) => setStatusText(state, "Idle"));
+    store.updateState((state) => setStatusText(state, t("status.idle")));
   };
 
   const switchCurrentModel = async (
@@ -2047,7 +2048,7 @@ export function createSessionController(
       await runtime.setCurrentModel(result.persistModel);
       store.updateState((state) => {
         const nextState = setConnectionConfigState(
-          setStatusText(state, "Idle"),
+          setStatusText(state, t("status.idle")),
           runtime.getConnectionConfigState()
         );
         return options.closeActiveDialog ? closeDialog(nextState) : nextState;
@@ -2067,7 +2068,7 @@ export function createSessionController(
       if (options.appendErrorMessage) {
         appendUiMessage(createErrorMessage(message));
       }
-      store.updateState((state) => setStatusText(state, "Error"));
+      store.updateState((state) => setStatusText(state, t("status.error")));
       return { ok: false, message };
     }
   };
@@ -2096,7 +2097,7 @@ export function createSessionController(
   const openModelPicker = async () => {
     const loadingState = createModelPickerLoadingState();
     store.updateState((state) =>
-      openModelPickerDialog(setStatusText(state, "Refreshing models..."), loadingState)
+      openModelPickerDialog(setStatusText(state, t("status.refreshingModels")), loadingState)
     );
 
     const result = await runtime.refreshCurrentProviderModels()
@@ -2109,7 +2110,7 @@ export function createSessionController(
       }));
     store.updateState((state) =>
       updateModelPickerDialogState(
-        setConnectionConfigState(setStatusText(state, "Idle"), runtime.getConnectionConfigState()),
+        setConnectionConfigState(setStatusText(state, t("status.idle")), runtime.getConnectionConfigState()),
         {
           status: "ready",
           providerId: result.providerId,
@@ -2425,7 +2426,7 @@ export function createSessionController(
       try {
         const removed = await runtime.removeProviderAuth(providerId);
         store.updateState((state) =>
-          setConnectionConfigState(setStatusText(state, "Idle"), runtime.getConnectionConfigState())
+          setConnectionConfigState(setStatusText(state, t("status.idle")), runtime.getConnectionConfigState())
         );
         appendUiMessage(
           createSystemMessage(
@@ -2441,7 +2442,7 @@ export function createSessionController(
         );
       } catch (error) {
         appendUiMessage(createErrorMessage(`Logout failed: ${getErrorMessage(error)}`));
-        store.updateState((state) => setStatusText(state, "Error"));
+        store.updateState((state) => setStatusText(state, t("status.error")));
       }
       return true;
     }
@@ -2452,7 +2453,7 @@ export function createSessionController(
     }
 
     if (parsedCommand.type === "doctor") {
-      store.updateState((state) => setStatusText(state, "Running doctor..."));
+      store.updateState((state) => setStatusText(state, t("status.runningDoctor")));
       const snapshotDiagnostics = await runtime.getSnapshotDiagnostics();
       const report = await runDoctorDiagnostics({
         workspaceRoot: runtime.workspaceRoot,
@@ -2473,7 +2474,7 @@ export function createSessionController(
         stdoutIsTTY: process.stdout.isTTY === true
       });
       appendUiMessage(createSystemMessage(formatDoctorReport(report), "Doctor"));
-      store.updateState((state) => setStatusText(state, "Idle"));
+      store.updateState((state) => setStatusText(state, t("status.idle")));
       return true;
     }
 
@@ -2509,13 +2510,13 @@ export function createSessionController(
     }
 
     if (parsedCommand.type === "diff-view") {
-      store.updateState((state) => setStatusText(state, "Loading diff..."));
+      store.updateState((state) => setStatusText(state, t("status.loadingDiff")));
       try {
         appendUiMessage(createSystemMessage(await formatDiffView(parsedCommand.target), "Diff"));
       } catch (error) {
         appendUiMessage(createErrorMessage(`Diff failed: ${getErrorMessage(error)}`));
       } finally {
-        store.updateState((state) => setStatusText(state, "Idle"));
+        store.updateState((state) => setStatusText(state, t("status.idle")));
       }
       return true;
     }
@@ -2534,7 +2535,7 @@ export function createSessionController(
         setDraftInput(
           setContextBudget(
             replaceMessages(
-              setTodos(setStatusText(state, "Idle"), []),
+              setTodos(setStatusText(state, t("status.idle")), []),
               [createSystemMessage("History and session memory cleared.", "Session")]
             ),
             null
@@ -2727,7 +2728,7 @@ export function createSessionController(
         await runtime.setSessionAdditionalDirectories(nextSessionDirectories);
 
         store.updateState((state) =>
-          setSessionSettingsState(setStatusText(state, "Idle"), runtime.getSettingsState())
+          setSessionSettingsState(setStatusText(state, t("status.idle")), runtime.getSettingsState())
         );
         appendUiMessage(
           createSystemMessage(
@@ -2834,7 +2835,7 @@ export function createSessionController(
         }
       } catch (error) {
         appendUiMessage(createErrorMessage(`Command failed: ${getErrorMessage(error)}`));
-        store.updateState((state) => setStatusText(state, "Error"));
+        store.updateState((state) => setStatusText(state, t("status.error")));
         return;
       }
 
@@ -2880,7 +2881,7 @@ export function createSessionController(
       if (promptSkillSummary) {
         appendUiMessage(createSystemMessage(promptSkillSummary, "Skills"));
       }
-      store.updateState((state) => setLoading(setStatusText(state, "Preparing..."), true));
+      store.updateState((state) => setLoading(setStatusText(state, t("status.preparing")), true));
       let completedTurnHistoryPlan: CompletedTurnHistoryPlan | null = null;
       let turnRecorded = false;
       let conversationWasCompacted = false;
@@ -2912,7 +2913,7 @@ export function createSessionController(
           availableTools: getFunctionToolNames(tools),
           nextUserInput: normalized
         });
-        store.updateState((state) => setStatusText(state, "Estimating context..."));
+        store.updateState((state) => setStatusText(state, t("status.estimating")));
         throwIfAborted(controller.signal);
         const initialBudget = await runtime.estimateContextBudget({
           model: currentModel,
@@ -2924,7 +2925,7 @@ export function createSessionController(
         store.updateState((state) =>
           setContextBudget(state, initialBudget)
         );
-        store.updateState((state) => setStatusText(state, "Thinking..."));
+        store.updateState((state) => setStatusText(state, t("status.thinking")));
         const { runAgentTurn } = await import("../../agent.js");
         const reply = await runAgentTurn(client, runtime.messages, {
           model: currentModel,
@@ -2982,7 +2983,7 @@ export function createSessionController(
           },
           onContextCompactionStart: (snapshot) => {
             store.updateState((state) =>
-              setContextBudget(setStatusText(state, "Compacting context..."), snapshot)
+              setContextBudget(setStatusText(state, t("status.compacting")), snapshot)
             );
           },
           onContextCompactionResult: (event) => {
@@ -2992,7 +2993,7 @@ export function createSessionController(
 
             store.updateState((state) =>
               setContextBudget(
-                setStatusText(state, "Thinking..."),
+                setStatusText(state, t("status.thinking")),
                 event.after
               )
             );
@@ -3048,7 +3049,7 @@ export function createSessionController(
               return;
             }
 
-            store.updateState((state) => setStatusText(state, "Thinking..."));
+            store.updateState((state) => setStatusText(state, t("status.thinking")));
           },
           onToolCallStart: (toolName) => {
             if (thinkingSegmentContent.trim().length > 0) {
@@ -3106,7 +3107,7 @@ export function createSessionController(
         if (postResponseFailures.length > 0) {
           appendUiMessage(createErrorMessage(postResponseFailures.join("\n")));
         }
-        store.updateState((state) => setStatusText(state, "Idle"));
+        store.updateState((state) => setStatusText(state, t("status.idle")));
       } catch (error) {
         if (checkpoint.hasAssistantOutput) {
           activeTurn = null;
@@ -3140,7 +3141,7 @@ export function createSessionController(
             appendUiMessage(
               createErrorMessage(`Post-response processing failed: ${getErrorMessage(error)}`)
             );
-            store.updateState((state) => setStatusText(state, "Idle"));
+            store.updateState((state) => setStatusText(state, t("status.idle")));
           }
           return;
         }
@@ -3198,7 +3199,7 @@ export function createSessionController(
             store.updateState((state) => setContextBudget(state, contextOverflow.snapshot ?? null));
           }
           store.updateState((state) =>
-            setDraftInput(setTranscriptSticky(setStatusText(state, "Error"), true), checkpoint.input)
+            setDraftInput(setTranscriptSticky(setStatusText(state, t("status.error")), true), checkpoint.input)
           );
         }
       } finally {
@@ -3304,6 +3305,7 @@ export function createSessionController(
       }
 
       await runtime.updateSettings(settingsPatch);
+      setLocale(runtime.getSettings().uiLanguage);
       syncDiagnosticsRegistrySettings();
       if (!runtime.getSettings().historyPagingEnabled) {
         resetSessionHistoryPaging();
@@ -3493,17 +3495,7 @@ function buildApprovalModePermissionRules(mode: ApprovalMode): PermissionRuleInp
 }
 
 function formatSessionTime(value: string): string {
-  const date = new Date(value);
-  if (Number.isNaN(date.getTime())) {
-    return value;
-  }
-
-  return date.toLocaleString("zh-CN", {
-    month: "2-digit",
-    day: "2-digit",
-    hour: "2-digit",
-    minute: "2-digit"
-  });
+  return formatDateTime(value);
 }
 
 function formatRestoreConflictLines(

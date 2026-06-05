@@ -18,6 +18,7 @@ import Box from "../runtime/ink-runtime/components/Box.js";
 import Text from "../runtime/ink-runtime/components/Text.js";
 import useInput from "../runtime/ink-runtime/hooks/use-input.js";
 import useTerminalSize from "../runtime/ink-runtime/hooks/use-terminal-size.js";
+import { t } from "../../i18n/index.js";
 import { terminalUiTheme } from "../theme/theme.js";
 import { Pane } from "./Pane.js";
 
@@ -433,12 +434,12 @@ export function ConnectProviderDialog(props: {
     if (key.return) {
       const code = authCode.trim();
       if (!code) {
-        setError("Authorization code is required.");
+        setError(t("connectProvider.authCodeRequired"));
         return;
       }
 
       if (!onAuthCallbackRef.current) {
-        setError("This provider does not support interactive auth yet.");
+        setError(t("connectProvider.noAuthSupport"));
         return;
       }
 
@@ -515,7 +516,7 @@ export function ConnectProviderDialog(props: {
     if (option.mode === "auth") {
       if (!props.onAuthorizeAuth || !props.onAuthCallback) {
         setSubmitting(false);
-        setError("This provider does not support interactive auth yet.");
+        setError(t("connectProvider.noAuthSupport"));
         return;
       }
 
@@ -563,12 +564,12 @@ export function ConnectProviderDialog(props: {
 
   const panelWidth = Math.max(1, Math.min(82, (terminalSize.columns || 90) - 4));
   const footer = step === "select"
-    ? "Type to search | Up/Down choose | Enter select | Esc cancel"
+    ? t("connectProvider.footer.search")
     : step === "info"
-      ? "Enter back | b back | Esc back"
+      ? t("connectProvider.footer.back")
       : step === "auth-flow"
-        ? "Open URL | Enter code if asked | Esc back"
-        : "Type value | Up/Down field | Left/Right option | Enter next/save | Esc back";
+        ? t("connectProvider.footer.authFlow")
+        : t("connectProvider.footer.form");
 
   return (
     <Box alignItems="center" justifyContent="center" height="100%" width="100%">
@@ -581,7 +582,7 @@ export function ConnectProviderDialog(props: {
         width={panelWidth}
       >
         <Pane
-          title="Connect a provider"
+          title={t("connectProvider.title")}
           subtitle="esc"
           accentColor={terminalUiTheme.colors.chrome}
           footer={footer}
@@ -630,10 +631,10 @@ export function createConnectProviderOptions(
       id: "custom",
       provider: "custom",
       group: "Providers",
-      label: "Custom OpenAI-compatible",
-      description: "Add your own baseURL, model, and API key.",
+      label: t("connectProvider.custom.label"),
+      description: t("connectProvider.custom.description"),
       mode: "form",
-      status: "new"
+      status: t("connectProvider.status.new")
     },
     ...connectors.map((connector) => createExperimentalConnectorOption(connector, connectionState))
   ]);
@@ -666,18 +667,18 @@ function getPresetOptionGroup(providerId: string): ConnectProviderOption["group"
 
 function getPresetDescription(provider: ProviderProfile): string {
   if (provider.kind === "local") {
-    return `${provider.label} OpenAI-compatible local endpoint.`;
+    return t("connectProvider.description.local", { provider: provider.label });
   }
 
   if (provider.kind === "openrouter") {
-    return "OpenAI-compatible model gateway.";
+    return t("connectProvider.description.openrouter");
   }
 
   if (provider.kind === "openai") {
-    return "Use an OpenAI API key.";
+    return t("connectProvider.description.openai");
   }
 
-  return `${provider.label} OpenAI-compatible API.`;
+  return t("connectProvider.description.api", { provider: provider.label });
 }
 
 function getApiKeyPlaceholder(providerId: string): string {
@@ -732,25 +733,25 @@ function createExperimentalConnectorOption(
     label: connector.label,
     description: getConnectorDescription(connector),
     mode: "info",
-    status: connector.experimental ? "experimental" : "available",
+    status: connector.experimental ? t("connectProvider.status.experimental") : t("connectProvider.status.available"),
     infoLines: [
-      `${connector.label} is loaded.`,
-      "No server, domain, or certificate is needed.",
-      "Credentials stay in the local AuthStore."
+      t("connectProvider.info.loaded", { connector: connector.label }),
+      t("connectProvider.info.noSetup"),
+      t("connectProvider.info.localAuth")
     ]
   };
 }
 
 function getConnectorDescription(connector: ProviderConnector): string {
   if (connector.id === "github-copilot") {
-    return "Login with your GitHub account.";
+    return t("connectProvider.description.github");
   }
 
-  return connector.experimental ? "Experimental account login." : "Account login.";
+  return connector.experimental ? t("connectProvider.description.experimentalLogin") : t("connectProvider.description.accountLogin");
 }
 
 function getConnectorStatus(providerId: string, connectionState: ConnectionConfigState): string {
-  return getProviderStatus(providerId, connectionState) === "connected" ? "connected" : "needs login";
+  return getProviderStatus(providerId, connectionState) === t("connectProvider.status.connected") ? t("connectProvider.status.connected") : t("connectProvider.status.needsLogin");
 }
 
 function createAuthPromptFields(prompts: AuthPrompt[] | undefined): ConnectField[] {
@@ -811,26 +812,26 @@ export function getConnectFields(
   if (preset && isConnectableProviderPreset(provider)) {
     if (preset.kind === "local") {
       return [
-        { key: "baseURL", label: "Base URL", placeholder: preset.baseURL ?? DEFAULT_LOCAL_BASE_URL },
-        { key: "model", label: "Model", placeholder: preset.defaultModel ?? "local-model" }
+        { key: "baseURL", label: t("connectProvider.field.baseUrl"), placeholder: preset.baseURL ?? DEFAULT_LOCAL_BASE_URL },
+        { key: "model", label: t("connectProvider.field.model"), placeholder: preset.defaultModel ?? "local-model" }
       ];
     }
 
     return [
-      { key: "apiKey", label: "API key", placeholder: getApiKeyPlaceholder(provider), secret: true },
-      { key: "baseURL", label: "Base URL", placeholder: preset.baseURL ?? "https://api.example.com/v1", optional: true },
-      { key: "model", label: "Default model", placeholder: preset.defaultModel ?? "model" }
+      { key: "apiKey", label: t("connectProvider.field.apiKey"), placeholder: getApiKeyPlaceholder(provider), secret: true },
+      { key: "baseURL", label: t("connectProvider.field.baseUrl"), placeholder: preset.baseURL ?? "https://api.example.com/v1", optional: true },
+      { key: "model", label: t("connectProvider.field.defaultModel"), placeholder: preset.defaultModel ?? "model" }
     ];
   }
 
   switch (provider) {
     case "custom":
       return [
-        { key: "providerId", label: "Provider id", placeholder: "siliconflow" },
-        { key: "label", label: "Label", placeholder: "SiliconFlow", optional: true },
-        { key: "baseURL", label: "Base URL", placeholder: "https://api.example.com/v1" },
-        { key: "model", label: "Model", placeholder: "deepseek-ai/DeepSeek-V3" },
-        { key: "apiKey", label: "API key", placeholder: "sk-...", secret: true }
+        { key: "providerId", label: t("connectProvider.field.providerId"), placeholder: "siliconflow" },
+        { key: "label", label: t("connectProvider.field.label"), placeholder: "SiliconFlow", optional: true },
+        { key: "baseURL", label: t("connectProvider.field.baseUrl"), placeholder: "https://api.example.com/v1" },
+        { key: "model", label: t("connectProvider.field.model"), placeholder: "deepseek-ai/DeepSeek-V3" },
+        { key: "apiKey", label: t("connectProvider.field.apiKey"), placeholder: "sk-...", secret: true }
       ];
     default:
       return [];
@@ -910,7 +911,7 @@ export function validateConnectValues(provider: string, values: ConnectValues): 
     }
 
     if (!values[field.key]?.trim()) {
-      return `${field.label} is required.`;
+      return t("connectProvider.error.fieldRequired", { field: field.label });
     }
   }
 
@@ -920,7 +921,7 @@ export function validateConnectValues(provider: string, values: ConnectValues): 
       try {
         new URL(baseURL);
       } catch {
-        return `Invalid base URL: ${baseURL}`;
+        return t("connectProvider.error.invalidBaseUrl", { url: baseURL });
       }
     }
   }
@@ -928,7 +929,7 @@ export function validateConnectValues(provider: string, values: ConnectValues): 
   if (provider === "custom") {
     const providerId = values.providerId?.trim();
     if (providerId && !/^[a-z0-9][a-z0-9._-]*$/i.test(providerId)) {
-      return "Provider id can use letters, numbers, dot, underscore, or dash.";
+      return t("connectProvider.error.invalidProviderId");
     }
   }
 
@@ -946,20 +947,20 @@ function validateConnectOption(option: ConnectProviderOption, values: ConnectVal
     }
 
     if (!values[field.key]?.trim()) {
-      return `${field.label} is required.`;
+      return t("connectProvider.error.fieldRequired", { field: field.label });
     }
   }
 
   if (option.provider === "github-copilot" && values.deploymentType === "enterprise") {
     const enterpriseUrl = values.enterpriseUrl?.trim();
     if (!enterpriseUrl) {
-      return "GitHub Enterprise URL or domain is required.";
+      return t("connectProvider.error.enterpriseUrlRequired");
     }
 
     try {
       new URL(enterpriseUrl.includes("://") ? enterpriseUrl : `https://${enterpriseUrl}`);
     } catch {
-      return "Enter a valid GitHub Enterprise URL or domain.";
+      return t("connectProvider.error.invalidEnterpriseUrl");
     }
   }
 
@@ -1020,11 +1021,11 @@ function ProviderListView(props: {
   return (
     <Box flexDirection="column" width="100%">
       <Text color={terminalUiTheme.colors.muted} wrap="truncate-end">
-        Search {props.query}
+        {t("connectProvider.search")} {props.query}
         <Text inverse>{" "}</Text>
       </Text>
       {props.options.length === 0 ? (
-        <Text color={terminalUiTheme.colors.warning}>No providers match this search.</Text>
+        <Text color={terminalUiTheme.colors.warning}>{t("connectProvider.noMatch")}</Text>
       ) : (
         GROUP_ORDER.map((group) => {
           const groupOptions = props.options.filter((option) => option.group === group);
@@ -1034,7 +1035,7 @@ function ProviderListView(props: {
 
           return (
             <Box key={group} flexDirection="column" width="100%">
-              <Text color={terminalUiTheme.colors.system}>{group}</Text>
+              <Text color={terminalUiTheme.colors.system}>{t(`connectProvider.group.${group.toLowerCase()}`)}</Text>
               {groupOptions.map((option) => {
                 const optionIndex = renderedIndex;
                 renderedIndex += 1;
@@ -1115,12 +1116,12 @@ function ProviderAuthFlowView(props: {
           backgroundColor={terminalUiTheme.colors.selection}
           wrap="truncate-end"
         >
-          &gt; Code: {props.authCode || "authorization code"}
+          &gt; Code: {props.authCode || t("connectProvider.authCodePlaceholder")}
           <Text inverse>{" "}</Text>
         </Text>
       ) : (
         <Text color={terminalUiTheme.colors.info} wrap="truncate-end">
-          {props.submitting ? "Waiting for authorization..." : "Open the URL and enter the code."}
+          {props.submitting ? t("connectProvider.waitingAuth") : t("connectProvider.openUrlAndCode")}
         </Text>
       )}
       {props.error ? (
@@ -1145,8 +1146,8 @@ function ProviderFormView(props: {
       <Text color={terminalUiTheme.colors.muted} wrap="wrap">
         {props.option.mode === "auth"
           ? props.option.authMethodLabel ?? props.option.label
-          : props.option.status === "connected"
-          ? `${props.option.label} connected. Saving replaces the credential.`
+          : props.option.status === t("connectProvider.status.connected")
+          ? `${props.option.label} ${t("connectProvider.status.connected")}. ${t("connectProvider.savingReplaces")}`
           : props.option.label}
       </Text>
       {props.fields.map((field, index) => (
@@ -1159,7 +1160,7 @@ function ProviderFormView(props: {
       ))}
       {props.fields.length === 0 ? (
         <Text color={terminalUiTheme.colors.subtle} wrap="truncate-end">
-          Press Enter to continue.
+          {t("connectProvider.pressEnter")}
         </Text>
       ) : null}
       {props.error ? (
@@ -1169,15 +1170,15 @@ function ProviderFormView(props: {
       ) : null}
       {props.submitting ? (
         <Text color={terminalUiTheme.colors.info}>
-          {props.option.mode === "auth" ? "Starting login..." : "Saving provider..."}
+          {props.option.mode === "auth" ? t("connectProvider.startingLogin") : t("connectProvider.saving")}
         </Text>
       ) : (
         <Box flexDirection="column" width="100%">
           <Text color={terminalUiTheme.colors.subtle} wrap="truncate-end">
-            Secrets: ~/.alyce/auth.json
+            {t("connectProvider.secretsPath")}
           </Text>
           <Text color={terminalUiTheme.colors.subtle} wrap="truncate-end">
-            Project config never stores real keys.
+            {t("connectProvider.noKeysInProject")}
           </Text>
         </Box>
       )}
@@ -1206,7 +1207,7 @@ function FieldLine(props: {
       {props.selected ? ">" : " "}
       {" "}
       {props.field.label}
-      {props.field.optional ? " (optional)" : ""}
+      {props.field.optional ? t("connectProvider.optional") : ""}
       {": "}
       <Text color={color}>
         {value}
@@ -1222,20 +1223,20 @@ function FieldLine(props: {
 function getProviderStatus(providerId: string, connectionState: ConnectionConfigState): string {
   const provider = connectionState.providerProfiles[providerId];
   if (!provider) {
-    return "new";
+    return t("connectProvider.status.new");
   }
 
   if (provider.kind === "local") {
-    return provider.baseURL ? "connected" : "needs endpoint";
+    return provider.baseURL ? t("connectProvider.status.connected") : t("connectProvider.status.needsEndpoint");
   }
 
   if (provider.apiKey?.trim()) {
-    return "connected";
+    return t("connectProvider.status.connected");
   }
 
   if (provider.apiKeyEnv) {
-    return `needs ${provider.apiKeyEnv}`;
+    return t("connectProvider.status.needsEnv", { env: provider.apiKeyEnv });
   }
 
-  return "needs key";
+  return t("connectProvider.status.needsKey");
 }
