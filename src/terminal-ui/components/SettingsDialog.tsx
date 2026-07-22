@@ -73,10 +73,18 @@ const FIELD_DEFINITIONS: FieldDefinition[] = [
     labelKey: "settingsDialog.field.historyPaging",
     type: "toggle"
   },
+  // 模型可见的系统时间注入（与下方 UI 消息时钟开关无关）
   {
     key: "messageTimestampsEnabled",
     label: "Current System Time",
     labelKey: "settingsDialog.field.currentSystemTime",
+    type: "toggle"
+  },
+  // 界面 transcript 消息旁是否显示本地时间，默认关闭
+  {
+    key: "showMessageTimestamps",
+    label: "Message Timestamps",
+    labelKey: "settingsDialog.field.messageTimestamps",
     type: "toggle"
   },
   {
@@ -496,6 +504,8 @@ export function SettingsDialog(props: {
                         ? t("settingsDialog.help.scrollAcceleration")
                         : currentField.key === "historyPagingEnabled"
                           ? t("settingsDialog.help.historyPaging")
+                          : currentField.key === "showMessageTimestamps"
+                            ? t("settingsDialog.help.messageTimestamps")
                   : currentField.type === "text"
                   ? t("settingsDialog.help.text")
                   : currentField.type === "number"

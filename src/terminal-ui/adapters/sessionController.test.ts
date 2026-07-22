@@ -1327,7 +1327,6 @@ function createRuntimeConfigStub(
     memory: {
       directory: "C:\\workspace\\.alyce\\memory",
       fileName: "MEMORY.md",
-      sessionMemoryFileName: "SESSION_MEMORY.md",
       maxSessionEntries: 30,
       maxPersistentEntries: 200,
       maxPromptEntries: 20,
@@ -1386,6 +1385,7 @@ function createSettingsState(): SessionSettingsState {
       maxMessagesWithoutVirtualization: 200,
       sessionMemoryEnabled: true,
       messageTimestampsEnabled: false,
+      showMessageTimestamps: false,
       markdownMessageRenderingEnabled: true,
       markdownToolMessageRenderingEnabled: true,
       markdownRenderMaxChars: 32_000,
@@ -1424,6 +1424,7 @@ function createSettingsState(): SessionSettingsState {
       maxMessagesWithoutVirtualization: "default",
       sessionMemoryEnabled: "default",
       messageTimestampsEnabled: "default",
+      showMessageTimestamps: "default",
       markdownMessageRenderingEnabled: "default",
       markdownToolMessageRenderingEnabled: "default",
       markdownRenderMaxChars: "default",

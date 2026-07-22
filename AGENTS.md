@@ -5,13 +5,15 @@ All runtime code lives in `src/`. Entry starts at `src/index.ts`, then flows thr
 
 ## Build, Test, and Development Commands
 - `npm install`: install dependencies.
-- `npm run build`: compile TypeScript with `tsc` into `dist/`.
+- `npm run build`: bundle the app with esbuild into `dist/` (fast cold start).
+- `npm run build:check`: typecheck with `tsc --noEmit`.
+- `npm run build:watch`: rebuild on source changes.
 - `npm test`: discover and run all `src/**/*.test.ts(x)` files with `tsx`.
 - `npm test -- <fragment>`: run tests whose path contains the fragment, for example `npm test -- commandRouter`.
 - `npm run dev`: build, then launch the terminal UI locally.
 - `npm start`: run the compiled app from `dist/index.js`.
 
-This app must be run in an interactive TTY. Use `npm run build` and `npm test` as the baseline validation steps before submitting changes.
+This app must be run in an interactive TTY. Use `npm run build`, `npm run build:check`, and `npm test` as the baseline validation steps before submitting changes.
 
 ## Coding Style & Naming Conventions
 Use TypeScript with 2-space indentation, semicolons, double quotes, and explicit `.js` extensions in relative imports. Prefer feature folders over file-type grouping. Use `PascalCase` for React components and tool classes such as `WebSearchTool.ts`, and `camelCase` for helpers such as `sessionRuntime.ts` or `runAgentTurn.ts`. No dedicated formatter or linter is configured, so match the surrounding code closely.

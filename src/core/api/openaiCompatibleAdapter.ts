@@ -1,6 +1,7 @@
 import OpenAI from "openai";
 import type { ResolvedModelProfile } from "../providers/types.js";
 import type { ChatCompletionAdapter } from "./modelAdapters.js";
+import { consumeOpenAIChatCompletionStream } from "./chatCompletionStream.js";
 
 export function createOpenAICompatibleAdapter(
   resolvedModel: ResolvedModelProfile
@@ -19,6 +20,24 @@ export function createOpenAICompatibleAdapter(
     kind: resolvedModel.kind,
     sendChatCompletion: async (request, options) => {
       try {
+        // 有流式回调时优先 SSE；最终仍组装成完整 ChatCompletion，兼容 tool_calls。
+        if (options.streamHandlers) {
+          const stream = await client.chat.completions.create(
+            {
+              ...request,
+              stream: true
+            },
+            {
+              signal: options.abortSignal
+            }
+          );
+          return await consumeOpenAIChatCompletionStream(stream, {
+            model: request.model,
+            handlers: options.streamHandlers,
+            abortSignal: options.abortSignal
+          });
+        }
+
         return await client.chat.completions.create(request, {
           signal: options.abortSignal
         });

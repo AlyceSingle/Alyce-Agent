@@ -1,4 +1,6 @@
+import { existsSync } from "node:fs";
 import path from "node:path";
+import { fileURLToPath } from "node:url";
 import { Worker } from "node:worker_threads";
 import type {
   LspRuntimeDiagnosticIssue,
@@ -77,7 +79,7 @@ export function getTypeScriptDiagnosticsForFileAsync(options: {
     allowedRoots: [...options.allowedRoots]
   };
 
-  const worker = new Worker(new URL("./typeScriptDiagnosticsWorker.js", import.meta.url), {
+  const worker = new Worker(resolveTypeScriptDiagnosticsWorkerUrl(), {
     workerData: request
   });
 
@@ -180,3 +182,31 @@ function isWorkerFailureResponse(message: unknown): message is WorkerFailureResp
       typeof (message as { error?: unknown }).error === "string"
   );
 }
+
+const TYPE_SCRIPT_DIAGNOSTICS_WORKER_FILES = ["typeScriptDiagnosticsWorker.cjs", "typeScriptDiagnosticsWorker.js"] as const;
+
+function resolveTypeScriptDiagnosticsWorkerUrl() {
+  const candidates: URL[] = [];
+  for (const fileName of TYPE_SCRIPT_DIAGNOSTICS_WORKER_FILES) {
+    candidates.push(
+      new URL(`./${fileName}`, import.meta.url),
+      new URL(`../${fileName}`, import.meta.url),
+      new URL(`../../${fileName}`, import.meta.url),
+      new URL(`../../../dist/${fileName}`, import.meta.url),
+      new URL(`../../../dist/tools/internal/${fileName}`, import.meta.url)
+    );
+  }
+
+  for (const candidate of candidates) {
+    try {
+      if (existsSync(fileURLToPath(candidate))) {
+        return candidate;
+      }
+    } catch {
+      // Keep trying other candidate locations.
+    }
+  }
+
+  return candidates[0]!;
+}
+

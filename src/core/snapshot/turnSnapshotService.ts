@@ -2,7 +2,8 @@ import path from "node:path";
 import type { SnapshotRuntimeConfig } from "../../config/runtime.js";
 import {
   captureDirectoryManifest,
-  getCreatedDirectoryPaths
+  getCreatedDirectoryPaths,
+  type DirectoryManifest
 } from "./directoryManifest.js";
 import { GitTreeSnapshotStore } from "./gitTreeSnapshotStore.js";
 import { cleanupCreatedDirectories } from "./snapshotRestore.js";
@@ -45,6 +46,11 @@ export interface SnapshotDiagnostics {
 export class TurnSnapshotService {
   private readonly records = new Map<string, TurnSnapshotRecord>();
   private readonly order: string[] = [];
+  /** Directory walks can be slow; do not block turn start on them. */
+  private readonly pendingBeforeDirectoryManifest = new Map<
+    string,
+    Promise<DirectoryManifest | undefined>
+  >();
   private readonly store: GitTreeSnapshotStore;
   private config: SnapshotRuntimeConfig;
   private latestError?: string;
@@ -85,14 +91,34 @@ export class TurnSnapshotService {
     this.trimRecords();
 
     try {
-      const [beforeRef, beforeDirectories] = await Promise.all([
-        this.store.capture(),
-        this.captureDirectoryManifest()
-      ]);
+      // Git tree capture must finish before tools mutate files.
+      // Directory-manifest scan walks the workspace and can dominate submit
+      // latency, so run it in the background and only await at finalize.
+      const beforeRef = await this.store.capture();
       record.beforeRef = beforeRef;
-      record.beforeDirectories = beforeDirectories;
       record.unavailableReason = undefined;
       this.latestError = undefined;
+
+      if (this.config.manifestScan) {
+        const pending = this.captureDirectoryManifest()
+          .then((beforeDirectories) => {
+            if (this.records.get(turnId) === record) {
+              record.beforeDirectories = beforeDirectories;
+            }
+            return beforeDirectories;
+          })
+          .catch((error: unknown) => {
+            if (this.records.get(turnId) === record) {
+              record.unavailableReason = formatError(error);
+              this.latestError = record.unavailableReason;
+            }
+            return undefined;
+          })
+          .finally(() => {
+            this.pendingBeforeDirectoryManifest.delete(turnId);
+          });
+        this.pendingBeforeDirectoryManifest.set(turnId, pending);
+      }
     } catch (error) {
       record.unavailableReason = formatError(error);
       this.latestError = record.unavailableReason;
@@ -107,6 +133,11 @@ export class TurnSnapshotService {
     const record = this.records.get(turnId);
     if (!record || !record.beforeRef) {
       return [];
+    }
+
+    const pendingBefore = this.pendingBeforeDirectoryManifest.get(turnId);
+    if (pendingBefore) {
+      await pendingBefore;
     }
 
     if (!record.finalizedAt) {

@@ -42,6 +42,10 @@ export function formatModelRef(ref: ModelRef): string {
   return `${ref.providerId}/${ref.modelId}`;
 }
 
+// 解析最终模型档案。上下文窗口优先级：
+// 1) 用户 override（设置/配置）
+// 2) provider.models[id].contextWindow（静态配置 + /models 实时发现合并后的值）
+// 3) 模型名后缀推断 / 默认 128k（见 resolveModelContextWindow）
 export function resolveModelProfile(
   value: string | ModelRef,
   options: {
@@ -61,6 +65,7 @@ export function resolveModelProfile(
 
   const modelProfile = provider.models?.[modelRef.modelId] ?? {};
   const providerModelName = formatModelRef(modelRef);
+  // 名称推断与默认值仅作兜底；有 provider 档案上下文时不覆盖（override 除外）。
   const contextWindowResolution = resolveModelContextWindow(
     providerModelName,
     options.modelContextWindowOverrides

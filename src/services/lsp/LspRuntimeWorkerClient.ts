@@ -7,8 +7,7 @@ import type {
 } from "./types.js";
 
 const DEFAULT_LSP_WORKER_TIMEOUT_MS = 60_000;
-const JS_WORKER_URL = new URL("./LspRuntimeWorker.js", import.meta.url);
-const DIST_JS_WORKER_URL = new URL("../../../dist/services/lsp/LspRuntimeWorker.js", import.meta.url);
+const WORKER_FILE_NAMES = ["LspRuntimeWorker.cjs", "LspRuntimeWorker.js"] as const;
 
 type WorkerRequest = Omit<LspRuntimeQueryInput, "abortSignal">;
 
@@ -121,16 +120,34 @@ export function executeLspRuntimeQueryAsync(
   });
 }
 
-function resolveWorkerUrl() {
-  if (existsSync(fileURLToPath(JS_WORKER_URL))) {
-    return JS_WORKER_URL;
+/**
+ * Resolve the worker script for both:
+ * - bundled layout: dist/app.cjs + dist/LspRuntimeWorker.cjs
+ * - tsc/tsx layout: co-located .js next to this module or under dist/
+ */
+export function resolveWorkerUrl() {
+  const candidates: URL[] = [];
+  for (const fileName of WORKER_FILE_NAMES) {
+    candidates.push(
+      new URL(`./${fileName}`, import.meta.url),
+      new URL(`../${fileName}`, import.meta.url),
+      new URL(`../../${fileName}`, import.meta.url),
+      new URL(`../../../dist/${fileName}`, import.meta.url),
+      new URL(`../../../dist/services/lsp/${fileName}`, import.meta.url)
+    );
   }
 
-  if (existsSync(fileURLToPath(DIST_JS_WORKER_URL))) {
-    return DIST_JS_WORKER_URL;
+  for (const candidate of candidates) {
+    try {
+      if (existsSync(fileURLToPath(candidate))) {
+        return candidate;
+      }
+    } catch {
+      // Ignore invalid/non-file URLs and keep trying.
+    }
   }
 
-  return JS_WORKER_URL;
+  return candidates[0]!;
 }
 
 function isWorkerSuccessResponse(message: unknown): message is WorkerSuccessResponse {
@@ -138,7 +155,7 @@ function isWorkerSuccessResponse(message: unknown): message is WorkerSuccessResp
     message &&
       typeof message === "object" &&
       (message as { ok?: unknown }).ok === true &&
-      "result" in (message as Record<string, unknown>)
+      "result" in (message as object)
   );
 }
 
@@ -150,3 +167,4 @@ function isWorkerFailureResponse(message: unknown): message is WorkerFailureResp
       typeof (message as { error?: unknown }).error === "string"
   );
 }
+

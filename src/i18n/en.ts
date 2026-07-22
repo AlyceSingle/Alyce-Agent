@@ -275,6 +275,8 @@ const en: Record<string, string> = {
   "settingsDialog.field.scrollAcceleration": "Scroll Acceleration",
   "settingsDialog.field.historyPaging": "History Paging",
   "settingsDialog.field.currentSystemTime": "Current System Time",
+  "settingsDialog.field.messageTimestamps": "Message Timestamps",
+  "settingsDialog.help.messageTimestamps": "When on, each transcript message shows a local clock time (for example 3:45 PM).",
   "settingsDialog.field.markdownMessages": "Markdown Messages",
   "settingsDialog.field.toolMarkdown": "Tool Markdown",
   "settingsDialog.field.thinkDefaultExpanded": "THINK Default Expanded",
@@ -326,6 +328,7 @@ const en: Record<string, string> = {
   // ── Status messages (sessionController) ──
   "status.idle": "Idle",
   "status.error": "Error",
+  "status.responding": "Responding...",
   "status.thinking": "Thinking...",
   "status.preparing": "Preparing...",
   "status.compacting": "Compacting context...",

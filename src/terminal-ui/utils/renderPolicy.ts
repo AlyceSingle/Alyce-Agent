@@ -1,5 +1,6 @@
 import type { SessionSettings } from "../../config/runtime.js";
 import type { TerminalUiMessage, TerminalUiToolData } from "../state/types.js";
+import { isStreamingUiMessage } from "../adapters/messageMapper.js";
 
 const TOOL_MARKDOWN_FRIENDLY_NAME_TOKENS = [
   "list",
@@ -37,7 +38,8 @@ export type RenderFallbackReason =
   | "tool-code-preferred"
   | "tool-plain-preferred"
   | "collapsed-preview"
-  | "content-too-long";
+  | "content-too-long"
+  | "streaming-plain";
 
 export type MessageRenderMode = "markdown" | "sections";
 
@@ -87,6 +89,15 @@ export function resolveMessageRenderDecision(options: {
   }
 
   if (options.policy.markdownMessageKinds.has(options.message.kind)) {
+    // 流式阶段用纯文本分区渲染，避免每个 delta 全量 markdown 解析卡死事件循环。
+    if (isStreamingUiMessage(options.message)) {
+      return {
+        mode: "sections",
+        live: false,
+        fallbackReason: "streaming-plain"
+      };
+    }
+
     if (!options.expanded && options.hasExpandablePreview) {
       return {
         mode: "sections",

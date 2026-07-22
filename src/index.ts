@@ -7,6 +7,7 @@ import {
 } from "./core/startup/startupTiming.js";
 
 async function main(): Promise<void> {
+  // 入口尽量轻：先记启动耗时，再动态导入 UI 启动链路，缩短冷启动到首帧的同步开销。
   logStartupTiming("index:entered", {
     cwd: process.cwd(),
     argvLength: process.argv.length

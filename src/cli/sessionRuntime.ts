@@ -3547,6 +3547,10 @@ function normalizeSettingsPatch(
   if ("messageTimestampsEnabled" in patch) {
     normalized.messageTimestampsEnabled = patch.messageTimestampsEnabled;
   }
+  // UI 消息时钟开关；与 messageTimestampsEnabled（API 系统时间）相互独立。
+  if ("showMessageTimestamps" in patch) {
+    normalized.showMessageTimestamps = patch.showMessageTimestamps;
+  }
 
   if ("markdownMessageRenderingEnabled" in patch) {
     normalized.markdownMessageRenderingEnabled = patch.markdownMessageRenderingEnabled;

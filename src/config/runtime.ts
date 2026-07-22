@@ -48,7 +48,6 @@ export interface PromptOverrideConfig {
 export interface MemoryRuntimeConfig {
   directory: string;
   fileName: string;
-  sessionMemoryFileName: string;
   maxSessionEntries: number;
   maxPersistentEntries: number;
   maxPromptEntries: number;
@@ -104,7 +103,10 @@ export interface SessionSettings extends PromptOverrideConfig {
   historyPagingEnabled: boolean;
   maxMessagesWithoutVirtualization: number;
   sessionMemoryEnabled: boolean;
+  /** 注入 API 请求的“当前系统时间”上下文（模型可见，界面不展示）。 */
   messageTimestampsEnabled: boolean;
+  /** 是否在对话 transcript 消息旁显示本地时钟（如 3:45 PM），默认关闭。 */
+  showMessageTimestamps: boolean;
   markdownMessageRenderingEnabled: boolean;
   markdownToolMessageRenderingEnabled: boolean;
   markdownRenderMaxChars: number;
@@ -264,6 +266,7 @@ const SessionSettingsFileSchema: z.ZodType<SessionSettingsFile> = z
     // Accept the retired setting as a compatibility alias.
     autoSummaryEnabled: z.boolean().optional(),
     messageTimestampsEnabled: z.boolean().optional(),
+    showMessageTimestamps: z.boolean().optional(),
     markdownMessageRenderingEnabled: z.boolean().optional(),
     markdownToolMessageRenderingEnabled: z.boolean().optional(),
     markdownRenderMaxChars: z.number().int().positive().optional(),
@@ -460,7 +463,6 @@ export async function loadRuntimeConfig(
         paths.memoryDirectory
       ),
       fileName: env.AGENT_MEMORY_FILE || "MEMORY.md",
-      sessionMemoryFileName: env.AGENT_SESSION_MEMORY_FILE || "SESSION_MEMORY.md",
       maxSessionEntries: parsePositiveInt(env.AGENT_MEMORY_MAX_SESSION, 30),
       maxPersistentEntries: parsePositiveInt(env.AGENT_MEMORY_MAX_PERSISTENT, 200),
       maxPromptEntries: parsePositiveInt(env.AGENT_MEMORY_MAX_PROMPT, 20),
@@ -907,7 +909,9 @@ function normalizeSessionSettings(
     historyPagingEnabled: input.historyPagingEnabled ?? false,
     maxMessagesWithoutVirtualization: clampPositiveInt(input.maxMessagesWithoutVirtualization, 200),
     sessionMemoryEnabled: input.sessionMemoryEnabled ?? true,
+    // messageTimestampsEnabled：模型侧系统时间；showMessageTimestamps：UI 消息时钟，默认隐藏。
     messageTimestampsEnabled: input.messageTimestampsEnabled ?? false,
+    showMessageTimestamps: input.showMessageTimestamps ?? false,
     markdownMessageRenderingEnabled: input.markdownMessageRenderingEnabled ?? true,
     markdownToolMessageRenderingEnabled: input.markdownToolMessageRenderingEnabled ?? true,
     markdownRenderMaxChars: clampPositiveInt(input.markdownRenderMaxChars, 32_000),
@@ -951,6 +955,8 @@ function serializeSessionSettings(
       "sessionMemoryEnabled" in settings ? settings.sessionMemoryEnabled : undefined,
     messageTimestampsEnabled:
       "messageTimestampsEnabled" in settings ? settings.messageTimestampsEnabled : undefined,
+    showMessageTimestamps:
+      "showMessageTimestamps" in settings ? settings.showMessageTimestamps : undefined,
     markdownMessageRenderingEnabled:
       "markdownMessageRenderingEnabled" in settings
         ? settings.markdownMessageRenderingEnabled

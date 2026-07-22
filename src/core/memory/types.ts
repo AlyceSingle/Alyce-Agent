@@ -17,6 +17,7 @@ export interface MemoryPromptContext {
   persistentNotes: string[];
 }
 
+// 会话摘要状态（历史命名含 File，实际只存内存/会话历史，不再落 SESSION_MEMORY.md）。
 export interface SessionMemoryFileState {
   markdown: string;
   updatedAt?: string;
@@ -53,7 +54,6 @@ export interface MemoryServiceConfig {
   workspaceRoot: string;
   directory: string;
   fileName: string;
-  sessionMemoryFileName: string;
   maxSessionEntries: number;
   maxPersistentEntries: number;
   maxPromptEntries: number;

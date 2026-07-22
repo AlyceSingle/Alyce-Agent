@@ -13,6 +13,8 @@ import {
 import { TurnInterruptedError } from "../abort.js";
 import type { ResolvedModelProfile } from "../providers/types.js";
 import type { ModelUsageEvent } from "../usage/types.js";
+import type { ChatCompletionStreamHandlers } from "./chatCompletionStream.js";
+import { consumeOpenAIChatCompletionStream } from "./chatCompletionStream.js";
 
 const RECONNECT_DELAY_MS = 10_000;
 const MAX_RECONNECT_RETRIES = 7;
@@ -39,6 +41,8 @@ export interface SendChatCompletionOptions extends ChatCompletionRequestOptions 
   abortSignal?: AbortSignal;
   onReconnect?: (event: ChatCompletionReconnectEvent) => void;
   onUsage?: (event: ModelUsageEvent) => void;
+  /** 文本/思考增量回调。传入后 OpenAI 兼容通道走 SSE；原生 Anthropic/Google 仍整包返回。 */
+  streamHandlers?: ChatCompletionStreamHandlers;
 }
 
 export function buildPatchedChatCompletionRequest(
@@ -138,6 +142,24 @@ async function createChatCompletion(
 
     return transport.sendChatCompletion(request, {
       resolvedModel: options.resolvedModel,
+      abortSignal: options.abortSignal,
+      streamHandlers: options.streamHandlers
+    });
+  }
+
+  if (options.streamHandlers) {
+    const stream = await transport.chat.completions.create(
+      {
+        ...request,
+        stream: true
+      },
+      {
+        signal: options.abortSignal
+      }
+    );
+    return consumeOpenAIChatCompletionStream(stream, {
+      model: request.model,
+      handlers: options.streamHandlers,
       abortSignal: options.abortSignal
     });
   }

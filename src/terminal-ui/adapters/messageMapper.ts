@@ -23,6 +23,8 @@ import { serializeMessageBlocks } from "../utils/messageBlocks.js";
 import type { LspDiagnosticCompletedEvent } from "../../services/lsp/LspDiagnosticRegistry.js";
 
 const DEFAULT_PREVIEW_MAX_CHARS = 320;
+/** 流式输出中的消息标记：MessageList 以此跳过昂贵 markdown 重解析。 */
+export const STREAMING_MESSAGE_METADATA = "streaming";
 const TOOL_PREVIEW_MAX_CHARS = 520;
 const TOOL_TITLE_MAX_CHARS = 96;
 const TOOL_TARGET_KEYS = ["file_path", "filePath", "path", "url", "query", "pattern", "command", "cwd", "pty_id"];
@@ -148,12 +150,31 @@ export function createUserMessage(content: string) {
   });
 }
 
-export function createAssistantMessage(content: string) {
-  return createMessage({
+export function createAssistantMessage(
+  content: string,
+  options?: {
+    id?: string;
+    createdAt?: string;
+    streaming?: boolean;
+  }
+) {
+  const message = createMessage({
     kind: "assistant",
     title: "Response",
-    blocks: [createBlock(content)]
+    blocks: [createBlock(content)],
+    metadata: options?.streaming ? [STREAMING_MESSAGE_METADATA] : undefined
   });
+  if (options?.id) {
+    message.id = options.id;
+  }
+  if (options?.createdAt) {
+    message.createdAt = options.createdAt;
+  }
+  return message;
+}
+
+export function isStreamingUiMessage(message: Pick<TerminalUiMessage, "metadata">): boolean {
+  return message.metadata.includes(STREAMING_MESSAGE_METADATA);
 }
 
 export function createThinkingMessage(content: string) {

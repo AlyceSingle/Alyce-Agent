@@ -1,5 +1,6 @@
 import type OpenAI from "openai";
 import type { ResolvedModelProfile } from "../providers/types.js";
+import type { ChatCompletionStreamHandlers } from "./chatCompletionStream.js";
 import { resolveModelAdapterFactory } from "./adapterRegistry.js";
 export {
   getModelAdapterAvailability,
@@ -17,6 +18,8 @@ export interface ChatCompletionAdapter {
     options: {
       resolvedModel: ResolvedModelProfile;
       abortSignal?: AbortSignal;
+      /** 若提供，适配器在支持时应走流式并回传增量。 */
+      streamHandlers?: ChatCompletionStreamHandlers;
     }
   ) => Promise<OpenAI.Chat.Completions.ChatCompletion>;
 }

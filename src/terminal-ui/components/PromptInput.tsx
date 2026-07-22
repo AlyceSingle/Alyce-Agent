@@ -120,51 +120,63 @@ export function PromptInput(props: {
   onSubmit: (value: string) => Promise<void> | void;
 }) {
   const terminalSize = useTerminalSize();
+  // 输入值先落本地 state，避免每键都等全局 store 回传才刷新光标/文本。
+  const [localValue, setLocalValue] = useState(props.value);
   const [cursorOffset, setCursorOffset] = useState(props.value.length);
   const [escClearPending, setEscClearPending] = useState(false);
-  const previousValueRef = useRef(props.value);
-  const pendingLocalValueChangeRef = useRef(false);
-  const pendingLocalCursorOffsetRef = useRef<number | null>(null);
+  const lastExternalValueRef = useRef(props.value);
+  const pendingStoreSyncRef = useRef<string | null>(null);
+  const storeSyncTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const layoutRowCountRef = useRef(0);
   const [selectedSlashIndex, setSelectedSlashIndex] = useState(0);
   const viewportWidth = terminalSize.columns > 0 ? terminalSize.columns : props.viewportWidth;
   const inputColumns = Math.max(20, viewportWidth - PROMPT_INPUT_VIEWPORT_OFFSET);
-  const slashSuggestions = useMemo(() => getSlashCommandSuggestions(props.value), [props.value]);
-  const slashMenuVisible = !props.disabled && isSlashCommandInput(props.value) && slashSuggestions.length > 0;
+  const slashSuggestions = useMemo(() => getSlashCommandSuggestions(localValue), [localValue]);
+  const slashMenuVisible = !props.disabled && isSlashCommandInput(localValue) && slashSuggestions.length > 0;
   const layoutRowCount = slashMenuVisible
     ? Math.min(slashSuggestions.length, MAX_VISIBLE_SLASH_COMMAND_SUGGESTIONS) + 1
     : 0;
   const selectedSlashSuggestion = slashSuggestions[Math.min(selectedSlashIndex, slashSuggestions.length - 1)];
 
-  useEffect(() => {
-    props.onCtrlCCaptureChange(!props.disabled && props.value.length > 0);
-  }, [props.disabled, props.onCtrlCCaptureChange, props.value]);
+  const flushStoreSync = useCallback(() => {
+    storeSyncTimerRef.current = null;
+    const pending = pendingStoreSyncRef.current;
+    if (pending === null) {
+      return;
+    }
+    pendingStoreSyncRef.current = null;
+    // 标记为本地回写，避免 props 回传时重置光标。
+    lastExternalValueRef.current = pending;
+    props.onChange(pending);
+  }, [props.onChange]);
 
   useEffect(() => {
-    const previousValue = previousValueRef.current;
-    previousValueRef.current = props.value;
+    props.onCtrlCCaptureChange(!props.disabled && localValue.length > 0);
+  }, [props.disabled, props.onCtrlCCaptureChange, localValue.length]);
 
-    if (previousValue === props.value) {
+  // 外部写入 draft（恢复会话、提交清空、Ctrl+C 清空）时同步本地缓冲。
+  useEffect(() => {
+    if (props.value === lastExternalValueRef.current) {
       return;
     }
 
-    if (pendingLocalValueChangeRef.current) {
-      pendingLocalValueChangeRef.current = false;
-      const pendingLocalCursorOffset = pendingLocalCursorOffsetRef.current;
-      pendingLocalCursorOffsetRef.current = null;
-
-      if (pendingLocalCursorOffset !== null) {
-        setCursorOffset((current) => {
-          const nextCursorOffset = Math.min(props.value.length, pendingLocalCursorOffset);
-          return current === nextCursorOffset ? current : nextCursorOffset;
-        });
-      }
-      return;
+    lastExternalValueRef.current = props.value;
+    pendingStoreSyncRef.current = null;
+    if (storeSyncTimerRef.current !== null) {
+      clearTimeout(storeSyncTimerRef.current);
+      storeSyncTimerRef.current = null;
     }
-
-    pendingLocalCursorOffsetRef.current = null;
+    setLocalValue(props.value);
     setCursorOffset(props.value.length);
   }, [props.value]);
+
+  useEffect(() => {
+    return () => {
+      if (storeSyncTimerRef.current !== null) {
+        clearTimeout(storeSyncTimerRef.current);
+      }
+    };
+  }, []);
 
   useEffect(() => {
     return () => {
@@ -191,14 +203,14 @@ export function PromptInput(props: {
   }, [layoutRowCount, props.onLayoutHeightChange]);
 
   useEffect(() => {
-    if (props.value.length === 0) {
+    if (localValue.length === 0) {
       setEscClearPending(false);
     }
-  }, [props.value.length]);
+  }, [localValue.length]);
 
   useEffect(() => {
     setSelectedSlashIndex(0);
-  }, [props.value]);
+  }, [localValue]);
 
   useEffect(() => {
     if (slashSuggestions.length === 0) {
@@ -215,20 +227,30 @@ export function PromptInput(props: {
       viewportWidth,
       columns: inputColumns,
       disabled: props.disabled,
-      valueLength: props.value.length
+      valueLength: localValue.length
     });
-  }, [inputColumns, props.disabled, props.value.length, terminalSize.columns, terminalSize.rows, viewportWidth]);
+  }, [inputColumns, localValue.length, props.disabled, terminalSize.columns, terminalSize.rows, viewportWidth]);
 
   const handleChange = useCallback((value: string) => {
-    pendingLocalValueChangeRef.current = true;
-    props.onChange(value);
-  }, [props.onChange]);
+    setLocalValue(value);
+    pendingStoreSyncRef.current = value;
+    // 空/非空切换立刻同步，保证 Esc/Ctrl+C 读到的 store 快照正确；其它编辑合并到下一 macrotask。
+    const emptinessChanged =
+      (lastExternalValueRef.current.length === 0) !== (value.length === 0);
+    if (emptinessChanged) {
+      if (storeSyncTimerRef.current !== null) {
+        clearTimeout(storeSyncTimerRef.current);
+        storeSyncTimerRef.current = null;
+      }
+      flushStoreSync();
+      return;
+    }
+    if (storeSyncTimerRef.current === null) {
+      storeSyncTimerRef.current = setTimeout(flushStoreSync, 0);
+    }
+  }, [flushStoreSync]);
 
   const handleCursorOffsetChange = useCallback((offset: number) => {
-    if (pendingLocalValueChangeRef.current) {
-      pendingLocalCursorOffsetRef.current = offset;
-    }
-
     setCursorOffset(offset);
   }, []);
 
@@ -240,12 +262,12 @@ export function PromptInput(props: {
   }, [handleChange, handleCursorOffsetChange]);
 
   const handleInputKey = useCallback((_input: string, key: TerminalKey) => {
-    if (shouldToggleModeFromPromptKey(props.value, props.disabled, key) && props.onModeToggle) {
+    if (shouldToggleModeFromPromptKey(localValue, props.disabled, key) && props.onModeToggle) {
       void props.onModeToggle();
       return true;
     }
 
-    const slashInputActive = !props.disabled && isSlashCommandInput(props.value);
+    const slashInputActive = !props.disabled && isSlashCommandInput(localValue);
     if (!slashInputActive) {
       return false;
     }
@@ -267,14 +289,14 @@ export function PromptInput(props: {
     }
 
     if (key.tab) {
-      if (selectedSlashSuggestion && shouldCompleteSlashCommandInput(props.value, selectedSlashSuggestion)) {
+      if (selectedSlashSuggestion && shouldCompleteSlashCommandInput(localValue, selectedSlashSuggestion)) {
         applySlashCompletion(selectedSlashSuggestion);
       }
       return true;
     }
 
     if (key.return && !key.shift && !key.meta && !key.ctrl && selectedSlashSuggestion) {
-      if (shouldCompleteSlashCommandInput(props.value, selectedSlashSuggestion)) {
+      if (shouldCompleteSlashCommandInput(localValue, selectedSlashSuggestion)) {
         applySlashCompletion(selectedSlashSuggestion);
         return true;
       }
@@ -283,9 +305,9 @@ export function PromptInput(props: {
     return false;
   }, [
     applySlashCompletion,
+    localValue,
     props.disabled,
     props.onModeToggle,
-    props.value,
     selectedSlashSuggestion,
     slashSuggestions.length
   ]);
@@ -320,9 +342,20 @@ export function PromptInput(props: {
         paddingX={1}
       >
         <TextInput
-          value={props.value}
+          value={localValue}
           onChange={handleChange}
           onSubmit={(value) => {
+            // 提交后立即清空本地缓冲。不能只写 lastExternalValueRef=value：
+            // dock 的 props.value 往往仍是 ""，effect 不会触发，输入框会残留文字。
+            if (storeSyncTimerRef.current !== null) {
+              clearTimeout(storeSyncTimerRef.current);
+              storeSyncTimerRef.current = null;
+            }
+            pendingStoreSyncRef.current = null;
+            setLocalValue("");
+            setCursorOffset(0);
+            lastExternalValueRef.current = "";
+            props.onChange("");
             void props.onSubmit(value);
           }}
           onInputKey={handleInputKey}

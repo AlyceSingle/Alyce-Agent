@@ -16,6 +16,7 @@ async function runTests() {
   testParseGoogleModels();
   await testFetchOpenAICompatibleModelsSendsAuthHeaders();
   await testRefreshProviderModelsFallsBackOnFailure();
+  await testRefreshKeepsConfigOnlyModels();
   console.log("modelDiscovery tests passed");
 }
 
@@ -29,13 +30,48 @@ function testParseOpenAICompatibleModels() {
     data: [
       { id: "gpt-5.2", name: "GPT-5.2" },
       { id: "gpt-5.1-codex" },
-      { nope: true }
+      { nope: true },
+      // OpenRouter 风格：顶层 + top_provider 上下文/输出上限
+      {
+        id: "openrouter/meta-llama/llama-3.1-70b",
+        name: "Llama 3.1 70B",
+        context_length: 131_072,
+        top_provider: {
+          context_length: 131_072,
+          max_completion_tokens: 16_384
+        }
+      },
+      // vLLM 风格
+      {
+        id: "qwen2.5-72b",
+        max_model_len: 32_768
+      },
+      // max_tokens 通常是 completion 默认值，不能当 context_window
+      {
+        id: "tiny-completion-default",
+        max_tokens: 4_096
+      },
+      // 过小的 context_length 视为脏数据忽略
+      {
+        id: "too-small-context",
+        context_length: 2_048
+      }
     ]
   });
 
   assert.deepEqual(models, {
     "gpt-5.2": { label: "GPT-5.2" },
-    "gpt-5.1-codex": {}
+    "gpt-5.1-codex": {},
+    "openrouter/meta-llama/llama-3.1-70b": {
+      label: "Llama 3.1 70B",
+      contextWindow: 131_072,
+      maxOutputTokens: 16_384
+    },
+    "qwen2.5-72b": {
+      contextWindow: 32_768
+    },
+    "tiny-completion-default": {},
+    "too-small-context": {}
   });
 }
 
@@ -129,6 +165,49 @@ async function testRefreshProviderModelsFallsBackOnFailure() {
   assert.match(result.error ?? "", /does not define a model list endpoint/);
   assert.deepEqual(result.models, {
     fallback: { label: "Fallback" }
+  });
+}
+
+async function testRefreshKeepsConfigOnlyModels() {
+  const provider: ProviderProfile = {
+    id: "openrouter",
+    label: "OpenRouter",
+    kind: "openrouter",
+    baseURL: "https://openrouter.ai/api/v1",
+    models: {
+      "custom/keep-me": {
+        label: "Keep Me",
+        contextWindow: 99_000
+      },
+      "openai/gpt-5.2": {
+        label: "Old Label",
+        contextWindow: 100_000
+      }
+    }
+  };
+
+  const result = await refreshProviderModels({
+    provider,
+    connector: {
+      id: "openrouter",
+      label: "OpenRouter",
+      models: async () => ({
+        "openai/gpt-5.2": {
+          label: "Live GPT",
+          contextWindow: 400_000
+        }
+      })
+    }
+  });
+
+  assert.equal(result.source, "live");
+  assert.deepEqual(result.models["custom/keep-me"], {
+    label: "Keep Me",
+    contextWindow: 99_000
+  });
+  assert.deepEqual(result.models["openai/gpt-5.2"], {
+    label: "Live GPT",
+    contextWindow: 400_000
   });
 }
 

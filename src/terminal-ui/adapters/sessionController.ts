@@ -2863,30 +2863,25 @@ export function createSessionController(
         userCancelled: false
       };
 
-      // 先立即显示用户消息，再执行异步准备，消除回车后的显示延迟。
-      store.updateState((state) => setTranscriptSticky(state, true));
-      appendUiMessage(createUserMessage(normalized));
-
-      await runtime.beginTurn(turnId);
+      // 先立即回显用户消息并进入 preparing，避免回车后卡在“无反馈”状态。
+      // snapshot / skills / tools 准备改为并行，缩短输入到模型请求的链路。
       activeTurn = checkpoint;
       resetTurnEphemeralMessages();
+      store.updateState((state) =>
+        setLoading(setStatusText(setTranscriptSticky(state, true), t("status.preparing")), true)
+      );
+      appendUiMessage(createUserMessage(normalized));
 
-      const promptSkillContext = await runtime.preparePromptSkillContext(normalized);
-      const userMessage = {
-        role: "user",
-        content: normalized
-      } as const;
-      runtime.messages.push(...promptSkillContext.generatedMessages, userMessage);
-      const promptSkillSummary = formatPromptSkillSummary(promptSkillContext);
-      if (promptSkillSummary) {
-        appendUiMessage(createSystemMessage(promptSkillSummary, "Skills"));
-      }
-      store.updateState((state) => setLoading(setStatusText(state, t("status.preparing")), true));
       let completedTurnHistoryPlan: CompletedTurnHistoryPlan | null = null;
       let turnRecorded = false;
       let conversationWasCompacted = false;
       let thinkingSnapshot = "";
       let thinkingSegmentContent = "";
+      // 流式 assistant 气泡：同一 model step 内原地更新，跨 step 重新开一条。
+      let streamingAssistantMessageId: string | null = null;
+      let streamingAssistantCreatedAt: string | null = null;
+      let streamingAssistantText = "";
+      let streamingAssistantFlushTimer: ReturnType<typeof setTimeout> | null = null;
       let postEditSummaryAppended = false;
       const appendPostEditSummaryOnce = (report: TurnDiffReport | null | undefined) => {
         if (postEditSummaryAppended) {
@@ -2894,6 +2889,110 @@ export function createSessionController(
         }
 
         postEditSummaryAppended = appendPostEditSummary(report);
+      };
+
+
+      /** 流式 UI 合并间隔：过大显得顿，过小会拖垮终端重绘/markdown。 */
+      const STREAM_UI_FLUSH_MS = 80;
+      let streamRequestStartedAtMs = 0;
+      let streamFirstTextAtMs = 0;
+      let streamUiFlushCount = 0;
+      let streamUiFlushTotalMs = 0;
+      let thinkingUiFlushTimer: ReturnType<typeof setTimeout> | null = null;
+
+      const logStreamTiming = (label: string, fields: Record<string, string | number>) => {
+        if (process.env.ALYCE_STREAM_TIMING !== "1" && process.env.ALYCE_STREAM_TIMING !== "true") {
+          return;
+        }
+        const detail = Object.entries(fields)
+          .map(([key, value]) => `${key}=${value}`)
+          .join(" ");
+        console.error(`[stream-timing] ${label}${detail ? ` ${detail}` : ""}`);
+      };
+
+      const flushStreamingAssistantMessage = (options?: { final?: boolean }) => {
+        streamingAssistantFlushTimer = null;
+        if (!streamingAssistantText.trim() && !options?.final) {
+          return;
+        }
+
+        const flushStartedAt = Date.now();
+        const nextMessage = createAssistantMessage(streamingAssistantText, {
+          ...(streamingAssistantMessageId ? { id: streamingAssistantMessageId } : {}),
+          ...(streamingAssistantCreatedAt ? { createdAt: streamingAssistantCreatedAt } : {}),
+          streaming: !options?.final
+        });
+        if (!streamingAssistantMessageId) {
+          streamingAssistantMessageId = nextMessage.id;
+          streamingAssistantCreatedAt = nextMessage.createdAt;
+          appendUiMessage(nextMessage);
+        } else {
+          store.updateState((state) => {
+            upsertPagedMessageCache(nextMessage);
+            return replaceMessageById(state, nextMessage.id, nextMessage);
+          });
+        }
+
+        streamUiFlushCount += 1;
+        streamUiFlushTotalMs += Date.now() - flushStartedAt;
+      };
+
+      const queueStreamingAssistantDelta = (delta: string) => {
+        if (!delta) {
+          return;
+        }
+        streamingAssistantText += delta;
+        checkpoint.hasAssistantOutput = true;
+
+        if (streamFirstTextAtMs === 0) {
+          streamFirstTextAtMs = Date.now();
+          logStreamTiming("ttft", {
+            ms: streamFirstTextAtMs - streamRequestStartedAtMs,
+            chars: streamingAssistantText.length
+          });
+          // 首包立刻上屏，后续合并刷新，避免每个 token 卡住 SSE 读取。
+          store.updateState((state) => setStatusText(state, t("status.responding")));
+          if (streamingAssistantFlushTimer !== null) {
+            clearTimeout(streamingAssistantFlushTimer);
+            streamingAssistantFlushTimer = null;
+          }
+          // 脱离当前流回调栈，让 chunk 读取优先继续。
+          streamingAssistantFlushTimer = setTimeout(() => flushStreamingAssistantMessage(), 0);
+          return;
+        }
+
+        if (streamingAssistantFlushTimer !== null) {
+          return;
+        }
+        streamingAssistantFlushTimer = setTimeout(
+          () => flushStreamingAssistantMessage(),
+          STREAM_UI_FLUSH_MS
+        );
+      };
+
+      const resetStreamingAssistant = () => {
+        if (streamingAssistantFlushTimer !== null) {
+          clearTimeout(streamingAssistantFlushTimer);
+          streamingAssistantFlushTimer = null;
+        }
+        if (streamingAssistantText.trim()) {
+          flushStreamingAssistantMessage({ final: true });
+        }
+        if (streamRequestStartedAtMs > 0) {
+          logStreamTiming("step-summary", {
+            ttftMs: streamFirstTextAtMs > 0 ? streamFirstTextAtMs - streamRequestStartedAtMs : -1,
+            uiFlushes: streamUiFlushCount,
+            uiFlushMs: streamUiFlushTotalMs,
+            chars: streamingAssistantText.length
+          });
+        }
+        streamingAssistantMessageId = null;
+        streamingAssistantCreatedAt = null;
+        streamingAssistantText = "";
+        streamRequestStartedAtMs = Date.now();
+        streamFirstTextAtMs = 0;
+        streamUiFlushCount = 0;
+        streamUiFlushTotalMs = 0;
       };
 
       try {
@@ -2905,27 +3004,37 @@ export function createSessionController(
           resolvedModel.baseURL,
           resolvedModel.modelId
         );
-        const tools = await runtime.getMainAgentToolSchemas({
-          abortSignal: controller.signal
-        });
+
+        // beginTurn(git snapshot) 与 skills/tools 解析互不依赖，并行执行。
+        const [, promptSkillContext, tools] = await Promise.all([
+          runtime.beginTurn(turnId),
+          runtime.preparePromptSkillContext(normalized),
+          runtime.getMainAgentToolSchemas({
+            abortSignal: controller.signal
+          })
+        ]);
         throwIfAborted(controller.signal);
+
+        const userMessage = {
+          role: "user",
+          content: normalized
+        } as const;
+        runtime.messages.push(...promptSkillContext.generatedMessages, userMessage);
+        const promptSkillSummary = formatPromptSkillSummary(promptSkillContext);
+        if (promptSkillSummary) {
+          appendUiMessage(createSystemMessage(promptSkillSummary, "Skills"));
+        }
+
         await runtime.resetSystemMessage({
           availableTools: getFunctionToolNames(tools),
           nextUserInput: normalized
         });
-        store.updateState((state) => setStatusText(state, t("status.estimating")));
         throwIfAborted(controller.signal);
-        const initialBudget = await runtime.estimateContextBudget({
-          model: currentModel,
-          resolvedModel,
-          messages: runtime.messages,
-          tools,
-          gcliGeminiCompat
-        });
-        store.updateState((state) =>
-          setContextBudget(state, initialBudget)
-        );
+
+        // 状态栏 Context% 由 runAgentTurn 的 onContextBudget 驱动（preflight / 工具提交 / 最终回复），
+        // 不再 fire-and-forget 预估，避免异步结果覆盖更准确的快照。
         store.updateState((state) => setStatusText(state, t("status.thinking")));
+
         const { runAgentTurn } = await import("../../agent.js");
         const reply = await runAgentTurn(client, runtime.messages, {
           model: currentModel,
@@ -3010,6 +3119,22 @@ export function createSessionController(
               )
             );
           },
+          onAssistantStreamStart: () => {
+            resetStreamingAssistant();
+          },
+          onAssistantTextDelta: (delta) => {
+            queueStreamingAssistantDelta(delta);
+          },
+          onAssistantStreamEnd: () => {
+            if (streamingAssistantFlushTimer !== null) {
+              clearTimeout(streamingAssistantFlushTimer);
+              streamingAssistantFlushTimer = null;
+            }
+            if (streamingAssistantText.trim()) {
+              // step 内仍保持 streaming 标记；最终定稿在拿到完整 reply 后处理。
+              flushStreamingAssistantMessage();
+            }
+          },
           onThinking: (thinking) => {
             const chunk = thinking.trim();
             if (!chunk || shouldSkipThinkingContent(chunk)) {
@@ -3033,7 +3158,16 @@ export function createSessionController(
             }
 
             thinkingSegmentContent = nextThinkingSegmentContent;
-            upsertTurnEphemeralMessage("thinking", createThinkingMessage(thinkingSegmentContent));
+            // 思考流同样合并刷新，避免 reasoning token 把终端打满。
+            if (thinkingUiFlushTimer !== null) {
+              return;
+            }
+            thinkingUiFlushTimer = setTimeout(() => {
+              thinkingUiFlushTimer = null;
+              if (thinkingSegmentContent.trim()) {
+                upsertTurnEphemeralMessage("thinking", createThinkingMessage(thinkingSegmentContent));
+              }
+            }, STREAM_UI_FLUSH_MS);
           },
           onReconnect: (event) => {
             if (event.type === "scheduled") {
@@ -3052,7 +3186,12 @@ export function createSessionController(
             store.updateState((state) => setStatusText(state, t("status.thinking")));
           },
           onToolCallStart: (toolName) => {
+            if (thinkingUiFlushTimer !== null) {
+              clearTimeout(thinkingUiFlushTimer);
+              thinkingUiFlushTimer = null;
+            }
             if (thinkingSegmentContent.trim().length > 0) {
+              upsertTurnEphemeralMessage("thinking", createThinkingMessage(thinkingSegmentContent));
               turnEphemeralMessageIds.delete("thinking");
               thinkingSegmentContent = "";
             }
@@ -3067,7 +3206,26 @@ export function createSessionController(
         });
 
         checkpoint.hasAssistantOutput = true;
-        appendUiMessage(createAssistantMessage(reply));
+        if (streamingAssistantFlushTimer !== null) {
+          clearTimeout(streamingAssistantFlushTimer);
+          streamingAssistantFlushTimer = null;
+        }
+        // 流式过程中已展示则原地定稿并去掉 streaming 标记（恢复 markdown）；否则一次性插入。
+        if (streamingAssistantMessageId || streamingAssistantText.trim()) {
+          streamingAssistantText = reply;
+          flushStreamingAssistantMessage({ final: true });
+          logStreamTiming("final", {
+            ttftMs: streamFirstTextAtMs > 0 ? streamFirstTextAtMs - streamRequestStartedAtMs : -1,
+            uiFlushes: streamUiFlushCount,
+            uiFlushMs: streamUiFlushTotalMs,
+            chars: reply.length
+          });
+        } else {
+          appendUiMessage(createAssistantMessage(reply));
+        }
+        streamingAssistantMessageId = null;
+        streamingAssistantCreatedAt = null;
+        streamingAssistantText = "";
         completedTurnHistoryPlan = {
           mode: conversationWasCompacted ? "snapshot" : "delta",
           apiMessages: conversationWasCompacted
@@ -3107,7 +3265,21 @@ export function createSessionController(
         if (postResponseFailures.length > 0) {
           appendUiMessage(createErrorMessage(postResponseFailures.join("\n")));
         }
-        store.updateState((state) => setStatusText(state, t("status.idle")));
+        // 回合结束后再估一次，确保状态栏与当前 messages 一致（含最终 assistant）。
+        try {
+          const finalBudget = await runtime.estimateContextBudget({
+            model: currentModel,
+            resolvedModel,
+            messages: runtime.messages,
+            tools,
+            gcliGeminiCompat
+          });
+          store.updateState((state) =>
+            setContextBudget(setStatusText(state, t("status.idle")), finalBudget)
+          );
+        } catch {
+          store.updateState((state) => setStatusText(state, t("status.idle")));
+        }
       } catch (error) {
         if (checkpoint.hasAssistantOutput) {
           activeTurn = null;

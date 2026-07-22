@@ -14,6 +14,7 @@ import {
   type MarkdownRenderPlan
 } from "./MarkdownRenderer.js";
 import { VirtualMessageList } from "./VirtualMessageList.js";
+import { isStreamingUiMessage } from "../adapters/messageMapper.js";
 import Box from "../runtime/ink-runtime/components/Box.js";
 import ScrollBox, { type ScrollBoxHandle } from "../runtime/ink-runtime/components/ScrollBox.js";
 import Text from "../runtime/ink-runtime/components/Text.js";
@@ -1111,6 +1112,37 @@ function buildMarkdownPlanSafely(
   }
 }
 
+type RenderedEntryCacheRecord = {
+  signature: string;
+  entry: RenderedMessageEntry;
+  sectionRowCount: number;
+  hasMetadataLine: boolean;
+};
+
+function buildMessageRenderSignature(
+  message: TerminalUiMessage,
+  isSelected: boolean,
+  contentWidth: number,
+  isExpanded: boolean,
+  isLiveMarkdown: boolean,
+  assistantLabel: string
+): string {
+  return [
+    message.id,
+    message.kind,
+    message.content,
+    message.preview,
+    message.metadata.join(""),
+    message.title,
+    isSelected ? "1" : "0",
+    String(contentWidth),
+    isExpanded ? "1" : "0",
+    isLiveMarkdown ? "1" : "0",
+    assistantLabel,
+    message.toolData ? JSON.stringify(message.toolData) : ""
+  ].join(" ");
+}
+
 function buildRenderedMessageEntries(
   messages: TerminalUiMessage[],
   selectedMessageId: string | null,
@@ -1120,21 +1152,58 @@ function buildRenderedMessageEntries(
   assistantLabel: string,
   unseenDividerMessageId: string | null,
   liveMarkdownMessageId: string | null,
-  thinkingMessagesExpandedByDefault = false
+  thinkingMessagesExpandedByDefault = false,
+  entryCache?: Map<string, RenderedEntryCacheRecord>
 ): RenderedMessageEntry[] {
+  if (entryCache) {
+    const alive = new Set(messages.map((message) => message.id));
+    for (const key of entryCache.keys()) {
+      if (!alive.has(key)) {
+        entryCache.delete(key);
+      }
+    }
+  }
+
   return messages.map((message, index) => {
     const isSelected = message.id === selectedMessageId;
+    const isExpanded = isMessageExpanded(
+      message,
+      expandedMessageIds,
+      thinkingMessagesExpandedByDefault
+    );
+    const isLiveMarkdown = message.id === liveMarkdownMessageId;
+    const signature = buildMessageRenderSignature(
+      message,
+      isSelected,
+      contentWidth,
+      isExpanded,
+      isLiveMarkdown,
+      assistantLabel
+    );
+    const cached = entryCache?.get(message.id);
+    if (cached && cached.signature === signature) {
+      const leadingSpacingRows = index === 0 ? 0 : 1;
+      const unseenDividerRows = message.id === unseenDividerMessageId ? 1 : 0;
+      return {
+        ...cached.entry,
+        message,
+        isSelected,
+        leadingSpacingRows,
+        unseenDividerRows,
+        rowCount:
+          leadingSpacingRows +
+          unseenDividerRows +
+          1 +
+          cached.sectionRowCount +
+          (cached.hasMetadataLine ? 1 : 0)
+      };
+    }
     const badge =
       message.kind === "assistant"
         ? { label: assistantLabel }
         : getMessageBadge(message.kind);
     const palette = getMessagePalette(message.kind, isSelected);
     const bodyWidth = Math.max(16, contentWidth);
-    const isExpanded = isMessageExpanded(
-      message,
-      expandedMessageIds,
-      thinkingMessagesExpandedByDefault
-    );
     const expandableRenderState =
       message.kind === "tool"
         ? renderToolMessageState(message, contentWidth, isExpanded)
@@ -1194,7 +1263,7 @@ function buildRenderedMessageEntries(
         ? markdownPlan.rowCount
         : countRenderedSectionRows(sections);
 
-    return {
+    const entry: RenderedMessageEntry = {
       message,
       isSelected,
       headerSegments: buildHeaderSegments(message, badge.label, palette),
@@ -1212,6 +1281,13 @@ function buildRenderedMessageEntries(
         sectionRowCount +
         (metadataLine ? 1 : 0)
     };
+    entryCache?.set(message.id, {
+      signature,
+      entry,
+      sectionRowCount,
+      hasMetadataLine: Boolean(metadataLine)
+    });
+    return entry;
   });
 }
 
@@ -1400,10 +1476,14 @@ const TranscriptRows = React.memo(function TranscriptRows(props: {
   renderedEntries: RenderedMessageEntry[];
   virtualRange: VirtualScrollRange;
   unseenMessageCount: number;
+  showMessageTimestamps: boolean;
   onExpandableMessageClick: (message: TerminalUiMessage, event: TerminalClickEvent) => void;
 }) {
   const renderMessageEntry = useCallback((entry: RenderedMessageEntry) => {
-    const timestamp = formatTime(entry.message.createdAt);
+    // 仅在设置 showMessageTimestamps 开启时计算/展示消息时钟，避免默认路径多余格式化。
+    const timestamp = props.showMessageTimestamps
+      ? formatTime(entry.message.createdAt)
+      : null;
     const railRowCount = Math.max(
       1,
       entry.rowCount - entry.leadingSpacingRows - entry.unseenDividerRows
@@ -1466,7 +1546,9 @@ const TranscriptRows = React.memo(function TranscriptRows(props: {
                   {segment.text}
                 </Text>
               ))}
-              <Text color={entry.palette.mutedColor}> · {timestamp}</Text>
+              {timestamp ? (
+                <Text color={entry.palette.mutedColor}> · {timestamp}</Text>
+              ) : null}
             </SelectionSafeRow>
             {entry.markdownPlan ? (
               <MarkdownRenderer
@@ -1531,7 +1613,7 @@ const TranscriptRows = React.memo(function TranscriptRows(props: {
         </Box>
       </Box>
     );
-  }, [props.onExpandableMessageClick, props.unseenMessageCount]);
+  }, [props.onExpandableMessageClick, props.showMessageTimestamps, props.unseenMessageCount]);
 
   if (props.renderedEntries.length === 0) {
     return (
@@ -1561,6 +1643,7 @@ const MessageListImpl = forwardRef<MessageListHandle, {
   markdownToolMessageRenderingEnabled: boolean;
   markdownRenderMaxChars: number;
   thinkingMessagesExpandedByDefault: boolean;
+  showMessageTimestamps: boolean;
   maxMessagesWithoutVirtualization: number;
   isLoading: boolean;
   assistantLabel: string;
@@ -1651,7 +1734,12 @@ const MessageListImpl = forwardRef<MessageListHandle, {
         continue;
       }
 
-      if ((message.kind === "thinking" || message.kind === "assistant") && message.content.trim().length > 0) {
+      // 流式 assistant 走纯文本，不必标成 live markdown（否则签名抖动、缓存失效）。
+      if (
+        (message.kind === "thinking" || message.kind === "assistant") &&
+        message.content.trim().length > 0 &&
+        !isStreamingUiMessage(message)
+      ) {
         return message.id;
       }
     }
@@ -1659,6 +1747,7 @@ const MessageListImpl = forwardRef<MessageListHandle, {
     return null;
   }, [props.isLoading, sourceMessages]);
 
+  const renderedEntryCacheRef = useRef(new Map<string, RenderedEntryCacheRecord>());
   const renderedEntries = useMemo(
     () =>
       buildRenderedMessageEntries(
@@ -1670,7 +1759,8 @@ const MessageListImpl = forwardRef<MessageListHandle, {
         props.assistantLabel,
         props.unseenDividerMessageId,
         liveMarkdownMessageId,
-        props.thinkingMessagesExpandedByDefault
+        props.thinkingMessagesExpandedByDefault,
+        renderedEntryCacheRef.current
       ),
     [
       contentWidth,
@@ -2419,6 +2509,7 @@ const MessageListImpl = forwardRef<MessageListHandle, {
             renderedEntries={renderedEntries}
             virtualRange={virtualRange}
             unseenMessageCount={props.unseenMessageCount}
+        showMessageTimestamps={props.showMessageTimestamps}
             onExpandableMessageClick={handleExpandableMessageClick}
           />
         </ScrollBox>

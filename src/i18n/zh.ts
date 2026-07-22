@@ -275,6 +275,8 @@ const zh: Record<string, string> = {
   "settingsDialog.field.scrollAcceleration": "滚动加速",
   "settingsDialog.field.historyPaging": "历史分页",
   "settingsDialog.field.currentSystemTime": "当前系统时间",
+  "settingsDialog.field.messageTimestamps": "消息时间戳",
+  "settingsDialog.help.messageTimestamps": "开启后，每条对话消息旁会显示本地时间（例如下午 3:45）。",
   "settingsDialog.field.markdownMessages": "Markdown 消息",
   "settingsDialog.field.toolMarkdown": "工具 Markdown",
   "settingsDialog.field.thinkDefaultExpanded": "THINK 默认展开",
@@ -326,6 +328,7 @@ const zh: Record<string, string> = {
   // ── Status messages (sessionController) ──
   "status.idle": "空闲",
   "status.error": "错误",
+  "status.responding": "回复中...",
   "status.thinking": "思考中...",
   "status.preparing": "准备中...",
   "status.compacting": "压缩上下文中...",

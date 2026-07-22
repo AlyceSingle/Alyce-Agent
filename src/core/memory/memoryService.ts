@@ -10,6 +10,7 @@ import type {
 } from "./types.js";
 
 // MemoryService 统一封装会话记忆与持久记忆，提供单一接入点。
+// 会话摘要（sessionMemory）只保存在进程内 / 会话历史快照中，不再写独立 SESSION_MEMORY.md 文件。
 export class MemoryService {
   private readonly sessionStore: SessionMemoryStore;
   private readonly persistentStore: PersistentMemoryStore;
@@ -116,6 +117,7 @@ export class MemoryService {
     return this.persistentStore.getRelativeFilePath();
   }
 
+  // 兼容旧 API 名：返回摘要来源标签（如 session history），不是磁盘路径。
   getSessionMemoryFilePath() {
     return this.sessionMemorySourcePath;
   }

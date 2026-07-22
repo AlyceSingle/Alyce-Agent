@@ -5,6 +5,7 @@ import { getFunctionToolNames } from "../api/openaiFunctionTools.js";
 import { runAgentTurn } from "./runAgentTurn.js";
 import type { ToolExecutionContext } from "../../tools.js";
 import type { UsageRecordInput } from "../usage/types.js";
+import { ContextBudgetService } from "../context/contextBudget.js";
 
 function createTestContext(
   abortSignal: AbortSignal,
@@ -143,6 +144,7 @@ async function runTests() {
   await testMcpStatusRefreshesToolsBeforeNextStep();
   await testToolSchemaRefreshFailureContinuesWithWarning();
   await testMaxStepsLeavesAnsweredToolCallPair();
+  await testContextBudgetPublishesAfterFinalReply();
   console.log("runAgentTurn tests passed");
 }
 
@@ -723,6 +725,63 @@ async function testMaxStepsLeavesAnsweredToolCallPair() {
     "assistant",
     "tool"
   ]);
+}
+
+
+async function testContextBudgetPublishesAfterFinalReply() {
+  const controller = new AbortController();
+  const longReply = "x".repeat(8_000);
+  const messages: OpenAI.Chat.Completions.ChatCompletionMessageParam[] = [
+    {
+      role: "system",
+      content: "system"
+    },
+    {
+      role: "user",
+      content: "ask"
+    }
+  ];
+  const client = {
+    chat: {
+      completions: {
+        create: async () => ({
+          choices: [{
+            message: {
+              role: "assistant",
+              content: longReply
+            }
+          }],
+          usage: {
+            prompt_tokens: 40,
+            completion_tokens: 2_000,
+            total_tokens: 2_040
+          }
+        })
+      }
+    }
+  } as unknown as OpenAI;
+  const snapshots: number[] = [];
+  const budgetService = new ContextBudgetService();
+
+  const reply = await runAgentTurn(client, messages, {
+    model: "gpt-test",
+    maxSteps: 1,
+    tools: [],
+    abortSignal: controller.signal,
+    context: createTestContext(controller.signal),
+    contextBudgetService: budgetService,
+    onContextBudget: (snapshot) => {
+      snapshots.push(snapshot.estimatedInputTokens);
+    }
+  });
+
+  assert.equal(reply, longReply);
+  assert.ok(snapshots.length >= 2, "expected preflight and post-reply budget publishes");
+  assert.ok(
+    snapshots[snapshots.length - 1]! > snapshots[0]!,
+    `final budget should include assistant text: ${snapshots.join(",")}`
+  );
+  assert.equal(messages.at(-1)?.role, "assistant");
 }
 
 void runTests();

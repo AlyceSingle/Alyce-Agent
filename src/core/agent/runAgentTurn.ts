@@ -50,6 +50,12 @@ export interface AgentTurnOptions {
   abortSignal?: AbortSignal;
   tools?: OpenAI.Chat.Completions.ChatCompletionTool[];
   onThinking?: (content: string) => void;
+  /** 流式正文增量（每个 model step 可能多次调用）。 */
+  onAssistantTextDelta?: (text: string) => void;
+  /** 新的一轮模型请求开始前调用，便于 UI 重置流式气泡。 */
+  onAssistantStreamStart?: () => void;
+  /** 当前 model step 的流结束（完整 response 已组装）。 */
+  onAssistantStreamEnd?: () => void;
   onToolCallStart?: (toolName: string, rawArguments: string) => void;
   onToolCallResult?: (toolName: string, result: string, rawArguments: string) => void;
   onMessagesAppended?: (messages: MessageParam[]) => void | Promise<void>;
@@ -90,6 +96,7 @@ export async function runAgentTurn(
       let response: OpenAI.Chat.Completions.ChatCompletion;
       try {
         await preflightContextBudget(messages, options, activeTools);
+        options.onAssistantStreamStart?.();
         response = await sendChatCompletion(client, {
           model: options.model,
           resolvedModel: options.resolvedModel,
@@ -102,6 +109,13 @@ export async function runAgentTurn(
           requestPatches: options.requestPatches,
           abortSignal: options.abortSignal,
           onReconnect: options.onReconnect,
+          // 仅在 UI 需要正文增量时开流；纯 onThinking 仍走非流式，避免测试/适配器 mock 不兼容。
+          streamHandlers: options.onAssistantTextDelta
+            ? {
+                onTextDelta: options.onAssistantTextDelta,
+                onThinkingDelta: options.onThinking
+              }
+            : undefined,
           onUsage: (event) => {
             options.onUsage?.({
               ...event,
@@ -112,7 +126,10 @@ export async function runAgentTurn(
             });
           }
         });
+        options.onAssistantStreamEnd?.();
         options.contextBudgetService?.recordUsage(response.usage);
+        // 用量校准后立刻刷新状态栏，避免一直卡在 preflight 的低估值。
+        publishContextBudget(messages, options, activeTools);
       } catch (error) {
         if (isTurnInterruptedError(error, options.abortSignal)) {
           throw toTurnInterruptedError(error, options.abortSignal);
@@ -141,6 +158,8 @@ export async function runAgentTurn(
         const assistantMessage = buildAssistantHistoryMessage(next);
         messages.push(assistantMessage);
         await options.onMessagesAppended?.([assistantMessage]);
+        // 最终回复写入后更新占用；否则状态栏会停在“本轮请求前”的百分比。
+        publishContextBudget(messages, options, activeTools);
         return reply;
       }
 
@@ -156,6 +175,8 @@ export async function runAgentTurn(
       const committedMessages = [assistantHistoryMessage, ...toolMessages, ...supplementalMessages];
       messages.push(...committedMessages);
       await options.onMessagesAppended?.(committedMessages);
+      // 工具结果常很大，提交后立即反映到 Context%，不要等下一轮 preflight。
+      publishContextBudget(messages, options, activeTools);
 
       if (options.refreshTools && shouldRefreshToolsAfterToolCalls(executedToolCalls.toolNames)) {
         try {
@@ -196,6 +217,30 @@ function querySourceToUsageSource(querySource: AgentQuerySource | undefined): Us
     default:
       return "main";
   }
+}
+
+// 仅刷新 UI 用的占用快照，不触发 snip/compact，也不改 calibration 记录点。
+function publishContextBudget(
+  messages: MessageParam[],
+  options: AgentTurnOptions,
+  tools: OpenAI.Chat.Completions.ChatCompletionTool[]
+) {
+  const budgetService = options.contextBudgetService;
+  if (!budgetService || !options.onContextBudget) {
+    return;
+  }
+
+  const querySource = options.querySource ?? "main";
+  if (querySource === "compact" || querySource === "session_memory") {
+    return;
+  }
+
+  const request = buildAgentTurnRequest(messages, options, tools);
+  options.onContextBudget(
+    budgetService.estimateRequest(request, {
+      resolvedModel: options.resolvedModel
+    })
+  );
 }
 
 async function preflightContextBudget(

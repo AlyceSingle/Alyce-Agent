@@ -65,8 +65,11 @@
     "node": ">=20.10.0"
   },
   "scripts": {
-    "dev": "npm run build && node dist/index.js",
-    "build": "tsc -p tsconfig.json",
+    "dev": "node scripts/build.mjs && node dist/index.js",
+    "build": "node scripts/build.mjs",
+    "build:watch": "node scripts/build.mjs --watch",
+    "build:check": "tsc -p tsconfig.json --noEmit",
+    "build:tsc": "tsc -p tsconfig.json",
     "test": "node scripts/run-tests.mjs",
     "test:fail-fast": "node scripts/run-tests.mjs --fail-fast",
     "start": "node dist/index.js"
@@ -96,7 +99,6 @@
     "slice-ansi": "^9.0.0",
     "stack-utils": "^2.0.6",
     "strip-ansi": "^7.2.0",
-    "supports-hyperlinks": "^4.4.0",
     "type-fest": "^5.5.0",
     "typescript": "^5.7.3",
     "usehooks-ts": "^3.1.1",
@@ -111,6 +113,7 @@
     "@types/react-reconciler": "^0.33.0",
     "@types/semver": "^7.7.1",
     "@types/stack-utils": "^2.0.3",
+    "esbuild": "^0.27.7",
     "tsx": "^4.19.1"
   }
 }

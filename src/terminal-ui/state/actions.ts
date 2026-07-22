@@ -177,6 +177,20 @@ export function setContextBudget(
     return state;
   }
 
+  // 多次 publish 可能算出相同占用；跳过无意义的状态扩散，减轻 StatusBar 抖动。
+  const previous = state.contextBudget;
+  if (
+    previous &&
+    contextBudget &&
+    previous.usedPercent === contextBudget.usedPercent &&
+    previous.estimatedInputTokens === contextBudget.estimatedInputTokens &&
+    previous.contextWindow === contextBudget.contextWindow &&
+    previous.state === contextBudget.state &&
+    previous.model === contextBudget.model
+  ) {
+    return state;
+  }
+
   return {
     ...state,
     contextBudget

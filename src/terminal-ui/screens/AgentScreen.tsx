@@ -70,6 +70,9 @@ const ConversationPane = React.memo(React.forwardRef<MessageListHandle, {
   const thinkingMessagesExpandedByDefault = useTerminalUiSelector(
     (value) => value.settings.thinkingMessagesExpandedByDefault
   );
+  const showMessageTimestamps = useTerminalUiSelector(
+    (value) => value.settings.showMessageTimestamps
+  );
   const assistantLabel = useTerminalUiSelector(
     (value) => resolveAssistantLabel(value.settings.personaPreset)
   );
@@ -84,6 +87,7 @@ const ConversationPane = React.memo(React.forwardRef<MessageListHandle, {
       markdownToolMessageRenderingEnabled={markdownToolMessageRenderingEnabled}
       markdownRenderMaxChars={markdownRenderMaxChars}
       thinkingMessagesExpandedByDefault={thinkingMessagesExpandedByDefault}
+      showMessageTimestamps={showMessageTimestamps}
       maxMessagesWithoutVirtualization={props.maxMessagesWithoutVirtualization}
       isLoading={props.isLoading}
       assistantLabel={assistantLabel}
@@ -114,7 +118,7 @@ export function AgentScreen(props: { controller: SessionController }) {
   const planModeEnabled = useTerminalUiSelector((value) => value.planModeEnabled);
   const contextBudget = useTerminalUiSelector((value) => value.contextBudget);
   const isLoading = useTerminalUiSelector((value) => value.isLoading);
-  const draftInput = useTerminalUiSelector((value) => value.draftInput);
+  // draftInput 不在此订阅：每键改 draft 不应重渲染 StatusBar/布局，输入由 AgentPromptDock 隔离。
   const todos = useTerminalUiSelector((value) => value.todos);
   const backgroundTasks = useTerminalUiSelector((value) => value.backgroundTasks);
   const backgroundProcessCount = useTerminalUiSelector((value) => value.backgroundProcessCount);
@@ -287,17 +291,27 @@ export function AgentScreen(props: { controller: SessionController }) {
   const { trigger: triggerHistoryEscape, reset: resetHistoryEscape } = useDoublePress(
     setHistoryEscPending,
     () => {
-      if (!isLoading && draftInput.length === 0) {
+      // 读 store 快照，避免订阅 draftInput 导致整屏随按键重渲染。
+      if (!isLoading && store.getState().draftInput.length === 0) {
         props.controller.openRewindSelector();
       }
     }
   );
 
   useEffect(() => {
-    if (isLoading || hasDialog || hasActiveOverlay || draftInput.length > 0) {
+    if (isLoading || hasDialog || hasActiveOverlay) {
       resetHistoryEscape();
     }
-  }, [draftInput.length, hasActiveOverlay, hasDialog, isLoading, resetHistoryEscape]);
+  }, [hasActiveOverlay, hasDialog, isLoading, resetHistoryEscape]);
+
+  // draft 从空到非空时取消 Esc 二次确认，不触发 AgentScreen 重渲染。
+  useEffect(() => {
+    return store.subscribe(() => {
+      if (store.getState().draftInput.length > 0) {
+        resetHistoryEscape();
+      }
+    });
+  }, [resetHistoryEscape, store]);
 
   const keybindingHandlers = useMemo(() => ({
     "app:quit": () => {
@@ -318,7 +332,7 @@ export function AgentScreen(props: { controller: SessionController }) {
         return;
       }
 
-      if (draftInput.length > 0) {
+      if (store.getState().draftInput.length > 0) {
         resetHistoryEscape();
         return;
       }
@@ -358,7 +372,6 @@ export function AgentScreen(props: { controller: SessionController }) {
       transcriptRef.current?.scrollToBottom();
     }
   }), [
-    draftInput,
     isLoading,
     props.controller,
     resetScrollAcceleration,
@@ -392,7 +405,7 @@ export function AgentScreen(props: { controller: SessionController }) {
       return;
     }
 
-    if (clearOnCtrlCRef.current || draftInput.length > 0) {
+    if (clearOnCtrlCRef.current || store.getState().draftInput.length > 0) {
       props.controller.setDraftInput("");
       return;
     }
@@ -567,26 +580,79 @@ export function AgentScreen(props: { controller: SessionController }) {
       overlay={overlay}
       modal={modal}
       bottom={
-        <PromptInput
-          key={`prompt-${terminalSizeKey}`}
-          value={draftInput}
-          viewportWidth={terminalWidth}
+        <AgentPromptDock
+          controller={props.controller}
+          terminalWidth={terminalWidth}
           disabled={isLoading || hasDialog}
           disabledReason={promptDisabledReason}
           disabledPlaceholder={promptDisabledPlaceholder}
           sublineText={`${formatCompactModelDisplay(connection.model)} | ${workspaceRoot}`}
           onLayoutHeightChange={refreshPromptLayout}
-          onChange={(value) => props.controller.setDraftInput(value)}
           onCtrlCCaptureChange={setCtrlCCapture}
-          onModeToggle={() => props.controller.togglePlanMode()}
-          onSubmit={async (value) => {
-            await props.controller.submit(value);
-          }}
         />
       }
     />
   );
 }
+
+type AgentPromptDockProps = {
+  controller: SessionController;
+  terminalWidth: number;
+  disabled: boolean;
+  disabledReason?: string;
+  disabledPlaceholder?: string;
+  sublineText: string;
+  onLayoutHeightChange: () => void;
+  onCtrlCCaptureChange: (capture: boolean) => void;
+};
+
+// 输入区与主屏解耦：仅在“外部写入” draft 时同步 props.value（恢复/清空等）。
+// 打字 UI 由 PromptInput.localValue 承担，避免 AgentScreen/StatusBar 随按键重渲染。
+const AgentPromptDock = React.memo(function AgentPromptDock(props: AgentPromptDockProps) {
+  const store = useTerminalUiStore();
+  const [draftInput, setDraftInput] = useState(() => store.getState().draftInput);
+  // 标记“本次 store 变更来自输入框自身”，避免 subscribe 把本地正在编辑的值回弹。
+  const selfWriteRef = useRef(false);
+
+  useEffect(() => {
+    return store.subscribe(() => {
+      if (selfWriteRef.current) {
+        selfWriteRef.current = false;
+        return;
+      }
+      const next = store.getState().draftInput;
+      setDraftInput((current) => (current === next ? current : next));
+    });
+  }, [store]);
+
+  return (
+    <PromptInput
+      // 不要用 terminalSize 当 key 强制 remount：本地输入缓冲会丢，且列宽已在 PromptInput 内响应。
+      value={draftInput}
+      viewportWidth={props.terminalWidth}
+      disabled={props.disabled}
+      disabledReason={props.disabledReason}
+      disabledPlaceholder={props.disabledPlaceholder}
+      sublineText={props.sublineText}
+      onLayoutHeightChange={props.onLayoutHeightChange}
+      onChange={(value) => {
+        // 只写 store 供快捷键读快照；UI 不依赖 dock state。
+        const before = store.getState().draftInput;
+        selfWriteRef.current = true;
+        props.controller.setDraftInput(value);
+        // setDraftInput 值未变时不会 notify，必须手动清标记，否则会吞掉后续外部写入。
+        if (store.getState().draftInput === before) {
+          selfWriteRef.current = false;
+        }
+      }}
+      onCtrlCCaptureChange={props.onCtrlCCaptureChange}
+      onModeToggle={() => props.controller.togglePlanMode()}
+      onSubmit={async (value) => {
+        await props.controller.submit(value);
+      }}
+    />
+  );
+});
 
 function formatCompactModelDisplay(model: string) {
   const display = formatCurrentModelDisplay(model);

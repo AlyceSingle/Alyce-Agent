@@ -49,8 +49,9 @@ export function StatusBar(props: {
     props.backgroundProcessCount && props.backgroundProcessCount > 0
       ? ` | ${t("statusBar.backgroundProcesses")} ${props.backgroundProcessCount}`
       : "";
+  // 低占用时保留一位小数，避免长时间卡在“10%”这种四舍五入平台。
   const contextText = ` | ${t("statusBar.context")} ${
-    props.contextBudget ? `${Math.round(props.contextBudget.usedPercent)}%` : "--"
+    props.contextBudget ? formatContextUsedPercent(props.contextBudget.usedPercent) : "--"
   }`;
   const contextColor =
     props.contextBudget?.state === "blocking"
@@ -90,4 +91,16 @@ export function StatusBar(props: {
 
 function isContextStatusText(value: string, hasContextBudget: boolean) {
   return hasContextBudget && /^Context\b/i.test(value);
+}
+
+function formatContextUsedPercent(usedPercent: number): string {
+  if (!Number.isFinite(usedPercent) || usedPercent <= 0) {
+    return "0%";
+  }
+
+  if (usedPercent < 10) {
+    return `${usedPercent.toFixed(1)}%`;
+  }
+
+  return `${Math.round(usedPercent)}%`;
 }

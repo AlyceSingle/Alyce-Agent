@@ -74,6 +74,7 @@ export async function fetchProviderModelList(options: {
   return fetchOpenAICompatibleModels(options);
 }
 
+// OpenAI 兼容网关的模型列表是上下文窗口的首选来源；解析时务必保留 context_length 等字段。
 export async function fetchOpenAICompatibleModels(options: {
   provider: ProviderProfile;
   env?: NodeJS.ProcessEnv;
@@ -164,7 +165,14 @@ export function parseOpenAICompatibleModels(input: unknown): Record<string, Mode
     }
 
     const label = asNonEmptyString(record.name) ?? asNonEmptyString(record.display_name);
-    models[id] = label ? { label } : {};
+    // OpenRouter / vLLM / 多数网关会在 /models 里带上上下文长度；优先用活数据，少依赖内置穷举表。
+    const contextWindow = extractContextWindowTokens(record);
+    const maxOutputTokens = extractMaxOutputTokens(record);
+    models[id] = {
+      ...(label ? { label } : {}),
+      ...(contextWindow !== undefined ? { contextWindow } : {}),
+      ...(maxOutputTokens !== undefined ? { maxOutputTokens } : {})
+    };
   }
 
   return models;
@@ -256,6 +264,7 @@ function getProviderApiKey(provider: ProviderProfile, env: NodeJS.ProcessEnv | u
   return provider.apiKey?.trim() || (provider.apiKeyEnv ? env?.[provider.apiKeyEnv]?.trim() : "");
 }
 
+// 活数据覆盖同名字段；配置里有但网关未返回的模型保留，避免自定义条目被刷新冲掉。
 function mergeDiscoveredModels(
   existing: Record<string, ModelProfile>,
   discovered: Record<string, ModelProfile>
@@ -266,6 +275,12 @@ function mergeDiscoveredModels(
       ...(existing[modelId] ?? {}),
       ...profile
     };
+  }
+
+  for (const [modelId, profile] of Object.entries(existing)) {
+    if (!(modelId in merged)) {
+      merged[modelId] = profile;
+    }
   }
 
   return merged;
@@ -325,3 +340,94 @@ function positiveNumber(value: unknown): number | undefined {
 
   return value > 0 ? value : undefined;
 }
+
+// 从 OpenAI 兼容 /models 条目中尽量解析上下文窗口。
+// 注意：不要把 max_tokens 当上下文——很多网关里它只是默认 completion 上限（常为 4k）。
+function extractContextWindowTokens(record: Record<string, unknown>): number | undefined {
+  const candidates: unknown[] = [
+    record.context_length,
+    record.context_window,
+    record.contextWindow,
+    record.max_model_len,
+    record.max_context_length,
+    record.max_context_window,
+    record.max_input_tokens,
+    record.input_token_limit,
+    record.inputTokenLimit
+  ];
+
+  const nestedObjects = [
+    getObject(record.top_provider),
+    getObject(record.architecture),
+    getObject(record.limits),
+    getObject(record.meta),
+    getObject(record.capabilities)
+  ];
+  for (const nested of nestedObjects) {
+    candidates.push(
+      nested.context_length,
+      nested.context_window,
+      nested.contextWindow,
+      nested.max_model_len,
+      nested.max_context_length,
+      nested.max_input_tokens,
+      nested.input_token_limit
+    );
+  }
+
+  for (const candidate of candidates) {
+    const value = contextWindowTokenCount(candidate);
+    if (value !== undefined) {
+      return value;
+    }
+  }
+
+  return undefined;
+}
+
+// 输出上限字段；同样避开含义模糊的 max_tokens。
+function extractMaxOutputTokens(record: Record<string, unknown>): number | undefined {
+  const candidates: unknown[] = [
+    record.max_output_tokens,
+    record.maxOutputTokens,
+    record.max_completion_tokens,
+    record.maxCompletionTokens,
+    record.output_token_limit,
+    record.outputTokenLimit
+  ];
+
+  const nestedObjects = [
+    getObject(record.top_provider),
+    getObject(record.limits),
+    getObject(record.meta)
+  ];
+  for (const nested of nestedObjects) {
+    candidates.push(
+      nested.max_output_tokens,
+      nested.maxOutputTokens,
+      nested.max_completion_tokens,
+      nested.maxCompletionTokens,
+      nested.output_token_limit
+    );
+  }
+
+  for (const candidate of candidates) {
+    const value = positiveInteger(candidate);
+    if (value !== undefined) {
+      return value;
+    }
+  }
+
+  return undefined;
+}
+
+// 上下文窗口合理区间：过小通常是 completion 默认值，过大基本是脏数据。
+function contextWindowTokenCount(value: unknown): number | undefined {
+  const normalized = positiveInteger(value);
+  if (normalized === undefined || normalized < 4_000 || normalized > 10_000_000) {
+    return undefined;
+  }
+
+  return normalized;
+}
+

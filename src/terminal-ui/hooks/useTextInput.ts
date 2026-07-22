@@ -1,4 +1,4 @@
-import { useMemo } from "react";
+import { useCallback, useMemo, useRef } from "react";
 import type { BaseInputState } from "../types/textInputTypes.js";
 import type { TerminalKey } from "../runtime/input.js";
 import { buildInputEditorViewport, measureCharWidth, moveCursorVertically } from "../utils/text.js";
@@ -76,17 +76,22 @@ function getDisplayWidth(value: string) {
 }
 
 export function useTextInput(props: UseTextInputProps): BaseInputState {
+  // 用 ref 挂最新 props，保持 onInput 函数身份稳定，减少 ink 输入订阅侧的同步开销。
+  const propsRef = useRef(props);
+  propsRef.current = props;
+
   const escapeDoublePress = useDoublePress(
     (pending) => {
-      props.onEscClearPendingChange?.(pending);
+      propsRef.current.onEscClearPendingChange?.(pending);
     },
     () => {
-      if (!props.value.length) {
+      const current = propsRef.current;
+      if (!current.value.length) {
         return;
       }
 
-      props.onChange("");
-      props.onChangeCursorOffset(0);
+      current.onChange("");
+      current.onChangeCursorOffset(0);
     }
   );
   const safeColumns = Math.max(20, props.columns);
@@ -100,25 +105,27 @@ export function useTextInput(props: UseTextInputProps): BaseInputState {
         safeColumns,
         Math.max(1, props.maxVisibleLines ?? 4)
       ),
-    [props.columns, props.cursorOffset, props.maxVisibleLines, props.value, safeColumns]
+    [props.cursorOffset, props.maxVisibleLines, props.value, safeColumns]
   );
 
   const cursorLineIndex =
     props.value.length === 0 ? 0 : Math.max(0, viewport.lines.findIndex((line) => line.isCursorLine));
   const cursorLine = props.value.length === 0 ? null : viewport.lines[cursorLineIndex] ?? null;
 
-  const onInput = (input: string, key: TerminalKey) => {
+  // 稳定 onInput 身份；实际逻辑读 propsRef，避免父组件重渲染时反复换 handler。
+  const onInputImpl = (input: string, key: TerminalKey) => {
+    const current = propsRef.current;
     const commit = (nextValue: string, nextCursor: number) => {
-      props.onChange(nextValue);
-      props.onChangeCursorOffset(nextCursor);
+      current.onChange(nextValue);
+      current.onChangeCursorOffset(nextCursor);
     };
 
-    if (props.onInputKey?.(input, key)) {
+    if (current.onInputKey?.(input, key)) {
       return;
     }
 
     if (key.escape) {
-      if (!props.value.length) {
+      if (!current.value.length) {
         escapeDoublePress.reset();
         return;
       }
@@ -130,65 +137,65 @@ export function useTextInput(props: UseTextInputProps): BaseInputState {
     escapeDoublePress.reset();
 
     if (key.return && !key.shift && !key.meta && !key.ctrl) {
-      if (props.multiline && props.cursorOffset > 0 && props.value[props.cursorOffset - 1] === "\\") {
+      if (current.multiline && current.cursorOffset > 0 && current.value[current.cursorOffset - 1] === "\\") {
         const nextValue =
-          props.value.slice(0, props.cursorOffset - 1) + "\n" + props.value.slice(props.cursorOffset);
-        commit(nextValue, props.cursorOffset);
+          current.value.slice(0, current.cursorOffset - 1) + "\n" + current.value.slice(current.cursorOffset);
+        commit(nextValue, current.cursorOffset);
         return;
       }
 
-      if (!props.value.trim()) {
+      if (!current.value.trim()) {
         return;
       }
 
-      props.onSubmit?.(props.value);
+      current.onSubmit?.(current.value);
       return;
     }
 
     if (key.return && (key.shift || key.meta || key.ctrl)) {
-      const next = insertText(props.value, props.cursorOffset, "\n");
+      const next = insertText(current.value, current.cursorOffset, "\n");
       commit(next.value, next.cursor);
       return;
     }
 
     if (key.leftArrow) {
-      props.onChangeCursorOffset(Math.max(0, props.cursorOffset - 1));
+      current.onChangeCursorOffset(Math.max(0, current.cursorOffset - 1));
       return;
     }
 
     if (key.rightArrow) {
-      props.onChangeCursorOffset(Math.min(props.value.length, props.cursorOffset + 1));
+      current.onChangeCursorOffset(Math.min(current.value.length, current.cursorOffset + 1));
       return;
     }
 
     if (key.upArrow) {
-      props.onChangeCursorOffset(moveCursorVertically(props.value, props.cursorOffset, safeColumns, -1));
+      current.onChangeCursorOffset(moveCursorVertically(current.value, current.cursorOffset, safeColumns, -1));
       return;
     }
 
     if (key.downArrow) {
-      props.onChangeCursorOffset(moveCursorVertically(props.value, props.cursorOffset, safeColumns, 1));
+      current.onChangeCursorOffset(moveCursorVertically(current.value, current.cursorOffset, safeColumns, 1));
       return;
     }
 
     if (key.home || (key.ctrl && input.toLowerCase() === "a")) {
-      props.onChangeCursorOffset(0);
+      current.onChangeCursorOffset(0);
       return;
     }
 
     if (key.end || (key.ctrl && input.toLowerCase() === "e")) {
-      props.onChangeCursorOffset(props.value.length);
+      current.onChangeCursorOffset(current.value.length);
       return;
     }
 
     if (key.backspace) {
-      const next = removeBeforeCursor(props.value, props.cursorOffset);
+      const next = removeBeforeCursor(current.value, current.cursorOffset);
       commit(next.value, next.cursor);
       return;
     }
 
     if (key.delete) {
-      const next = removeAtCursor(props.value, props.cursorOffset);
+      const next = removeAtCursor(current.value, current.cursorOffset);
       commit(next.value, next.cursor);
       return;
     }
@@ -199,7 +206,7 @@ export function useTextInput(props: UseTextInputProps): BaseInputState {
     }
 
     if (key.ctrl && input.toLowerCase() === "w") {
-      const next = removePreviousWord(props.value, props.cursorOffset);
+      const next = removePreviousWord(current.value, current.cursorOffset);
       commit(next.value, next.cursor);
       return;
     }
@@ -208,9 +215,15 @@ export function useTextInput(props: UseTextInputProps): BaseInputState {
       return;
     }
 
-    const next = insertText(props.value, props.cursorOffset, input);
+    const next = insertText(current.value, current.cursorOffset, input);
     commit(next.value, next.cursor);
   };
+
+  const onInputImplRef = useRef(onInputImpl);
+  onInputImplRef.current = onInputImpl;
+  const onInput = useCallback((input: string, key: TerminalKey) => {
+    onInputImplRef.current(input, key);
+  }, []);
 
   return {
     onInput,
