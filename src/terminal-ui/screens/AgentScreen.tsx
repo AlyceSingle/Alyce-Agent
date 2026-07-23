@@ -629,16 +629,24 @@ const AgentPromptDock = React.memo(function AgentPromptDock(props: AgentPromptDo
   const [externalRevision, setExternalRevision] = useState(0);
   // 标记“本次 store 变更来自输入框自身”，避免 subscribe 把本地正在编辑的值回弹。
   const selfWriteRef = useRef(false);
+  // 只跟踪 draftInput：无关 store 更新（消息流、status、loading）不得 bump，
+  // 否则 PromptInput 会把光标强制拉到末尾并引发输入抖动。
+  const lastDraftRef = useRef(store.getState().draftInput);
 
   useEffect(() => {
     return store.subscribe(() => {
+      const next = store.getState().draftInput;
       if (selfWriteRef.current) {
         selfWriteRef.current = false;
+        lastDraftRef.current = next;
         return;
       }
-      const next = store.getState().draftInput;
+      // draft 未变时忽略 streaming / status 等频繁 notify。
+      if (next === lastDraftRef.current) {
+        return;
+      }
+      lastDraftRef.current = next;
       setDraftInput(next);
-      // 即使 next 与 dock 缓存同为 ""，也必须 bump，否则本地 localValue 清不掉。
       setExternalRevision((revision) => revision + 1);
     });
   }, [store]);

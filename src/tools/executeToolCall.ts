@@ -6,6 +6,7 @@ import { getToolDefinition } from "./definitions.js";
 import { isToolResultEnvelope } from "./resultEnvelope.js";
 import { getToolPolicyViolation } from "./toolPolicy.js";
 import type { JsonRecord, ToolExecutionContext } from "./types.js";
+import { getErrorMessage } from "../core/util/error.js";
 
 type MessageParam = OpenAI.Chat.Completions.ChatCompletionMessageParam;
 
@@ -313,10 +314,6 @@ function getNestedRejectedMessage(record: JsonRecord): string | undefined {
   }
 
   return undefined;
-}
-
-function getErrorMessage(error: unknown): string {
-  return error instanceof Error ? error.message : String(error);
 }
 
 function isUserRejectedMessage(message: string | undefined): boolean {

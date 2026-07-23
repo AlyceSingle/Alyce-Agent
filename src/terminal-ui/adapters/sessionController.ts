@@ -11,6 +11,7 @@ import {
   type TurnCheckpoint
 } from "./agentTurnRunner.js";
 import { isTurnInterruptedError, throwIfAborted, TurnInterruptedError } from "../../core/abort.js";
+import { getErrorMessage } from "../../core/util/error.js";
 import { formatDoctorReport, runDoctorDiagnostics } from "../../core/doctor/doctor.js";
 import {
   formatDiffDetails,
@@ -112,7 +113,7 @@ import {
   setContextBudget,
   setDraftInput,
   setBackgroundProcessCount,
-  setBackgroundTasks,
+  setBackgroundTasks,
   setPlanModeEnabled,
   setSessionAllowedKinds,
   setSessionApprovalMode,
@@ -167,10 +168,6 @@ interface SessionHistoryPagingState {
   loadedStartIndex: number;
   chunkSize: number;
   loading: boolean;
-}
-
-function getErrorMessage(error: unknown): string {
-  return error instanceof Error ? error.message : String(error);
 }
 
 type ParsedReplCommand = ReturnType<typeof parseReplCommand>;
