@@ -41,6 +41,12 @@ import {
   shouldSkipThinkingContent
 } from "./messageMapper.js";
 import { extractThinkingDelta, mergeThinkingContent } from "./thinkingText.js";
+import {
+  PROCESS_LIST_TOOL_NAME,
+  PROCESS_READ_TOOL_NAME,
+  PROCESS_START_TOOL_NAME,
+  PROCESS_STOP_TOOL_NAME
+} from "../../tools/BackgroundProcessTool/toolName.js";
 
 // Agent turn 执行器：从 sessionController 解耦的“用户消息 -> 模型/工具闭环 -> 历史落盘”主路径。
 // sessionController 只负责命令路由、对话框与权限 UI；真正跑一轮 Agent 的逻辑集中在这里。
@@ -234,10 +240,10 @@ const RESTORABLE_TOOL_NAMES = new Set([
 ]);
 
 const BACKGROUND_PROCESS_TOOL_NAMES = new Set([
-  "ProcessStart",
-  "ProcessList",
-  "ProcessRead",
-  "ProcessStop"
+  PROCESS_START_TOOL_NAME,
+  PROCESS_LIST_TOOL_NAME,
+  PROCESS_READ_TOOL_NAME,
+  PROCESS_STOP_TOOL_NAME
 ]);
 
 function isBackgroundProcessToolName(toolName: string): boolean {

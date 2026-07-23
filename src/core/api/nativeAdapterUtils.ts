@@ -1,8 +1,7 @@
-import { asRecord, asString } from "../util/unknown.js";
 import type OpenAI from "openai";
+import { asRecord, asString } from "../util/unknown.js";
 
 export type JsonRecord = Record<string, unknown>;
-export { asRecord, asString } from "../util/unknown.js";
 
 export function extractMessageText(content: unknown): string {
   if (typeof content === "string") {
@@ -15,20 +14,12 @@ export function extractMessageText(content: unknown): string {
 
   return content
     .map((part) => {
-      if (!part || typeof part !== "object") {
+      const record = asRecord(part);
+      if (!record) {
         return "";
       }
 
-      const record = part as JsonRecord;
-      if (typeof record.text === "string") {
-        return record.text;
-      }
-
-      if (typeof record.content === "string") {
-        return record.content;
-      }
-
-      return "";
+      return asString(record.text) ?? asString(record.content) ?? "";
     })
     .filter(Boolean)
     .join("\n");
@@ -36,10 +27,7 @@ export function extractMessageText(content: unknown): string {
 
 export function parseJsonObject(value: string): JsonRecord {
   try {
-    const parsed = JSON.parse(value) as unknown;
-    return parsed && typeof parsed === "object" && !Array.isArray(parsed)
-      ? parsed as JsonRecord
-      : {};
+    return asRecord(JSON.parse(value) as unknown) ?? {};
   } catch {
     return {};
   }
@@ -106,29 +94,27 @@ export async function parseJsonResponse(response: Response): Promise<unknown> {
 }
 
 export function extractProviderErrorMessage(value: unknown): string | undefined {
-  if (!value || typeof value !== "object") {
+  const record = asRecord(value);
+  if (!record) {
     return undefined;
   }
 
-  const record = value as JsonRecord;
   const error = record.error;
   if (typeof error === "string") {
     return error;
   }
 
-  if (error && typeof error === "object") {
-    const errorRecord = error as JsonRecord;
-    if (typeof errorRecord.message === "string") {
-      return errorRecord.message;
+  const errorRecord = asRecord(error);
+  if (errorRecord) {
+    const message = asString(errorRecord.message);
+    if (message) {
+      return message;
     }
-    if (typeof errorRecord.type === "string") {
-      return errorRecord.type;
+    const type = asString(errorRecord.type);
+    if (type) {
+      return type;
     }
   }
 
-  if (typeof record.message === "string") {
-    return record.message;
-  }
-
-  return undefined;
+  return asString(record.message);
 }

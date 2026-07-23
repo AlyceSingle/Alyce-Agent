@@ -5,10 +5,8 @@ import path from "node:path";
 import process from "node:process";
 import { createBackgroundDiagnosticsMessage } from "../../core/api/generatedMessages.js";
 import { extractCollapsedMessageText } from "../../core/api/messageText.js";
-import { extractThinkingDelta, mergeThinkingContent } from "./thinkingText.js";
 import {
   formatPostResponseFailure,
-  formatPromptSkillSummary,
   runAgentUserTurn,
   type TurnCheckpoint
 } from "./agentTurnRunner.js";
@@ -144,22 +142,6 @@ import {
 } from "./messageMapper.js";
 
 // SessionController 负责把 REPL/UI 事件翻译成会话运行时调用，并维护中断恢复状态。
-const RESTORABLE_TOOL_NAMES = new Set([
-  "TaskList",
-  "TaskGet",
-  "Edit",
-  "MultiEdit",
-  "Write",
-  "apply_patch",
-  "Bash",
-  "PowerShell"
-]);
-const BACKGROUND_PROCESS_TOOL_NAMES = new Set([
-  "ProcessStart",
-  "ProcessList",
-  "ProcessRead",
-  "ProcessStop"
-]);
 const MAX_REWIND_POINTS = 100;
 const PAGED_HISTORY_INITIAL_WINDOW = 240;
 const PAGED_HISTORY_CHUNK_SIZE = 120;
@@ -3156,10 +3138,6 @@ function shouldSkipApprovalDialog(
   return permissionEvaluation?.action === "allow" && !request.forceAsk;
 }
 
-function isBackgroundProcessToolName(toolName: string): boolean {
-  return BACKGROUND_PROCESS_TOOL_NAMES.has(toolName);
-}
-
 function isNotifiableBackgroundTask(task: Pick<SubagentTaskInfo, "agentType">): boolean {
   return task.agentType !== "auto-reviewer";
 }
@@ -3187,15 +3165,11 @@ function isFileRestoreAvailable(options: {
 }
 
 export const __SESSION_CONTROLLER_TESTING__ = {
-  mergeThinkingContent,
-  extractThinkingDelta,
-  formatPromptSkillSummary,
   shouldSkipApprovalDialog,
   parseAutoReviewDecision,
   buildAutoReviewPrompt,
   buildApprovalModePermissionRules,
   isFileRestoreAvailable,
-  isBackgroundProcessToolName,
   isVisibleBackgroundProcess,
   isVisibleBackgroundTask,
   waitForUiPaint

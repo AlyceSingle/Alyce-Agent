@@ -5,24 +5,24 @@ import type {
   TerminalUiMessageBlockStyle,
   TerminalUiMessageBlockTone,
   TerminalUiToolData,
-  TerminalUiToolEditResult,
-  TerminalUiToolPatchResult,
-  TerminalUiToolReadResult,
-  TerminalUiToolShellResult,
   TerminalUiToolWriteResult
 } from "../../state/types.js";
 import { serializeMessageBlocks } from "../../utils/messageBlocks.js";
+import { asRecord, asString } from "../../../core/util/unknown.js";
 import {
-  asBoolean,
-  asNullableNumber,
-  asNullableString,
-  asNumber,
-  asNumberArray,
-  asRecord,
-  asRecordArray,
-  asString,
-  asStringArray
-} from "../../../core/util/unknown.js";
+  PROCESS_LIST_TOOL_NAME,
+  PROCESS_READ_TOOL_NAME,
+  PROCESS_START_TOOL_NAME,
+  PROCESS_STOP_TOOL_NAME
+} from "../../../tools/BackgroundProcessTool/toolName.js";
+import {
+  PTY_CLOSE_TOOL_NAME,
+  PTY_CREATE_TOOL_NAME,
+  PTY_LIST_TOOL_NAME,
+  PTY_READ_TOOL_NAME,
+  PTY_RESIZE_TOOL_NAME,
+  PTY_WRITE_TOOL_NAME
+} from "../../../tools/PtyTool/toolName.js";
 
 export {
   asBoolean,
@@ -52,18 +52,18 @@ export const MARKDOWN_FRIENDLY_TOOL_NAME_TOKENS = [
   "codesearch"
 ];
 export const BACKGROUND_PROCESS_TOOL_NAMES = new Set([
-  "ProcessStart",
-  "ProcessList",
-  "ProcessRead",
-  "ProcessStop"
+  PROCESS_START_TOOL_NAME,
+  PROCESS_LIST_TOOL_NAME,
+  PROCESS_READ_TOOL_NAME,
+  PROCESS_STOP_TOOL_NAME
 ]);
 export const PTY_TOOL_NAMES = new Set([
-  "PtyCreate",
-  "PtyList",
-  "PtyRead",
-  "PtyWrite",
-  "PtyResize",
-  "PtyClose"
+  PTY_CREATE_TOOL_NAME,
+  PTY_LIST_TOOL_NAME,
+  PTY_READ_TOOL_NAME,
+  PTY_WRITE_TOOL_NAME,
+  PTY_RESIZE_TOOL_NAME,
+  PTY_CLOSE_TOOL_NAME
 ]);
 export type ToolResultIssue = {
   path: string;
@@ -186,7 +186,6 @@ export function capitalizeWord(value: string) {
   return value.length > 0 ? value[0].toUpperCase() + value.slice(1) : value;
 }
 
-
 export function tryParseRecord(value: string): Record<string, unknown> | undefined {
   if (!value.trim()) {
     return undefined;
@@ -199,14 +198,6 @@ export function tryParseRecord(value: string): Record<string, unknown> | undefin
     return undefined;
   }
 }
-
-
-
-
-
-
-
-
 
 export function toToolResultError(value: unknown): ToolResultError | undefined {
   const record = asRecord(value);

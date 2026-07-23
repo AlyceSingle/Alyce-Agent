@@ -72,7 +72,6 @@ import {
 } from "./runtimeTypes.js";
 import {
   buildMcpToolApprovalRequest,
-  classifyMcpToolImpact,
   resolveMcpToolApprovalAction
 } from "./approval.js";
 import {
@@ -119,8 +118,6 @@ import {
 // Project MCP runtime：server 生命周期 + 对外 McpToolRuntime API。
 // 传输/schema/规范化/超时细节见同目录其它模块。
 
-// Project MCP runtime：server 生命周期 + 对外 McpToolRuntime API。
-// 传输/schema/规范化/超时细节见同目录其它模块。
 
 export interface ProjectMcpRuntimeOptions {
   homeDirectory?: string;

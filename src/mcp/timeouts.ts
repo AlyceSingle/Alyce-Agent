@@ -1,8 +1,6 @@
-import { getAbortReason, isTurnInterruptedError, throwIfAborted, TurnInterruptedError } from "../core/abort.js";
-import type { JsonRecord } from "../tools/types.js";
-import { normalizeMcpServerName } from "./config.js";
+import { getAbortReason, throwIfAborted, TurnInterruptedError } from "../core/abort.js";
 import type { McpServerConnectionState } from "./types.js";
-import type { McpRuntimeOperationOptions, McpServerRuntime } from "./runtimeTypes.js";
+import type { McpServerRuntime } from "./runtimeTypes.js";
 import {
   DEFAULT_MCP_OPERATION_TIMEOUT_MS,
   DEFAULT_MCP_STARTUP_TIMEOUT_MS,
@@ -38,11 +36,6 @@ export function resolveMcpTimeout(
     case "close":
       return server.config.close_timeout_ms ?? MCP_CLOSE_TIMEOUT_MS;
   }
-}
-
-export function normalizeRequestedServerName(serverName: string): string {
-  const normalized = normalizeMcpServerName(serverName);
-  return normalized || serverName.trim();
 }
 
 export async function trackServerOperation<T>(
@@ -149,42 +142,8 @@ export function buildRuntimeErrorMessage(error: unknown, errorChunks: string[]) 
   return details ? `${message}\n${truncate(details, 1200)}` : message;
 }
 
-export function classifyMcpToolImpact(toolName: string, args: JsonRecord) {
-  const normalizedName = toolName.toLowerCase();
-  const argText = JSON.stringify(args).toLowerCase();
-  const notes: string[] = [];
-
-  if (/(delete|remove|destroy|drop|revoke|terminate|shutdown)/.test(normalizedName)) {
-    notes.push("This tool name suggests destructive remote actions or data removal.");
-  }
-  if (/(create|update|write|edit|merge|push|deploy|publish|submit|approve|send)/.test(normalizedName)) {
-    notes.push("This tool name suggests remote state changes, writes, or side effects.");
-  }
-  if (/(secret|token|cookie|credential|password|key)/.test(normalizedName) ||
-    /(secret|token|cookie|credential|password|key)/.test(argText)) {
-    notes.push("Arguments or tool name may involve secrets or credential-bearing material.");
-  }
-  if (/(http|url|network|request|webhook)/.test(normalizedName) ||
-    /(https?:\/\/)/.test(argText)) {
-    notes.push("This request references network endpoints or outbound remote interactions.");
-  }
-
-  if (notes.length === 0) {
-    return {
-      summary: "External MCP call with no obvious high-risk keywords.",
-      notes
-    };
-  }
-
-  return {
-    summary: "External MCP call with elevated review signals.",
-    notes
-  };
-}
-
 export function classifyErrorStatus(message: string): McpServerConnectionState {
   return /401|403|auth|unauthori[sz]ed|forbidden/i.test(message)
     ? "auth_required"
     : "failed";
 }
-
