@@ -329,6 +329,7 @@ const zh: Record<string, string> = {
   "status.idle": "空闲",
   "status.error": "错误",
   "status.responding": "回复中...",
+  "status.finalizing": "收尾中...",
   "status.thinking": "思考中...",
   "status.preparing": "准备中...",
   "status.compacting": "压缩上下文中...",

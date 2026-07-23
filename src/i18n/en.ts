@@ -329,6 +329,7 @@ const en: Record<string, string> = {
   "status.idle": "Idle",
   "status.error": "Error",
   "status.responding": "Responding...",
+  "status.finalizing": "Finalizing...",
   "status.thinking": "Thinking...",
   "status.preparing": "Preparing...",
   "status.compacting": "Compacting context...",

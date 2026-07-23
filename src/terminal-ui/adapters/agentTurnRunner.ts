@@ -270,14 +270,9 @@ export async function runAgentUserTurn(host: AgentTurnHost, userInput: string): 
       userCancelled: false
     };
 
-    // 先立即回显用户消息并进入 preparing，避免回车后卡在“无反馈”状态。
-    // snapshot / skills / tools 准备改为并行，缩短输入到模型请求的链路。
+    // 先绑定 activeTurn；loading 在局部变量就绪后进入 try/finally，保证异常也能解锁。
     host.setActiveTurn(checkpoint);
     host.resetTurnEphemeralMessages();
-    host.store.updateState((state) =>
-      setLoading(setStatusText(setTranscriptSticky(state, true), t("status.preparing")), true)
-    );
-    host.appendUiMessage(createUserMessage(userInput));
 
     let completedTurnHistoryPlan: CompletedTurnHistoryPlan | null = null;
     let turnRecorded = false;
@@ -403,6 +398,13 @@ export async function runAgentUserTurn(host: AgentTurnHost, userInput: string): 
     };
 
     try {
+      // 先立即回显用户消息并进入 preparing；其后逻辑全部包在 try/finally 内。
+      // snapshot / skills / tools 准备改为并行，缩短输入到模型请求的链路。
+      host.store.updateState((state) =>
+        setLoading(setStatusText(setTranscriptSticky(state, true), t("status.preparing")), true)
+      );
+      host.appendUiMessage(createUserMessage(userInput));
+
       // 每轮都绑定独立的 abort controller 和 tool context，确保取消只影响当前轮次。
       const client = host.runtime.requireChatCompletionAdapter();
       const currentModel = host.runtime.getCurrentModel();
@@ -635,12 +637,16 @@ export async function runAgentUserTurn(host: AgentTurnHost, userInput: string): 
           : getApiMessagesSinceCheckpoint(checkpoint, host.runtime),
         uiBaseMessageCount: checkpoint.uiMessageCount
       };
+      // 回复已上屏：从 Responding 切到收尾，避免用户以为模型还在吐字。
+      // activeTurn 保留到 post-response 结束，ESC 才能中断落盘/估算。
+      host.store.updateState((state) => setStatusText(state, t("status.finalizing")));
       throwIfAborted(controller.signal);
       const postResponseFailures: string[] = [];
       const turnDiffReport = await host.finalizeTurnFileChangesForRewind(
         checkpoint,
         postResponseFailures
       );
+      throwIfAborted(controller.signal);
       appendPostEditSummaryOnce(turnDiffReport);
 
       try {
@@ -662,13 +668,14 @@ export async function runAgentUserTurn(host: AgentTurnHost, userInput: string): 
         postResponseFailures.push(formatPostResponseFailure("Session history save failed", error));
       }
 
+      throwIfAborted(controller.signal);
       host.rememberRewindPoint(checkpoint);
-      host.setActiveTurn(null);
       if (postResponseFailures.length > 0) {
         host.appendUiMessage(createErrorMessage(postResponseFailures.join("\n")));
       }
       // 回合结束后再估一次，确保状态栏与当前 messages 一致（含最终 assistant）。
       try {
+        throwIfAborted(controller.signal);
         const finalBudget = await host.runtime.estimateContextBudget({
           model: currentModel,
           resolvedModel,
@@ -678,7 +685,10 @@ export async function runAgentUserTurn(host: AgentTurnHost, userInput: string): 
         host.store.updateState((state) =>
           setContextBudget(setStatusText(state, t("status.idle")), finalBudget)
         );
-      } catch {
+      } catch (error) {
+        if (isTurnInterruptedError(error, controller.signal)) {
+          throw error;
+        }
         host.store.updateState((state) => setStatusText(state, t("status.idle")));
       }
     } catch (error) {
@@ -776,8 +786,29 @@ export async function runAgentUserTurn(host: AgentTurnHost, userInput: string): 
         );
       }
     } finally {
-      host.flushPendingDiagnosticContextMessages();
-      host.resetTurnEphemeralMessages();
+      // 流式定时器必须先清掉，避免回合结束后还写 UI / 把状态打回 Responding。
+      if (streamingAssistantFlushTimer !== null) {
+        clearTimeout(streamingAssistantFlushTimer);
+        streamingAssistantFlushTimer = null;
+      }
+      if (thinkingUiFlushTimer !== null) {
+        clearTimeout(thinkingUiFlushTimer);
+        thinkingUiFlushTimer = null;
+      }
+
+      try {
+        host.flushPendingDiagnosticContextMessages();
+      } catch {
+        // best-effort：清理失败不能挡住解锁输入
+      }
+      try {
+        host.resetTurnEphemeralMessages();
+      } catch {
+        // best-effort
+      }
+
+      // 无论成功/失败/中断，都必须解锁输入并清空 activeTurn，否则会卡在 working。
+      host.setActiveTurn(null);
       host.store.updateState((state) => setLoading(state, false));
 
       if (host.isExitRequestedAfterTurn() && host.getActiveTurn() === null && !host.store.getState().isLoading) {
