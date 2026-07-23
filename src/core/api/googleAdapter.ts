@@ -13,6 +13,7 @@ import {
   parseJsonResponse,
   type JsonRecord
 } from "./nativeAdapterUtils.js";
+import { asRecord as asRecordOrNull } from "../util/unknown.js";
 
 type GeminiPart =
   | { text: string; thought?: boolean }
@@ -301,7 +302,7 @@ function mapGoogleFinishReason(value: unknown): OpenAI.Chat.Completions.ChatComp
 }
 
 function asRecord(value: unknown): JsonRecord {
-  return value && typeof value === "object" ? value as JsonRecord : {};
+  return asRecordOrNull(value) ?? {};
 }
 
 function numberValue(value: unknown): number {

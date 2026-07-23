@@ -1,6 +1,8 @@
+import { asRecord, asString } from "../util/unknown.js";
 import type OpenAI from "openai";
 
 export type JsonRecord = Record<string, unknown>;
+export { asRecord, asString } from "../util/unknown.js";
 
 export function extractMessageText(content: unknown): string {
   if (typeof content === "string") {

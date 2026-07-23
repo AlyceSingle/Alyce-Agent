@@ -12,6 +12,29 @@ import type {
   TerminalUiToolWriteResult
 } from "../../state/types.js";
 import { serializeMessageBlocks } from "../../utils/messageBlocks.js";
+import {
+  asBoolean,
+  asNullableNumber,
+  asNullableString,
+  asNumber,
+  asNumberArray,
+  asRecord,
+  asRecordArray,
+  asString,
+  asStringArray
+} from "../../../core/util/unknown.js";
+
+export {
+  asBoolean,
+  asNullableNumber,
+  asNullableString,
+  asNumber,
+  asNumberArray,
+  asRecord,
+  asRecordArray,
+  asString,
+  asStringArray
+} from "../../../core/util/unknown.js";
 
 // 共享块构建与 unknown 解析小工具。
 
@@ -163,9 +186,6 @@ export function capitalizeWord(value: string) {
   return value.length > 0 ? value[0].toUpperCase() + value.slice(1) : value;
 }
 
-export function asRecord(value: unknown): Record<string, unknown> | null {
-  return value && typeof value === "object" ? (value as Record<string, unknown>) : null;
-}
 
 export function tryParseRecord(value: string): Record<string, unknown> | undefined {
   if (!value.trim()) {
@@ -180,52 +200,13 @@ export function tryParseRecord(value: string): Record<string, unknown> | undefin
   }
 }
 
-export function asString(value: unknown): string | undefined {
-  return typeof value === "string" ? value : undefined;
-}
 
-export function asStringArray(value: unknown): string[] {
-  if (!Array.isArray(value)) {
-    return [];
-  }
 
-  return value.filter((item): item is string => typeof item === "string" && item.trim().length > 0);
-}
 
-export function asRecordArray(value: unknown): Array<Record<string, unknown>> {
-  if (!Array.isArray(value)) {
-    return [];
-  }
 
-  return value.flatMap((item) => {
-    const record = asRecord(item);
-    return record ? [record] : [];
-  });
-}
 
-export function asNumberArray(value: unknown): number[] {
-  if (!Array.isArray(value)) {
-    return [];
-  }
 
-  return value.filter((item): item is number => typeof item === "number" && Number.isFinite(item));
-}
 
-export function asNumber(value: unknown): number | undefined {
-  return typeof value === "number" && Number.isFinite(value) ? value : undefined;
-}
-
-export function asBoolean(value: unknown): boolean | undefined {
-  return typeof value === "boolean" ? value : undefined;
-}
-
-export function asNullableNumber(value: unknown): number | null {
-  return value === null ? null : asNumber(value) ?? null;
-}
-
-export function asNullableString(value: unknown): string | null {
-  return value === null ? null : asString(value) ?? null;
-}
 
 export function toToolResultError(value: unknown): ToolResultError | undefined {
   const record = asRecord(value);

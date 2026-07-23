@@ -1,3 +1,4 @@
+import { asString } from "../util/unknown.js";
 type UnknownRecord = Record<string, unknown>;
 
 // 统一提取 assistant 的“可展示/可回填文本”，并剔除 reasoning block。
@@ -47,6 +48,3 @@ export function isReasoningBlockType(type: string | undefined): boolean {
     normalized === "thinking_summary";
 }
 
-function asString(value: unknown): string | undefined {
-  return typeof value === "string" ? value : undefined;
-}

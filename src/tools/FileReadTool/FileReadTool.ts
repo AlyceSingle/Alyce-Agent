@@ -1,4 +1,5 @@
 import { createReadStream, promises as fs, type Dirent } from "node:fs";
+import { asNullableNumber, asRecord, asString } from "../../core/util/unknown.js";
 import type OpenAI from "openai";
 import path from "node:path";
 import { z } from "zod";
@@ -1491,21 +1492,8 @@ async function isBinaryFile(
   }
 }
 
-function asRecord(value: unknown): Record<string, unknown> | null {
-  return value && typeof value === "object" ? (value as Record<string, unknown>) : null;
-}
 
-function asString(value: unknown): string | undefined {
-  return typeof value === "string" ? value : undefined;
-}
 
-function asNullableNumber(value: unknown): number | null | undefined {
-  if (value === null) {
-    return null;
-  }
-
-  return typeof value === "number" && Number.isFinite(value) ? value : undefined;
-}
 
 function formatUnknownValue(value: unknown) {
   if (typeof value === "string") {

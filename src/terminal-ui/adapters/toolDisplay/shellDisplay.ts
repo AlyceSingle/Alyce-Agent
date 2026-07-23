@@ -30,8 +30,8 @@ export function toShellResult(value: unknown): TerminalUiToolShellResult | null 
   return {
     command,
     cwd,
-    exitCode: asNullableNumber(record.exitCode),
-    signal: asNullableString(record.signal),
+    exitCode: asNullableNumber(record.exitCode) ?? null,
+    signal: asNullableString(record.signal) ?? null,
     timedOut,
     stdout,
     stderr,

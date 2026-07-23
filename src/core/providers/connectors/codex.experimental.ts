@@ -1,4 +1,5 @@
 import { setTimeout as sleep } from "node:timers/promises";
+import { asString } from "../../util/unknown.js";
 import type {
   OAuthAuthRecord,
   ProviderAuthRecordInput
@@ -394,9 +395,6 @@ function firstOrganizationId(value: unknown): string | undefined {
     : undefined;
 }
 
-function asString(value: unknown): string | undefined {
-  return typeof value === "string" && value.trim() ? value.trim() : undefined;
-}
 
 function generateRandomString(
   length: number,

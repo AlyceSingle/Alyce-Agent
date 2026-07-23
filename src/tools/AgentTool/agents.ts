@@ -1,4 +1,5 @@
 import { promises as fs } from "node:fs";
+import { asString } from "../../core/util/unknown.js";
 import path from "node:path";
 import type { ToolPermissionPolicy } from "../types.js";
 
@@ -423,9 +424,6 @@ function normalizeAgentType(value: string): string {
   return value.trim().toLowerCase().replace(/[^a-z0-9_-]+/g, "-").replace(/^-+|-+$/g, "");
 }
 
-function asString(value: unknown): string | undefined {
-  return typeof value === "string" && value.trim().length > 0 ? value.trim() : undefined;
-}
 
 function asBoolean(value: unknown): boolean | undefined {
   return typeof value === "boolean" ? value : undefined;

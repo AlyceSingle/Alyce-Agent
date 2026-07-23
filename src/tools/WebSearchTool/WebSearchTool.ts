@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { asRecord, asString } from "../../core/util/unknown.js";
 import {
   isTurnInterruptedError,
   throwIfAborted,
@@ -1106,17 +1107,7 @@ function decodeHtmlEntities(value: string): string {
     .replace(/&#39;/g, "'");
 }
 
-function asRecord(value: unknown): Record<string, unknown> | null {
-  if (typeof value !== "object" || value === null || Array.isArray(value)) {
-    return null;
-  }
 
-  return value as Record<string, unknown>;
-}
-
-function asString(value: unknown): string | null {
-  return typeof value === "string" ? value : null;
-}
 
 function asArray(value: unknown): unknown[] | null {
   return Array.isArray(value) ? value : null;

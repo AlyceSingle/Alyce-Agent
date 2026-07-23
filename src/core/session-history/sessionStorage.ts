@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 import { promises as fs } from "node:fs";
 import path from "node:path";
 import { isGeneratedContextMessage } from "../api/generatedMessages.js";
+import { asNumber, asRecord, asString } from "../util/unknown.js";
 import { extractCollapsedMessageText } from "../api/messageText.js";
 import {
   isPersistedFileHistorySnapshot,
@@ -912,17 +913,8 @@ function safeParseJson(value: string): unknown {
   }
 }
 
-function asRecord(value: unknown): UnknownRecord | null {
-  return value && typeof value === "object" ? (value as UnknownRecord) : null;
-}
 
-function asString(value: unknown): string | undefined {
-  return typeof value === "string" ? value : undefined;
-}
 
-function asNumber(value: unknown): number | undefined {
-  return typeof value === "number" && Number.isFinite(value) ? value : undefined;
-}
 
 function isMissingFileError(error: unknown): boolean {
   return Boolean(

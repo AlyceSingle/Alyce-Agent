@@ -2,6 +2,7 @@ import OpenAI from "openai";
 import { executeToolCall, TOOL_SCHEMAS, type ToolExecutionContext } from "../../tools.js";
 import { isTurnInterruptedError, throwIfAborted, toTurnInterruptedError } from "../abort.js";
 import { extractAssistantTextContent, isReasoningBlockType } from "../api/assistantContent.js";
+import { asString } from "../util/unknown.js";
 import { removeGeneratedContextMessages } from "../api/generatedMessages.js";
 import {
   isFunctionToolCall,
@@ -581,6 +582,3 @@ function pushUniqueChunk(chunks: string[], value: unknown) {
   }
 }
 
-function asString(value: unknown): string | undefined {
-  return typeof value === "string" ? value : undefined;
-}

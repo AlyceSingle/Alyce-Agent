@@ -14,6 +14,7 @@ import {
   toOpenAIUsage,
   type JsonRecord
 } from "./nativeAdapterUtils.js";
+import { asRecord as asRecordOrNull } from "../util/unknown.js";
 
 type AnthropicContentBlock =
   | { type: "text"; text: string }
@@ -258,7 +259,7 @@ function mapAnthropicStopReason(value: unknown): OpenAI.Chat.Completions.ChatCom
 }
 
 function asRecord(value: unknown): JsonRecord {
-  return value && typeof value === "object" ? value as JsonRecord : {};
+  return asRecordOrNull(value) ?? {};
 }
 
 function numberValue(value: unknown): number {

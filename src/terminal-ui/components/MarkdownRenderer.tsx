@@ -1,4 +1,5 @@
 import React from "react";
+import { asNumber, asString } from "../../core/util/unknown.js";
 import { createHash } from "node:crypto";
 import { Marked, type TokenizerAndRendererExtension } from "marked";
 import Box from "../runtime/ink-runtime/components/Box.js";
@@ -1726,13 +1727,8 @@ function shouldForceCjkDelimitedFallback(content: string): boolean {
   );
 }
 
-function asString(value: unknown): string | undefined {
-  return typeof value === "string" ? value : undefined;
-}
 
-function asNumber(value: unknown): number | undefined {
-  return typeof value === "number" && Number.isFinite(value) ? value : undefined;
-}
+
 
 function asBoolean(value: unknown): boolean {
   return value === true;
