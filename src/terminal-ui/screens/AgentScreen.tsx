@@ -134,6 +134,7 @@ export function AgentScreen(props: { controller: SessionController }) {
   );
   const messageCount = useTerminalUiSelector((value) => value.messages.length);
   const clearOnCtrlCRef = useRef(false);
+  const captureVerticalNavRef = useRef(false);
   const transcriptRef = useRef<MessageListHandle | null>(null);
   const scrollAccelerationRef = useRef<{
     lastDirection: -1 | 0 | 1;
@@ -212,6 +213,10 @@ export function AgentScreen(props: { controller: SessionController }) {
 
   const setCtrlCCapture = useCallback((capture: boolean) => {
     clearOnCtrlCRef.current = capture;
+  }, []);
+
+  const setVerticalNavCapture = useCallback((capture: boolean) => {
+    captureVerticalNavRef.current = capture;
   }, []);
 
   const showCopyStatus = useCallback((status: string) => {
@@ -340,11 +345,18 @@ export function AgentScreen(props: { controller: SessionController }) {
       triggerHistoryEscape();
     },
     "conversation:previousMessage": () => {
+      // 多行输入编辑中 up/down 留给光标，不切换会话消息（否则大段粘贴后上移会抖/移不动）。
+      if (captureVerticalNavRef.current) {
+        return;
+      }
       store.updateState((state) =>
         setTranscriptSticky(selectRelativeMessage(state, -1), false)
       );
     },
     "conversation:nextMessage": () => {
+      if (captureVerticalNavRef.current) {
+        return;
+      }
       store.updateState((state) =>
         setTranscriptSticky(selectRelativeMessage(state, 1), false)
       );
@@ -589,6 +601,7 @@ export function AgentScreen(props: { controller: SessionController }) {
           sublineText={`${formatCompactModelDisplay(connection.model)} | ${workspaceRoot}`}
           onLayoutHeightChange={refreshPromptLayout}
           onCtrlCCaptureChange={setCtrlCCapture}
+          onVerticalNavCaptureChange={setVerticalNavCapture}
         />
       }
     />
@@ -604,6 +617,7 @@ type AgentPromptDockProps = {
   sublineText: string;
   onLayoutHeightChange: () => void;
   onCtrlCCaptureChange: (capture: boolean) => void;
+  onVerticalNavCaptureChange: (capture: boolean) => void;
 };
 
 // 输入区与主屏解耦：仅在“外部写入” draft 时同步 props.value（恢复/清空等）。
@@ -651,6 +665,7 @@ const AgentPromptDock = React.memo(function AgentPromptDock(props: AgentPromptDo
         }
       }}
       onCtrlCCaptureChange={props.onCtrlCCaptureChange}
+      onVerticalNavCaptureChange={props.onVerticalNavCaptureChange}
       onModeToggle={() => props.controller.togglePlanMode()}
       onSubmit={async (value) => {
         await props.controller.submit(value);

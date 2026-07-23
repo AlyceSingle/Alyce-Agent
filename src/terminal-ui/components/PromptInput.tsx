@@ -9,6 +9,7 @@ import useTerminalSize from "../runtime/ink-runtime/hooks/use-terminal-size.js";
 import type { TerminalKey } from "../runtime/input.js";
 import { logLayoutTrace } from "../runtime/utils/layoutTrace.js";
 import { t } from "../../i18n/index.js";
+import { buildInputEditorViewport } from "../utils/text.js";
 import { terminalUiTheme } from "../theme/theme.js";
 import { useSelection } from "../runtime/ink-runtime/hooks/use-selection.js";
 import TextInput from "./TextInput.js";
@@ -119,6 +120,8 @@ export function PromptInput(props: {
   onLayoutHeightChange?: () => void;
   onChange: (value: string) => void;
   onCtrlCCaptureChange: (capture: boolean) => void;
+  /** 多行编辑时拦截 up/down，避免会话消息导航抢走光标移动。 */
+  onVerticalNavCaptureChange?: (capture: boolean) => void;
   onModeToggle?: () => Promise<void> | void;
   onSubmit: (value: string) => Promise<void> | void;
 }) {
@@ -157,6 +160,26 @@ export function PromptInput(props: {
   useEffect(() => {
     props.onCtrlCCaptureChange(!props.disabled && localValue.length > 0);
   }, [props.disabled, props.onCtrlCCaptureChange, localValue.length]);
+
+  // 多行（硬换行或软折行）时由输入框消费上下键，避免 Conversation 绑定抢键并带动 transcript 抖动。
+  useEffect(() => {
+    if (!props.onVerticalNavCaptureChange) {
+      return;
+    }
+    const totalLines = props.disabled
+      ? 0
+      : buildInputEditorViewport(localValue, cursorOffset, inputColumns, Number.MAX_SAFE_INTEGER).totalLines;
+    props.onVerticalNavCaptureChange(totalLines > 1);
+    return () => {
+      props.onVerticalNavCaptureChange?.(false);
+    };
+  }, [
+    cursorOffset,
+    inputColumns,
+    localValue,
+    props.disabled,
+    props.onVerticalNavCaptureChange
+  ]);
 
   // 外部写入 draft（恢复会话、提交清空、Ctrl+C 清空）时同步本地缓冲。
   // 必须依赖 externalRevision：dock 在自写时不同步 value，store 从有内容清空到 "" 时

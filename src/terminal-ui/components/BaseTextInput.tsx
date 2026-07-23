@@ -15,8 +15,11 @@ export function BaseTextInput(props: BaseTextInputProps & {
   const prefixColor = props.prefixColor ?? terminalUiTheme.colors.promptAccent;
   const placeholderColor = props.placeholderColor ?? terminalUiTheme.colors.selectionMuted;
   const overflowHintColor = props.overflowHintColor ?? terminalUiTheme.colors.promptMuted;
+  const topChromeRows =
+    inputState.reserveOverflowChrome || inputState.hasTopOverflow ? 1 : 0;
   const cursorRef = useDeclaredCursor({
-    line: inputState.cursorLine,
+    // 顶部溢出提示占一行时，声明光标行要整体下移，否则会偏到上一行导致跳动。
+    line: inputState.cursorLine + topChromeRows,
     column: inputState.cursorColumn,
     active: Boolean(props.focus && props.showCursor && props.terminalFocus)
   });
@@ -27,8 +30,10 @@ export function BaseTextInput(props: BaseTextInputProps & {
 
   return (
     <Box ref={cursorRef} flexDirection="column" width="100%">
-      {inputState.hasTopOverflow ? (
-        <Text color={overflowHintColor} dimColor>... earlier lines</Text>
+      {inputState.reserveOverflowChrome || inputState.hasTopOverflow ? (
+        <Text color={overflowHintColor} dimColor>
+          {inputState.hasTopOverflow ? "... earlier lines" : " "}
+        </Text>
       ) : null}
       {props.value.length === 0 ? (
         <Text>
@@ -50,8 +55,10 @@ export function BaseTextInput(props: BaseTextInputProps & {
           </Text>
         ))
       )}
-      {inputState.hasBottomOverflow ? (
-        <Text color={overflowHintColor} dimColor>... more lines below</Text>
+      {inputState.reserveOverflowChrome || inputState.hasBottomOverflow ? (
+        <Text color={overflowHintColor} dimColor>
+          {inputState.hasBottomOverflow ? "... more lines below" : " "}
+        </Text>
       ) : null}
     </Box>
   );

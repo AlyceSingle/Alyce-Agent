@@ -240,6 +240,7 @@ export function useTextInput(props: UseTextInputProps): BaseInputState {
     onInputImplRef.current(input, key);
   }, []);
 
+  const maxVisibleLines = Math.max(1, props.maxVisibleLines ?? 4);
   return {
     onInput,
     lines: viewport.lines,
@@ -250,6 +251,7 @@ export function useTextInput(props: UseTextInputProps): BaseInputState {
         : getDisplayWidth(cursorLineIndex === 0 ? firstLinePrefix : continuationPrefix)) +
       getDisplayWidth(cursorLine?.before ?? ""),
     hasTopOverflow: viewport.hasTopOverflow,
-    hasBottomOverflow: viewport.hasBottomOverflow
+    hasBottomOverflow: viewport.hasBottomOverflow,
+    reserveOverflowChrome: viewport.totalLines > maxVisibleLines
   };
 }

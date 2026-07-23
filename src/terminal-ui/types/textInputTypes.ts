@@ -14,6 +14,8 @@ export type BaseInputState = {
   cursorColumn: number;
   hasTopOverflow: boolean;
   hasBottomOverflow: boolean;
+  /** 内容超过可视行时固定占位，避免上下溢出提示显隐导致输入区高度抖动。 */
+  reserveOverflowChrome: boolean;
 };
 
 export type BaseTextInputProps = {
