@@ -109,6 +109,8 @@ export function resolvePromptPlaceholderState(options: {
 
 export function PromptInput(props: {
   value: string;
+  /** 外部写入 draft 时递增，强制同步本地缓冲（含清空到空字符串）。 */
+  externalRevision?: number;
   viewportWidth: number;
   disabled: boolean;
   disabledReason?: string;
@@ -157,8 +159,13 @@ export function PromptInput(props: {
   }, [props.disabled, props.onCtrlCCaptureChange, localValue.length]);
 
   // 外部写入 draft（恢复会话、提交清空、Ctrl+C 清空）时同步本地缓冲。
+  // 必须依赖 externalRevision：dock 在自写时不同步 value，store 从有内容清空到 "" 时
+  // props.value 可能一直是 ""，仅靠 value 比较无法触发本地清空。
   useEffect(() => {
-    if (props.value === lastExternalValueRef.current) {
+    if (
+      props.externalRevision === undefined &&
+      props.value === lastExternalValueRef.current
+    ) {
       return;
     }
 
@@ -170,7 +177,7 @@ export function PromptInput(props: {
     }
     setLocalValue(props.value);
     setCursorOffset(props.value.length);
-  }, [props.value]);
+  }, [props.externalRevision, props.value]);
 
   // 值缩短后夹紧光标，避免 offset 悬空导致光标块不绘制。
   useEffect(() => {

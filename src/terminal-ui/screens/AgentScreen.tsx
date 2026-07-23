@@ -611,6 +611,8 @@ type AgentPromptDockProps = {
 const AgentPromptDock = React.memo(function AgentPromptDock(props: AgentPromptDockProps) {
   const store = useTerminalUiStore();
   const [draftInput, setDraftInput] = useState(() => store.getState().draftInput);
+  // 外部写入（Ctrl+C 清空 / 恢复会话等）时递增，强制 PromptInput 同步本地缓冲。
+  const [externalRevision, setExternalRevision] = useState(0);
   // 标记“本次 store 变更来自输入框自身”，避免 subscribe 把本地正在编辑的值回弹。
   const selfWriteRef = useRef(false);
 
@@ -621,7 +623,9 @@ const AgentPromptDock = React.memo(function AgentPromptDock(props: AgentPromptDo
         return;
       }
       const next = store.getState().draftInput;
-      setDraftInput((current) => (current === next ? current : next));
+      setDraftInput(next);
+      // 即使 next 与 dock 缓存同为 ""，也必须 bump，否则本地 localValue 清不掉。
+      setExternalRevision((revision) => revision + 1);
     });
   }, [store]);
 
@@ -629,6 +633,7 @@ const AgentPromptDock = React.memo(function AgentPromptDock(props: AgentPromptDo
     <PromptInput
       // 不要用 terminalSize 当 key 强制 remount：本地输入缓冲会丢，且列宽已在 PromptInput 内响应。
       value={draftInput}
+      externalRevision={externalRevision}
       viewportWidth={props.terminalWidth}
       disabled={props.disabled}
       disabledReason={props.disabledReason}
