@@ -399,18 +399,14 @@ export function AgentScreen(props: { controller: SessionController }) {
       return;
     }
 
-    // 输入框有内容时优先清空草稿。残留 selection 不应劫持 Ctrl+C（粘贴后高亮仍在时尤甚）。
-    if (clearOnCtrlCRef.current || store.getState().draftInput.length > 0) {
-      if (selection.hasSelection()) {
-        selection.clearSelection();
-      }
-      props.controller.setDraftInput("");
-      return;
-    }
-
     const copiedSelectionText = selection.copySelection();
     if (copiedSelectionText) {
       showCopyStatus(`Copied ${copiedSelectionText.length} chars from selection.`);
+      return;
+    }
+
+    if (clearOnCtrlCRef.current || store.getState().draftInput.length > 0) {
+      props.controller.setDraftInput("");
       return;
     }
 
