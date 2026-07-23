@@ -161,7 +161,7 @@ function testOpenAILegacyCompatibleLabelIsShownAsOpenAI() {
   const state = buildConnectionConfigState(getRuntimePaths("C:\\workspace"), {
     env: {
       apiKey: "openai-key",
-      baseURL: "https://gcli.ggchan.dev/",
+      baseURL: "https://api.openai-compatible.example/v1/",
       model: "gemini-3-flash-preview"
     }
   });

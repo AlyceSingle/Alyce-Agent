@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 import { promises as fs } from "node:fs";
 import path from "node:path";
 import { isGeneratedContextMessage } from "../api/generatedMessages.js";
+import { extractCollapsedMessageText } from "../api/messageText.js";
 import {
   isPersistedFileHistorySnapshot,
   type PersistedFileHistorySnapshot
@@ -343,7 +344,7 @@ export class SessionHistoryStore {
           }
 
           if (isConversationUserMessage(historyMessage, lastApiRole)) {
-            const input = extractMessageText(historyMessage.content);
+            const input = extractCollapsedMessageText(historyMessage.content);
             if (input) {
               rewindCheckpoints.push({
                 input,
@@ -644,7 +645,7 @@ function extractTitleFromApiMessages(messages: SessionHistoryApiMessage[]): stri
       continue;
     }
 
-    const text = extractMessageText(message.content);
+    const text = extractCollapsedMessageText(message.content);
     if (text) {
       return truncateTitle(text);
     }
@@ -660,6 +661,11 @@ function isConversationUserMessage(
   return message.role === "user" &&
     previousRole !== "tool" &&
     !isGeneratedContextMessage(message);
+}
+
+
+function normalizeMessageText(value: string): string {
+  return value.replace(/\s+/g, " ").trim();
 }
 
 function findRewindCheckpoint(
@@ -713,29 +719,7 @@ function findRewindCheckpoint(
   return exactApiMatch ?? closestApiMatch ?? fallback;
 }
 
-function extractMessageText(value: unknown): string {
-  if (typeof value === "string") {
-    return normalizeMessageText(value);
-  }
 
-  if (!Array.isArray(value)) {
-    return "";
-  }
-
-  return normalizeMessageText(
-    value
-      .map((item) => {
-        const record = asRecord(item);
-        return record ? asString(record.text) ?? asString(record.content) ?? "" : "";
-      })
-      .filter(Boolean)
-      .join(" ")
-  );
-}
-
-function normalizeMessageText(value: string): string {
-  return value.replace(/\s+/g, " ").trim();
-}
 
 function cloneApiMessages(messages: SessionHistoryApiMessage[]) {
   return cloneJson(messages);

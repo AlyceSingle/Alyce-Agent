@@ -1,3 +1,4 @@
+import { extractChatMessageText } from "../api/messageText.js";
 import type OpenAI from "openai";
 
 type MessageParam = OpenAI.Chat.Completions.ChatCompletionMessageParam;
@@ -253,7 +254,7 @@ function getAssistantToolCallCount(message: MessageParam | undefined) {
 }
 
 function createMessageMarker(message: MessageParam) {
-  const text = extractMessageText(message);
+  const text = extractChatMessageText(message);
   return JSON.stringify({
     role: message.role,
     contentLength: text.length,
@@ -289,36 +290,6 @@ function extractToolCallNames(message: MessageParam) {
   });
 }
 
-function extractMessageText(message: MessageParam) {
-  if (message.role === "tool") {
-    return typeof message.content === "string" ? message.content : "";
-  }
-
-  const content = (message as { content?: unknown }).content;
-  if (typeof content === "string") {
-    return content;
-  }
-
-  if (!Array.isArray(content)) {
-    return "";
-  }
-
-  return content
-    .map((part) => {
-      if (!part || typeof part !== "object") {
-        return "";
-      }
-
-      const record = part as UnknownRecord;
-      if (typeof record.text === "string") {
-        return record.text;
-      }
-
-      return typeof record.content === "string" ? record.content : "";
-    })
-    .filter(Boolean)
-    .join("\n");
-}
 
 function normalizeConfig(config: SessionMemoryTriggerConfig): SessionMemoryTriggerConfig {
   return {

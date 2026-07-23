@@ -1,7 +1,7 @@
 import OpenAI from "openai";
 import { executeToolCall, TOOL_SCHEMAS, type ToolExecutionContext } from "../../tools.js";
 import { isTurnInterruptedError, throwIfAborted, toTurnInterruptedError } from "../abort.js";
-import { extractAssistantTextContent } from "../api/assistantContent.js";
+import { extractAssistantTextContent, isReasoningBlockType } from "../api/assistantContent.js";
 import { removeGeneratedContextMessages } from "../api/generatedMessages.js";
 import {
   isFunctionToolCall,
@@ -45,7 +45,6 @@ export interface AgentTurnOptions {
   maxSteps: number;
   context: ToolExecutionContext;
   querySource?: AgentQuerySource;
-  gcliGeminiCompat?: boolean;
   requestPatches?: RequestPatchOperation[];
   abortSignal?: AbortSignal;
   tools?: OpenAI.Chat.Completions.ChatCompletionTool[];
@@ -104,7 +103,6 @@ export async function runAgentTurn(
           tools: activeTools,
           toolChoice: "auto",
           temperature: 0.2,
-          gcliGeminiCompat: options.gcliGeminiCompat,
           messageTimestampsEnabled: options.messageTimestampsEnabled,
           requestPatches: options.requestPatches,
           abortSignal: options.abortSignal,
@@ -340,7 +338,6 @@ function buildAgentTurnRequest(
     tools,
     toolChoice: "auto",
     temperature: 0.2,
-    gcliGeminiCompat: options.gcliGeminiCompat,
     messageTimestampsEnabled: options.messageTimestampsEnabled,
     requestPatches: options.requestPatches
   });
@@ -571,15 +568,6 @@ function collectReasoningChunks(chunks: string[], value: unknown) {
   if (Array.isArray(record.content)) {
     collectReasoningChunks(chunks, record.content);
   }
-}
-
-function isReasoningBlockType(type: string | undefined) {
-  return type === "reasoning" ||
-    type === "thinking" ||
-    type === "reasoning_content" ||
-    type === "thinking_content" ||
-    type === "reasoning_summary" ||
-    type === "thinking_summary";
 }
 
 function pushUniqueChunk(chunks: string[], value: unknown) {

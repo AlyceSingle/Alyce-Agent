@@ -1,14 +1,10 @@
 import OpenAI from "openai";
 import { formatSystemDateTime } from "../time/systemTime.js";
-import {
-  ASSISTANT_TOOL_CALL_PLACEHOLDER,
-  extractAssistantTextContent
-} from "./assistantContent.js";
+import { extractAssistantTextContent } from "./assistantContent.js";
+import { hasAssistantToolRequest } from "./openaiFunctionTools.js";
 
 export type MessageParam = OpenAI.Chat.Completions.ChatCompletionMessageParam;
 export type ChatCreateParams = OpenAI.Chat.Completions.ChatCompletionCreateParamsNonStreaming;
-
-const ASSISTANT_EMPTY_RESPONSE_PLACEHOLDER = "(assistant response had no text output)";
 
 export interface ChatCompletionRequestOptions {
   model: string;
@@ -16,7 +12,6 @@ export interface ChatCompletionRequestOptions {
   tools: OpenAI.Chat.Completions.ChatCompletionTool[];
   temperature?: number;
   toolChoice?: ChatCreateParams["tool_choice"];
-  gcliGeminiCompat?: boolean;
   messageTimestampsEnabled?: boolean;
   currentRequestTimestamp?: string;
 }
@@ -24,7 +19,6 @@ export interface ChatCompletionRequestOptions {
 function normalizeMessagesForApi(
   messages: MessageParam[],
   options: {
-    gcliGeminiCompat: boolean;
     messageTimestampsEnabled: boolean;
     currentRequestTimestamp?: string;
   }
@@ -46,7 +40,7 @@ function normalizeMessagesForApi(
       if (hasAssistantToolRequest(message)) {
         return {
           ...message,
-          content: normalizedContent ?? (options.gcliGeminiCompat ? ASSISTANT_TOOL_CALL_PLACEHOLDER : "")
+          content: normalizedContent ?? ""
         };
       }
 
@@ -63,7 +57,7 @@ function normalizeMessagesForApi(
 
       return {
         ...message,
-        content: ASSISTANT_EMPTY_RESPONSE_PLACEHOLDER
+        content: ""
       };
     }
 
@@ -101,7 +95,6 @@ export function buildChatCompletionRequest(options: ChatCompletionRequestOptions
   const request: ChatCreateParams = {
     model: options.model,
     messages: normalizeMessagesForApi(options.messages, {
-      gcliGeminiCompat: options.gcliGeminiCompat ?? false,
       messageTimestampsEnabled: options.messageTimestampsEnabled ?? false,
       currentRequestTimestamp: options.currentRequestTimestamp
     }),
@@ -114,14 +107,4 @@ export function buildChatCompletionRequest(options: ChatCompletionRequestOptions
   }
 
   return request;
-}
-
-function hasAssistantToolRequest(message: {
-  tool_calls?: unknown;
-  function_call?: unknown;
-}): boolean {
-  return (
-    (Array.isArray(message.tool_calls) && message.tool_calls.length > 0) ||
-    message.function_call !== undefined
-  );
 }

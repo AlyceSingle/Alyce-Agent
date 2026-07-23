@@ -1,10 +1,6 @@
-const ASSISTANT_TOOL_CALL_PLACEHOLDER = "(assistant requested a tool call)";
-
 type UnknownRecord = Record<string, unknown>;
 
-export { ASSISTANT_TOOL_CALL_PLACEHOLDER };
-
-// 统一提取 assistant 的“可展示/可回填文本”，并剔除内部占位符与 reasoning block。
+// 统一提取 assistant 的“可展示/可回填文本”，并剔除 reasoning block。
 export function extractAssistantTextContent(value: unknown): string | undefined {
   if (typeof value === "string") {
     return normalizeAssistantText(value);
@@ -37,17 +33,11 @@ function normalizeAssistantText(value: string | undefined): string | undefined {
     return undefined;
   }
 
-  const normalized = value
-    .replace(/\r\n/g, "\n")
-    .split("\n")
-    .filter((line) => line.trim() !== ASSISTANT_TOOL_CALL_PLACEHOLDER)
-    .join("\n")
-    .trim();
-
+  const normalized = value.replace(/\r\n/g, "\n").trim();
   return normalized.length > 0 ? normalized : undefined;
 }
 
-function isReasoningBlockType(type: string | undefined): boolean {
+export function isReasoningBlockType(type: string | undefined): boolean {
   const normalized = type?.toLowerCase();
   return normalized === "reasoning" ||
     normalized === "thinking" ||

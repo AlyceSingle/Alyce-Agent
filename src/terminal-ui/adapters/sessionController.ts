@@ -4,6 +4,8 @@ import os from "node:os";
 import path from "node:path";
 import process from "node:process";
 import { createBackgroundDiagnosticsMessage } from "../../core/api/generatedMessages.js";
+import { extractCollapsedMessageText } from "../../core/api/messageText.js";
+import { extractThinkingDelta, mergeThinkingContent } from "./thinkingText.js";
 import { getFunctionToolNames } from "../../core/api/openaiFunctionTools.js";
 import { isTurnInterruptedError, throwIfAborted, TurnInterruptedError } from "../../core/abort.js";
 import { formatDoctorReport, runDoctorDiagnostics } from "../../core/doctor/doctor.js";
@@ -1162,7 +1164,7 @@ export function createSessionController(
         continue;
       }
 
-      const input = extractMessageText((message as { content?: unknown }).content);
+      const input = extractCollapsedMessageText((message as { content?: unknown }).content);
       if (input) {
         apiUserMessages.push({
           input,
@@ -3000,10 +3002,6 @@ export function createSessionController(
         const client = runtime.requireChatCompletionAdapter();
         const currentModel = runtime.getCurrentModel();
         const resolvedModel = runtime.getResolvedModelProfile();
-        const gcliGeminiCompat = shouldUseGcliGeminiCompat(
-          resolvedModel.baseURL,
-          resolvedModel.modelId
-        );
 
         // beginTurn(git snapshot) 与 skills/tools 解析互不依赖，并行执行。
         const [, promptSkillContext, tools] = await Promise.all([
@@ -3041,7 +3039,6 @@ export function createSessionController(
           resolvedModel,
           maxSteps: runtime.getSettings().maxSteps,
           querySource: "main",
-          gcliGeminiCompat,
           messageTimestampsEnabled: runtime.getSettings().messageTimestampsEnabled,
           abortSignal: controller.signal,
           usageSource: "main",
@@ -3271,8 +3268,7 @@ export function createSessionController(
             model: currentModel,
             resolvedModel,
             messages: runtime.messages,
-            tools,
-            gcliGeminiCompat
+            tools
           });
           store.updateState((state) =>
             setContextBudget(setStatusText(state, t("status.idle")), finalBudget)
@@ -3704,33 +3700,6 @@ function formatRestoreConflictReason(reason: FileHistoryRestoreResult["conflicts
   }
 }
 
-function extractMessageText(value: unknown): string {
-  if (typeof value === "string") {
-    return value.replace(/\s+/g, " ").trim();
-  }
-
-  if (!Array.isArray(value)) {
-    return "";
-  }
-
-  return value
-    .map((item) => {
-      if (!item || typeof item !== "object") {
-        return "";
-      }
-
-      const record = item as { text?: unknown; content?: unknown };
-      return typeof record.text === "string"
-        ? record.text
-        : typeof record.content === "string"
-          ? record.content
-          : "";
-    })
-    .filter(Boolean)
-    .join(" ")
-    .replace(/\s+/g, " ")
-    .trim();
-}
 
 function formatPromptSkillSummary(
   context: Awaited<ReturnType<SessionRuntime["preparePromptSkillContext"]>>
@@ -3800,59 +3769,7 @@ function formatRuntimeBootstrapSummary(
   return parts.join("; ");
 }
 
-function mergeThinkingContent(current: string, nextChunk: string): string {
-  if (!nextChunk.trim()) {
-    return current;
-  }
 
-  if (!current) {
-    return nextChunk;
-  }
-
-  if (current === nextChunk) {
-    return current;
-  }
-
-  if (nextChunk.startsWith(current)) {
-    return nextChunk;
-  }
-
-  if (current.endsWith(nextChunk)) {
-    return current;
-  }
-
-  const maxOverlap = Math.min(current.length, nextChunk.length);
-  for (let overlap = maxOverlap; overlap > 0; overlap -= 1) {
-    if (current.endsWith(nextChunk.slice(0, overlap))) {
-      return `${current}${nextChunk.slice(overlap)}`;
-    }
-  }
-
-  return `${current}${nextChunk}`;
-}
-
-function extractThinkingDelta(previous: string, next: string): string {
-  if (!previous) {
-    return next;
-  }
-
-  if (next === previous) {
-    return "";
-  }
-
-  if (next.startsWith(previous)) {
-    return next.slice(previous.length);
-  }
-
-  const maxOverlap = Math.min(previous.length, next.length);
-  for (let overlap = maxOverlap; overlap > 0; overlap -= 1) {
-    if (previous.endsWith(next.slice(0, overlap))) {
-      return next.slice(overlap);
-    }
-  }
-
-  return next;
-}
 
 function shouldSkipApprovalDialog(
   permissionEvaluation: Pick<PermissionEvaluation, "action"> | null | undefined,
@@ -3915,18 +3832,3 @@ export const __SESSION_CONTROLLER_TESTING__ = {
   waitForUiPaint
 } as const;
 
-function shouldUseGcliGeminiCompat(baseURL: string | undefined, model: string): boolean {
-  if (!baseURL) {
-    return false;
-  }
-
-  if (!model.trim().toLowerCase().startsWith("gemini")) {
-    return false;
-  }
-
-  try {
-    return new URL(baseURL).hostname.toLowerCase() === "gcli.ggchan.dev";
-  } catch {
-    return false;
-  }
-}

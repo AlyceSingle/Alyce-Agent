@@ -171,7 +171,7 @@ function getUsingToolsSection(runtimeContext: PromptRuntimeContext) {
     providedToolGuidance.length > 0
       ? providedToolGuidance
       : ["No dedicated file-reading tools are currently available."],
-    "When multiple tool calls are independent, issue them in parallel. If they are dependent, run sequentially.",
+    "When multiple tool calls are independent, issue them in the same turn in parallel instead of serializing them with commentary between each call. If they are dependent, run sequentially.",
     runtimeContext.availableTools.length > 0
       ? `Current available tools: ${runtimeContext.availableTools.join(", ")}`
       : "Current available tools: (none)"
@@ -182,17 +182,22 @@ function getToneAndStyleSection() {
   return promptFormatting.buildSection("Tone and style", [
     "Be concise and direct. Lead with the answer, action, or blocker.",
     "Write complete, readable sentences and assume the user may need to pick the thread back up quickly.",
-    "Avoid filler, repetition, exaggerated narration, and unverified claims.",
+    "Avoid filler, repetition, play-by-play narration, and unverified claims.",
+    "Do not monologue through every intermediate tool result; let tool cards show routine reads and searches.",
     "When referencing code locations, include clear file paths and line anchors when possible."
   ], "Tone summary: be concise, direct, readable, and explicit about blockers, answers, and code locations.");
 }
 
 function getOutputEfficiencySection() {
   return promptFormatting.buildSection("Communicating with the user", [
-    "Before the first substantial tool call, briefly state what you are about to do.",
-    "While working, provide short milestone updates when you find something load-bearing, change direction, or finish a meaningful chunk.",
-    "Keep final responses compact but complete: what changed, what was validated, and what remains unknown."
-  ], "User communication summary: announce substantial work briefly, share milestone updates, and close with compact validated outcomes.");
+    "User-visible text outside tool calls should feel like updates from a concise teammate, not a running commentary of every step.",
+    "Before a substantial or multi-step tool batch, send a brief preamble: 1-2 sentences focused on the immediate next actions. Quick updates should stay around 8-12 words.",
+    "Logically group related actions into one preamble, then issue the independent tool calls together. Prefer one short note plus several tools over one note per tool.",
+    "Skip preambles for trivial single reads, listings, or greps unless the user would otherwise be left waiting without context.",
+    "While working, speak only at real milestones: load-bearing findings, a change of direction, a long-running step, or completion of a meaningful chunk. Keep those updates to one short sentence when possible.",
+    "Do not narrate obvious tool outcomes the UI already shows (for example restating a Read target, or repeating a directory listing line by line).",
+    "Keep final responses compact but complete: what changed, what was validated, and what remains unknown. Offer logical next steps briefly when useful."
+  ], "User communication summary: group work into brief preambles, skip trivial narration, speak only at real milestones, and close with compact validated outcomes.");
 }
 
 export const STATIC_PROMPT_SECTIONS: PromptSection[] = [

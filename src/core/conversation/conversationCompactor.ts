@@ -1,7 +1,7 @@
 import OpenAI from "openai";
 import { isTurnInterruptedError, toTurnInterruptedError } from "../abort.js";
 import { isGeneratedContextMessage } from "../api/generatedMessages.js";
-import { getFunctionToolCallNames } from "../api/openaiFunctionTools.js";
+import { extractChatMessageText } from "../api/messageText.js";
 import {
   sendChatCompletion,
   type ChatCompletionReconnectEvent
@@ -389,7 +389,7 @@ function readCompactionStateFromMessages(messages: MessageParam[]): Conversation
       continue;
     }
 
-    const parsed = parseCompactionSummaryMessage(extractMessageText(message));
+    const parsed = parseCompactionSummaryMessage(extractChatMessageText(message, { includeToolCallSummary: true }));
     if (parsed) {
       return parsed;
     }
@@ -438,43 +438,12 @@ function formatConversationWindow(
   return sliced
     .map((message, index) => {
       const role = message.role.toUpperCase();
-      const text = truncate(extractMessageText(message), maxCharsPerMessage);
+      const text = truncate(extractChatMessageText(message, { includeToolCallSummary: true }), maxCharsPerMessage);
       return `[${index + 1}] ${role}: ${text || "(empty)"}`;
     })
     .join("\n\n");
 }
 
-function extractMessageText(message: MessageParam) {
-  if (message.role === "tool") {
-    return typeof message.content === "string" ? message.content : "";
-  }
-
-  const content = (message as { content?: unknown }).content;
-  const textParts: string[] = [];
-
-  if (typeof content === "string") {
-    textParts.push(content);
-  } else if (Array.isArray(content)) {
-    for (const part of content) {
-      if (!part || typeof part !== "object") {
-        continue;
-      }
-
-      const record = part as Record<string, unknown>;
-      const text = record.text;
-      if (typeof text === "string" && text.trim().length > 0) {
-        textParts.push(text);
-      }
-    }
-  }
-
-  if (message.role === "assistant" && message.tool_calls && message.tool_calls.length > 0) {
-    const toolNames = getFunctionToolCallNames(message.tool_calls).join(", ");
-    textParts.push(`Requested tools: ${toolNames}`);
-  }
-
-  return textParts.join("\n").trim();
-}
 
 function truncate(value: string, maxChars: number) {
   if (value.length <= maxChars) {

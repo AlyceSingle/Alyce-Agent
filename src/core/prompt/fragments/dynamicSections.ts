@@ -70,7 +70,7 @@ function getSessionSpecificGuidanceSection(runtimeContext: PromptRuntimeContext)
   }
 
   if (runtimeContext.availableTools.length > 1) {
-    items.push("Plan for parallel tool calls when no dependency exists between them.");
+    items.push("When exploring or gathering context, batch independent reads/searches in one parallel tool turn instead of narrating each call.");
   }
 
   if (items.length === 0) {

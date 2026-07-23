@@ -14,7 +14,6 @@ export function buildNextTurnContextPreview(options: {
   resolvedModel?: ResolvedModelProfile;
   messages: OpenAI.Chat.Completions.ChatCompletionMessageParam[];
   nextUserInput?: string;
-  gcliGeminiCompat?: boolean;
   messageTimestampsEnabled?: boolean;
   currentRequestTimestamp?: string;
   tools: OpenAI.Chat.Completions.ChatCompletionTool[];
@@ -41,7 +40,6 @@ export function buildNextTurnContextPreview(options: {
     toolChoice: "auto",
     tools: options.tools,
     messages: nextMessages,
-    gcliGeminiCompat: options.gcliGeminiCompat,
     messageTimestampsEnabled: options.messageTimestampsEnabled,
     currentRequestTimestamp: options.currentRequestTimestamp,
     requestPatches: options.requestPatches

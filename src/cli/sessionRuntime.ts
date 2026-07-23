@@ -478,7 +478,6 @@ export interface SessionRuntime {
     tools?: OpenAI.Chat.Completions.ChatCompletionTool[];
     model?: string;
     resolvedModel?: ResolvedModelProfile;
-    gcliGeminiCompat?: boolean;
   }) => Promise<ContextBudgetSnapshot>;
   recordUsage: (event: UsageRecordInput) => void;
   formatUsageReport: () => string;
@@ -1693,7 +1692,6 @@ export async function createSessionRuntime(
         currentModel: connection.model,
         resolvedModel,
         messages: previewMessages,
-        gcliGeminiCompat: shouldUseGcliGeminiCompat(resolvedModel.baseURL, resolvedModel.modelId),
         messageTimestampsEnabled: settings.messageTimestampsEnabled,
         currentRequestTimestamp: previewTimestamp,
         tools,
@@ -1750,8 +1748,6 @@ export async function createSessionRuntime(
         tools: options.tools ?? [],
         temperature: 0.2,
         toolChoice: "auto",
-        gcliGeminiCompat: options.gcliGeminiCompat ??
-          shouldUseGcliGeminiCompat(resolvedModel.baseURL, resolvedModel.modelId),
         messageTimestampsEnabled: settings.messageTimestampsEnabled,
         requestPatches: config.requestPatches
       }), {
@@ -1799,10 +1795,6 @@ export async function createSessionRuntime(
           tools: [],
           temperature: 0.2,
           toolChoice: "auto",
-          gcliGeminiCompat: shouldUseGcliGeminiCompat(
-            effectiveResolvedModel.baseURL,
-            effectiveResolvedModel.modelId
-          ),
           messageTimestampsEnabled: settings.messageTimestampsEnabled,
           requestPatches: config.requestPatches
         }), {
@@ -2671,10 +2663,6 @@ export async function createSessionRuntime(
         },
         abortSignal: parentContextOptions.abortSignal,
         messageTimestampsEnabled: settings.messageTimestampsEnabled,
-        gcliGeminiCompat: shouldUseGcliGeminiCompat(
-          resolvedSubagentModel.baseURL,
-          resolvedSubagentModel.modelId
-        ),
         onThinking: (content) => {
           recordProgress("thinking", content);
         },
@@ -3457,22 +3445,6 @@ function createSessionMemoryConfig(
     ...config.memory.sessionMemory,
     enabled: config.memory.sessionMemory.enabled && settings.sessionMemoryEnabled
   };
-}
-
-function shouldUseGcliGeminiCompat(baseURL: string | undefined, model: string): boolean {
-  if (!baseURL) {
-    return false;
-  }
-
-  if (!model.trim().toLowerCase().startsWith("gemini")) {
-    return false;
-  }
-
-  try {
-    return new URL(baseURL).hostname.toLowerCase() === "gcli.ggchan.dev";
-  } catch {
-    return false;
-  }
 }
 
 function normalizeConnectionPatch(

@@ -52,3 +52,14 @@ export function getFunctionToolCallNames(
 ): string[] {
   return getFunctionToolCalls(toolCalls).map((toolCall) => toolCall.function.name);
 }
+
+export function hasAssistantToolRequest(message: {
+  tool_calls?: unknown;
+  function_call?: unknown;
+}): boolean {
+  return (
+    (Array.isArray(message.tool_calls) && message.tool_calls.length > 0) ||
+    message.function_call !== undefined
+  );
+}
+

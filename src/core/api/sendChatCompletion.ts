@@ -1,5 +1,6 @@
 import OpenAI from "openai";
 import { extractAssistantTextContent } from "./assistantContent.js";
+import { hasAssistantToolRequest } from "./openaiFunctionTools.js";
 import {
   buildChatCompletionRequest,
   type ChatCompletionRequestOptions
@@ -193,15 +194,6 @@ function ensureResponseHasUsableAssistantOutput(response: OpenAI.Chat.Completion
   );
 }
 
-function hasAssistantToolRequest(message: {
-  tool_calls?: unknown;
-  function_call?: unknown;
-}): boolean {
-  return (
-    (Array.isArray(message.tool_calls) && message.tool_calls.length > 0) ||
-    message.function_call !== undefined
-  );
-}
 
 function isAbortLikeError(error: unknown, signal: AbortSignal | undefined): boolean {
   if (signal?.aborted) {

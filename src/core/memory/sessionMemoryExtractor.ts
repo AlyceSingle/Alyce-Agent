@@ -1,5 +1,6 @@
 import OpenAI from "openai";
 import { extractAssistantTextContent } from "../api/assistantContent.js";
+import { extractChatMessageText } from "../api/messageText.js";
 import { getFunctionToolCallNames } from "../api/openaiFunctionTools.js";
 import { sendChatCompletion } from "../api/sendChatCompletion.js";
 import type { ChatCompletionTransport } from "../api/modelAdapters.js";
@@ -325,7 +326,7 @@ function formatConversationSegment(
     .filter((message) => message.role !== "system")
     .map((message, index) => {
       const role = message.role.toUpperCase();
-      const textParts = [truncate(extractMessageText(message), maxCharsPerMessage)];
+      const textParts = [truncate(extractChatMessageText(message), maxCharsPerMessage)];
       if (message.role === "assistant" && message.tool_calls && message.tool_calls.length > 0) {
         const toolNames = getFunctionToolCallNames(message.tool_calls).join(", ");
         textParts.push(`Requested tools: ${toolNames}`);
@@ -336,36 +337,6 @@ function formatConversationSegment(
     .join("\n\n");
 }
 
-function extractMessageText(message: MessageParam) {
-  if (message.role === "tool") {
-    return typeof message.content === "string" ? message.content : "";
-  }
-
-  const content = (message as { content?: unknown }).content;
-  if (typeof content === "string") {
-    return content;
-  }
-
-  if (!Array.isArray(content)) {
-    return "";
-  }
-
-  return content
-    .map((part) => {
-      if (!part || typeof part !== "object") {
-        return "";
-      }
-
-      const record = part as Record<string, unknown>;
-      if (typeof record.text === "string") {
-        return record.text;
-      }
-
-      return typeof record.content === "string" ? record.content : "";
-    })
-    .filter(Boolean)
-    .join("\n");
-}
 
 function normalizeSessionMemoryMarkdown(value: string | undefined) {
   const normalized = value?.replace(/\r\n/g, "\n").trim();
