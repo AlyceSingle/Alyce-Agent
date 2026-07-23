@@ -200,6 +200,29 @@ function getCursorLineLocation(lines: WrappedInputLine[], cursor: number) {
   };
 }
 
+/** JS string offset (UTF-16) → code-point index used by wrap/cursor layout. */
+export function utf16OffsetToCodePointIndex(value: string, utf16Offset: number): number {
+  if (utf16Offset <= 0) {
+    return 0;
+  }
+  if (utf16Offset >= value.length) {
+    return Array.from(value).length;
+  }
+  return Array.from(value.slice(0, utf16Offset)).length;
+}
+
+/** code-point index → JS string offset (UTF-16). */
+export function codePointIndexToUtf16Offset(value: string, codePointIndex: number): number {
+  if (codePointIndex <= 0) {
+    return 0;
+  }
+  const characters = Array.from(value);
+  if (codePointIndex >= characters.length) {
+    return value.length;
+  }
+  return characters.slice(0, codePointIndex).join("").length;
+}
+
 export function buildInputEditorViewport(
   value: string,
   cursor: number,
@@ -214,7 +237,10 @@ export function buildInputEditorViewport(
   const safeWidth = Math.max(8, maxWidth);
   const safeMaxLines = Math.max(1, maxLines);
   const characters = toCharacters(value);
-  const safeCursor = Math.min(Math.max(0, cursor), characters.length);
+  const safeCursor = Math.min(
+    Math.max(0, utf16OffsetToCodePointIndex(value, cursor)),
+    characters.length
+  );
   const wrappedLines = wrapInputLines(value, safeWidth);
   const cursorLocation = getCursorLineLocation(wrappedLines, safeCursor);
   const startLine = Math.max(0, cursorLocation.lineIndex - safeMaxLines + 1);
@@ -264,13 +290,18 @@ export function moveCursorVertically(
   delta: -1 | 1
 ): number {
   const wrappedLines = wrapInputLines(value, width);
-  const cursorLocation = getCursorLineLocation(wrappedLines, cursor);
+  const cursorLocation = getCursorLineLocation(
+    wrappedLines,
+    utf16OffsetToCodePointIndex(value, cursor)
+  );
   const targetLineIndex = Math.max(
     0,
     Math.min(wrappedLines.length - 1, cursorLocation.lineIndex + delta)
   );
   const targetLine = wrappedLines[targetLineIndex]!;
-  return targetLine.startIndex + Math.min(cursorLocation.column, targetLine.chars.length);
+  const codePointOffset =
+    targetLine.startIndex + Math.min(cursorLocation.column, targetLine.chars.length);
+  return codePointIndexToUtf16Offset(value, codePointOffset);
 }
 
 export function wrapText(value: string, width: number): string[] {

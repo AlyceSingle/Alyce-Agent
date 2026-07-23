@@ -10,6 +10,7 @@ import type { TerminalKey } from "../runtime/input.js";
 import { logLayoutTrace } from "../runtime/utils/layoutTrace.js";
 import { t } from "../../i18n/index.js";
 import { terminalUiTheme } from "../theme/theme.js";
+import { useSelection } from "../runtime/ink-runtime/hooks/use-selection.js";
 import TextInput from "./TextInput.js";
 
 const PROMPT_INPUT_VIEWPORT_OFFSET = 8;
@@ -120,6 +121,7 @@ export function PromptInput(props: {
   onSubmit: (value: string) => Promise<void> | void;
 }) {
   const terminalSize = useTerminalSize();
+  const selection = useSelection();
   // 输入值先落本地 state，避免每键都等全局 store 回传才刷新光标/文本。
   const [localValue, setLocalValue] = useState(props.value);
   const [cursorOffset, setCursorOffset] = useState(props.value.length);
@@ -169,6 +171,11 @@ export function PromptInput(props: {
     setLocalValue(props.value);
     setCursorOffset(props.value.length);
   }, [props.value]);
+
+  // 值缩短后夹紧光标，避免 offset 悬空导致光标块不绘制。
+  useEffect(() => {
+    setCursorOffset((current) => (current <= localValue.length ? current : localValue.length));
+  }, [localValue]);
 
   useEffect(() => {
     return () => {
@@ -232,12 +239,21 @@ export function PromptInput(props: {
   }, [inputColumns, localValue.length, props.disabled, terminalSize.columns, terminalSize.rows, viewportWidth]);
 
   const handleChange = useCallback((value: string) => {
+    // 粘贴/编辑时清掉 transcript selection，避免高亮盖住输入光标，也避免 Ctrl+C 被“复制选区”劫持。
+    if (selection.hasSelection()) {
+      selection.clearSelection();
+    }
+    const previousLocalValue = localValue;
     setLocalValue(value);
     pendingStoreSyncRef.current = value;
-    // 空/非空切换立刻同步，保证 Esc/Ctrl+C 读到的 store 快照正确；其它编辑合并到下一 macrotask。
+    // 空/非空切换、粘贴/多行立刻同步，保证 Ctrl+C 读 store 与本地一致；单字编辑合并到下一 macrotask。
     const emptinessChanged =
       (lastExternalValueRef.current.length === 0) !== (value.length === 0);
-    if (emptinessChanged) {
+    const looksLikePaste =
+      Math.abs(value.length - previousLocalValue.length) > 1 ||
+      value.includes("\n") ||
+      previousLocalValue.includes("\n") !== value.includes("\n");
+    if (emptinessChanged || looksLikePaste) {
       if (storeSyncTimerRef.current !== null) {
         clearTimeout(storeSyncTimerRef.current);
         storeSyncTimerRef.current = null;
@@ -248,7 +264,7 @@ export function PromptInput(props: {
     if (storeSyncTimerRef.current === null) {
       storeSyncTimerRef.current = setTimeout(flushStoreSync, 0);
     }
-  }, [flushStoreSync]);
+  }, [flushStoreSync, localValue, selection]);
 
   const handleCursorOffsetChange = useCallback((offset: number) => {
     setCursorOffset(offset);

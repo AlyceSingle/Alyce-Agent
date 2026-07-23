@@ -19,10 +19,24 @@ type UseTextInputProps = {
   continuationPrefix?: string;
 };
 
+/** 粘贴/多行输入统一换行，去掉 \\0，避免 \\r 让光标行计算失效。 */
+export function normalizeEditableText(text: string): string {
+  return text.replace(/\r\n?/g, "\n").replace(/\u0000/g, "");
+}
+
+export function clampCursorOffset(value: string, cursor: number): number {
+  if (!Number.isFinite(cursor) || cursor < 0) {
+    return 0;
+  }
+  return Math.min(Math.max(0, Math.trunc(cursor)), value.length);
+}
+
 function insertText(value: string, cursor: number, text: string) {
+  const safeCursor = clampCursorOffset(value, cursor);
+  const normalized = normalizeEditableText(text);
   return {
-    value: value.slice(0, cursor) + text + value.slice(cursor),
-    cursor: cursor + text.length
+    value: value.slice(0, safeCursor) + normalized + value.slice(safeCursor),
+    cursor: safeCursor + normalized.length
   };
 }
 
@@ -116,8 +130,9 @@ export function useTextInput(props: UseTextInputProps): BaseInputState {
   const onInputImpl = (input: string, key: TerminalKey) => {
     const current = propsRef.current;
     const commit = (nextValue: string, nextCursor: number) => {
+      const safeCursor = clampCursorOffset(nextValue, nextCursor);
       current.onChange(nextValue);
-      current.onChangeCursorOffset(nextCursor);
+      current.onChangeCursorOffset(safeCursor);
     };
 
     if (current.onInputKey?.(input, key)) {
