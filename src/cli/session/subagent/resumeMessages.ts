@@ -1,6 +1,6 @@
 import OpenAI from "openai";
-import { extractAssistantTextContent } from "../core/api/assistantContent.js";
-import { cloneJson } from "../core/json/clone.js";
+import { extractAssistantTextContent } from "../../../core/api/assistantContent.js";
+import { cloneJson } from "../../../core/json/clone.js";
 
 export type ResumeMessage = OpenAI.Chat.Completions.ChatCompletionMessageParam;
 type AssistantToolCall = OpenAI.Chat.Completions.ChatCompletionMessageToolCall;

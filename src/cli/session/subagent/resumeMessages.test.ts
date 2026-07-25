@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import OpenAI from "openai";
-import { prepareResumableSubagentMessages } from "./subagentResumeMessages.js";
+import { prepareResumableSubagentMessages } from "./resumeMessages.js";
 
 type MessageParam = OpenAI.Chat.Completions.ChatCompletionMessageParam;
 

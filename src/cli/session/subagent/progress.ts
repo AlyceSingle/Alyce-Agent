@@ -1,4 +1,4 @@
-import type { SubagentProgressEvent } from "../tools/types.js";
+import type { SubagentProgressEvent } from "../../../tools/types.js";
 
 export const MAX_SUBAGENT_PROGRESS_EVENTS = 100;
 export const MAX_SUBAGENT_PROGRESS_MESSAGE_CHARS = 4_000;

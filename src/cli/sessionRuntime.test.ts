@@ -6,8 +6,8 @@ import { buildSessionSettingsState, type SessionSettings } from "../config/runti
 import { AuthStore, getAuthStorePath } from "../core/auth/authStore.js";
 import { isFileBackupSnapshotEnabled, createSessionRuntime } from "./sessionRuntime.js";
 import { resolveConnectProvider } from "./connectCommand.js";
-import { resolveSubagentAllowedRoots } from "./subagentAllowedRoots.js";
-import { normalizePersistedSubagentProgress } from "./subagentProgress.js";
+import { resolveSubagentAllowedRoots } from "./session/subagent/allowedRoots.js";
+import { normalizePersistedSubagentProgress } from "./session/subagent/progress.js";
 
 interface TestSettings {
   additionalDirectories: string[];
