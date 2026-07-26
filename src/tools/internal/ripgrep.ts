@@ -23,7 +23,13 @@ export function resolveRipgrepMaxOutputBytes(env: NodeJS.ProcessEnv = process.en
     return DEFAULT_RIPGREP_MAX_OUTPUT_BYTES;
   }
 
-  const parsed = Number.parseInt(rawValue, 10);
+  // 只接受纯十进制整数。parseInt("20MB") 会得到 20，把上限静默压到 20 字节。
+  const trimmed = rawValue.trim();
+  if (!/^\d+$/.test(trimmed)) {
+    return DEFAULT_RIPGREP_MAX_OUTPUT_BYTES;
+  }
+
+  const parsed = Number.parseInt(trimmed, 10);
   if (!Number.isFinite(parsed) || parsed < 1) {
     return DEFAULT_RIPGREP_MAX_OUTPUT_BYTES;
   }

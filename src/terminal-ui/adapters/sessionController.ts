@@ -357,6 +357,8 @@ export function createSessionController(
 
   const setDialogClosed = () => {
     store.updateState((state) => closeDialog(state));
+    // 弹窗期间被挡住的排队输入在这里继续。
+    flushQueuedInput();
   };
 
   const {
@@ -449,6 +451,8 @@ export function createSessionController(
     const resumed = await runtime.resumeSessionHistory(sessionId);
     activeTurn = null;
     resetSessionPermissions();
+    // 排队输入是针对上一个会话说的，不能带进新会话执行。
+    cancelQueuedInputs();
 
     const allRestoredMessages = filterUiMessages(resumed.uiMessages as TerminalUiMessage[]);
     const historyPagingEnabled = runtime.getSettings().historyPagingEnabled;
@@ -630,6 +634,7 @@ export function createSessionController(
     formatSessionList,
     openRewindSelector,
     clearRewindPoints,
+    cancelQueuedInputs: () => cancelQueuedInputs(),
     resetSessionHistoryPaging,
     resetTaskTracking,
     syncBackgroundTasks,
@@ -747,7 +752,15 @@ export function createSessionController(
   // 轮次结束后取出队首一条发出。只取一条：它会重新进入 isLoading，
   // 其余的由下一轮结束时继续 flush，避免递归加深与错序。
   const flushQueuedInput = () => {
-    const next = store.getState().queuedInputs[0];
+    const state = store.getState();
+    // 有对话框打开时绝不发出：输入框此时是禁用的，而 flush 会绕过那道门，
+    // 在弹窗背后启动一整个 agent turn，且 Esc/Ctrl+C 都被弹窗接管、无法中断。
+    // 队列留在原地，由 setDialogClosed 在弹窗关闭后接着发。
+    if (state.isLoading || state.dialogQueue.length > 0) {
+      return;
+    }
+
+    const next = state.queuedInputs[0];
     if (next === undefined) {
       return;
     }

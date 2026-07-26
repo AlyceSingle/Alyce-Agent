@@ -10,6 +10,7 @@ async function runTests() {
   testMaxOutputBytesDefaultsWhenUnset();
   testMaxOutputBytesParsesValidValue();
   testMaxOutputBytesRejectsInvalidValues();
+  testMaxOutputBytesRejectsSuffixedValues();
   await testRunRipgrepTruncatesOversizedOutput();
   await testRunRipgrepDoesNotFlagSmallOutput();
   console.log("ripgrep tests passed");
@@ -40,6 +41,19 @@ function testMaxOutputBytesRejectsInvalidValues() {
     resolveRipgrepMaxOutputBytes({ ALYCE_RIPGREP_MAX_OUTPUT_BYTES: "-5" }),
     DEFAULT_MAX_OUTPUT_BYTES
   );
+}
+
+// parseInt("20MB") 会得到 20，把上限静默压到 20 字节，必须回落默认值。
+function testMaxOutputBytesRejectsSuffixedValues() {
+  for (const raw of ["20MB", "20 mb", "1e6", "0x10", "12.5", "20_000"]) {
+    assert.equal(
+      resolveRipgrepMaxOutputBytes({ ALYCE_RIPGREP_MAX_OUTPUT_BYTES: raw }),
+      DEFAULT_MAX_OUTPUT_BYTES,
+      `expected ${raw} to fall back to the default`
+    );
+  }
+
+  assert.equal(resolveRipgrepMaxOutputBytes({ ALYCE_RIPGREP_MAX_OUTPUT_BYTES: " 4096 " }), 4096);
 }
 
 async function testRunRipgrepTruncatesOversizedOutput() {

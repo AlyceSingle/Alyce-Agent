@@ -326,6 +326,12 @@ export function AgentScreen(props: { controller: SessionController }) {
         return;
       }
 
+      // 与 Ctrl+C 保持一致：队列还活着时先取消，不要静默丢掉后退出。
+      if (store.getState().queuedInputs.length > 0) {
+        props.controller.interrupt();
+        return;
+      }
+
       props.controller.requestExit();
     },
     "app:openSettings": () => {

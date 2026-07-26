@@ -64,6 +64,7 @@ export interface CommandDispatcherDeps extends DirectoryAccessHelpers, Workspace
   ) => string;
   openRewindSelector: () => void;
   clearRewindPoints: () => void;
+  cancelQueuedInputs: () => void;
   resetSessionHistoryPaging: () => void;
   resetTaskTracking: () => void;
   syncBackgroundTasks: (options?: { notify?: boolean }) => void;
@@ -87,6 +88,7 @@ export function createCommandDispatcher(deps: CommandDispatcherDeps) {
     formatSessionList,
     openRewindSelector,
     clearRewindPoints,
+    cancelQueuedInputs,
     resetSessionHistoryPaging,
     resetTaskTracking,
     syncBackgroundTasks,
@@ -278,6 +280,8 @@ export function createCommandDispatcher(deps: CommandDispatcherDeps) {
 
     if (parsedCommand.type === "clear") {
       clearRewindPoints();
+      // /clear 清空会话，排队输入属于旧上下文，一并取消。
+      cancelQueuedInputs();
       resetSessionHistoryPaging();
       await runtime.clearConversation();
       resetTaskTracking();
