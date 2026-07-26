@@ -25,6 +25,7 @@ async function runTests() {
   await testInvalidMcpConfigFails();
   await testMissingMcpConfigIsReportedAsUnconfigured();
   await testRipgrepUnavailableFails();
+  await testRipgrepFallsBackToBundledWithWarning();
   await testSnapshotDiagnosticsWarnsWhenGitTreeUnavailable();
   await testSnapshotDiagnosticsFailsWhenGitTreeAndOverlayUnavailable();
   await testProviderPluginDiagnosticsWarn();
@@ -240,12 +241,47 @@ async function testRipgrepUnavailableFails() {
       }
 
       return fakeCommandRunner(command);
-    }
+    },
+    resolveBundledRipgrep: () => null
   });
 
   const check = findCheck(report.checks, "tool.rg");
   assert.equal(check.status, "fail");
   assert.ok(check.suggestion?.includes("ripgrep"));
+}
+
+async function testRipgrepFallsBackToBundledWithWarning() {
+  const workspaceRoot = await createWorkspace({ includeDist: true });
+  const input = createDoctorInput(workspaceRoot, {
+    connection: createConnectionState(workspaceRoot, { apiKey: "test-key" })
+  });
+
+  const report = await runDoctorDiagnostics(input, {
+    env: { OPENAI_API_KEY: "test-key" },
+    nodeVersion: "20.10.0",
+    stdinIsTTY: true,
+    stdoutIsTTY: true,
+    runCommand: async (command) => {
+      if (command === "rg") {
+        return {
+          ok: false,
+          stdout: "",
+          stderr: "",
+          exitCode: null,
+          timedOut: false,
+          error: "ENOENT"
+        };
+      }
+
+      return fakeCommandRunner(command);
+    },
+    resolveBundledRipgrep: () => "/fake/node_modules/ripgrep/lib/rg.mjs"
+  });
+
+  const check = findCheck(report.checks, "tool.rg");
+  assert.equal(check.status, "warn");
+  assert.match(check.summary, /bundled/i);
+  assert.ok(check.details?.some((detail) => detail.includes("rg.mjs")));
 }
 
 async function testOldNodeVersionFails() {

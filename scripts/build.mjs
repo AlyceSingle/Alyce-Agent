@@ -14,6 +14,9 @@ const minify = process.argv.includes("--minify") || process.env.ALYCE_BUILD_MINI
 const externalPackages = [
   "@lydell/node-pty",
   "@lydell/node-pty/*",
+  // Resolved from node_modules at runtime so the bundled WASI rg fallback
+  // keeps a real on-disk path; bundling it would break that resolution.
+  "ripgrep",
   "typescript"
 ];
 

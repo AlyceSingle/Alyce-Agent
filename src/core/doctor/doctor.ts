@@ -14,6 +14,7 @@ import type { ConnectorPluginDiagnostic } from "../providers/pluginConnectors.js
 import { resolveModelProfile } from "../providers/resolveModel.js";
 import type { ResolvedModelProfile } from "../providers/types.js";
 import { runNativeCommandWithTimeout } from "../../tools/internal/nativeCommandRunner.js";
+import { resolveBundledRgScript } from "../../tools/internal/resolveRipgrep.js";
 
 export type DoctorCheckStatus = "ok" | "warn" | "fail" | "skipped";
 
@@ -83,6 +84,7 @@ export interface DoctorOptions {
   stdoutIsTTY?: boolean;
   now?: Date;
   runCommand?: (command: string, args: string[]) => Promise<DoctorCommandResult>;
+  resolveBundledRipgrep?: () => string | null;
 }
 
 const REQUIRED_NODE_VERSION = "20.10.0";
@@ -108,7 +110,7 @@ export async function runDoctorDiagnostics(
   checks.push(await checkMcpConfig(input.workspaceRoot, input.paths, input.projectTrust));
   checks.push(await checkSkills(input.paths, input.projectTrust));
   checks.push(checkProviderPlugins(input.providerPluginDiagnostics ?? []));
-  checks.push(await checkExecutable("rg", ["--version"], "ripgrep", "Install ripgrep and ensure rg is on PATH.", runCommand, "fail"));
+  checks.push(await checkRipgrep(runCommand, options.resolveBundledRipgrep ?? resolveBundledRgScript));
   checks.push(await checkExecutable("git", ["--version"], "git", "Install Git and ensure git is on PATH.", runCommand, "warn"));
   checks.push(await checkAlyceDirectoryWritable(input.paths.workspaceRuntimeDirectory));
   checks.push(checkSnapshotStore(input.snapshotDiagnostics));
@@ -675,6 +677,48 @@ async function checkSkills(
     status: "ok",
     summary: `Discovered ${discovery.skills.length} skill(s).`,
     details
+  };
+}
+
+async function checkRipgrep(
+  runCommand: (command: string, args: string[]) => Promise<DoctorCommandResult>,
+  resolveBundledScript: () => string | null
+): Promise<DoctorCheck> {
+  const result = await runCommand("rg", ["--version"]);
+  if (result.ok) {
+    const firstLine = result.stdout.split(/\r?\n/).find((line) => line.trim())?.trim();
+    return {
+      id: "tool.rg",
+      title: "ripgrep",
+      status: "ok",
+      summary: firstLine ?? "rg is available."
+    };
+  }
+
+  const bundledScript = resolveBundledScript();
+  if (bundledScript) {
+    return {
+      id: "tool.rg",
+      title: "ripgrep",
+      status: "warn",
+      summary: result.timedOut
+        ? "rg timed out; searches will use the bundled WASI ripgrep (slower)."
+        : "System rg was not found; searches will use the bundled WASI ripgrep (slower).",
+      details: [bundledScript],
+      suggestion: "Install ripgrep and ensure rg is on PATH for the best search performance."
+    };
+  }
+
+  return {
+    id: "tool.rg",
+    title: "ripgrep",
+    status: "fail",
+    summary: result.timedOut ? "rg timed out." : "rg is not available.",
+    details: [
+      result.error,
+      result.stderr.trim()
+    ].filter((detail): detail is string => Boolean(detail)),
+    suggestion: "Install ripgrep and ensure rg is on PATH."
   };
 }
 
