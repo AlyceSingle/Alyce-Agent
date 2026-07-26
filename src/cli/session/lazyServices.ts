@@ -6,6 +6,7 @@ import type {
 import type { ChatCompletionAdapter } from "../../core/api/modelAdapters.js";
 import type { ResolvedModelProfile } from "../../core/providers/types.js";
 import { measureStartupTiming } from "../../core/startup/startupTiming.js";
+import { PtyManager } from "../../core/pty/ptyManager.js";
 
 interface LazyProjectMcpRuntimeOptions {
   homeDirectory?: string;
@@ -154,50 +155,38 @@ export function createLazyBackgroundProcessManager(options: {
   };
 }
 
+/**
+ * PtyManager 的构造是同步且廉价的（构造函数只做两次赋值），而真正重的
+ * `@lydell/node-pty` 是在 PtyManager 内部首次 spawn 时才 require 的。所以这里
+ * 不需要异步 import：只把「实例化」推迟到首次使用即可，值钱的那部分惰性仍然保留。
+ *
+ * 早先的实现用 `await import()` 配合 `loadedManager?.x ?? throw`，但那个 loader
+ * 从未被调用，`loadedManager` 因此永远是 undefined —— 五个 PTY 工具全部不可用。
+ */
 export function createLazyPtyManager(options: {
   workspaceRoot: string;
 }): PtyManagerLike {
-  let managerPromise: Promise<PtyManagerLike> | undefined;
   let loadedManager: PtyManagerLike | undefined;
 
-  const getManager = async () => {
-    if (!managerPromise) {
-      managerPromise = measureStartupTiming("sessionRuntime:loadPtyManager", async () => {
-        const { PtyManager } = await import("../../core/pty/ptyManager.js");
-        loadedManager = new PtyManager(options);
-        return loadedManager;
-      });
-    }
-
-    return managerPromise;
+  const getManager = (): PtyManagerLike => {
+    loadedManager ??= new PtyManager(options);
+    return loadedManager;
   };
 
   return {
     createSession: (createOptions: Parameters<PtyManagerLike["createSession"]>[0] = {}) =>
-      loadedManager?.createSession(createOptions) ?? (() => {
-        throw new Error("PTY manager has not been loaded yet.");
-      })(),
-    listSessions: () => loadedManager?.listSessions() ?? [],
-    getSession: (id: string) => loadedManager?.getSession(id),
+      getManager().createSession(createOptions),
+    listSessions: () => getManager().listSessions(),
+    getSession: (id: string) => getManager().getSession(id),
     readSession: (
       id: string,
       readOptions: Parameters<PtyManagerLike["readSession"]>[1] = {}
-    ) =>
-      loadedManager?.readSession(id, readOptions) ?? (() => {
-        throw new Error("PTY manager has not been loaded yet.");
-      })(),
-    writeSession: (id: string, data: string) =>
-      loadedManager?.writeSession(id, data) ?? (() => {
-        throw new Error("PTY manager has not been loaded yet.");
-      })(),
+    ) => getManager().readSession(id, readOptions),
+    writeSession: (id: string, data: string) => getManager().writeSession(id, data),
     resizeSession: (id: string, cols: number, rows: number) =>
-      loadedManager?.resizeSession(id, cols, rows) ?? (() => {
-        throw new Error("PTY manager has not been loaded yet.");
-      })(),
-    closeSession: (id: string) =>
-      loadedManager?.closeSession(id) ?? (() => {
-        throw new Error("PTY manager has not been loaded yet.");
-      })(),
+      getManager().resizeSession(id, cols, rows),
+    closeSession: (id: string) => getManager().closeSession(id),
+    // 关闭全部时不要顺手实例化：从没用过 PTY 的会话退出时应当是空操作。
     closeAll: () => loadedManager?.closeAll() ?? []
   };
 }
