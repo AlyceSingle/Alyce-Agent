@@ -17,8 +17,6 @@ function getAvailableSkillsSection(runtimeContext: PromptRuntimeContext) {
   }
 
   const lines = [
-    "Skills summary: the following Alyce skills are available for specialized local workflows in this session.",
-    "",
     "# Available skills",
     "These are active Alyce skills discovered from bundled, project, and user skill roots.",
     "Mention $<skill-name> in a user prompt or use SkillTool to load one before following specialized local workflows.",
@@ -47,8 +45,6 @@ function getMemorySection(runtimeContext: PromptRuntimeContext) {
   }
 
   const lines: string[] = [
-    "Memory summary: treat saved notes as durable hints and confirm them against current files and tool outputs.",
-    "",
     "# Memory",
     "Use memory as durable hints, but confirm against current files and tool outputs."
   ];
@@ -78,7 +74,7 @@ function getCurrentTimeSection(runtimeContext: PromptRuntimeContext) {
     `Local time zone: ${runtimeContext.timeZone}`,
     "Resolve words like today, yesterday, tomorrow, now, latest, currently, and recently against this timestamp.",
     "If time wording is ambiguous or the user may be mistaken, state the exact date explicitly."
-  ], "Time summary: use this turn's local timestamp as the source of truth for relative-date reasoning.");
+  ]);
 }
 
 function getRuntimeEnvironmentSection(runtimeContext: PromptRuntimeContext) {
@@ -91,7 +87,34 @@ function getRuntimeEnvironmentSection(runtimeContext: PromptRuntimeContext) {
     "Path notation: absolute paths are preferred; ~ and ~/... resolve to the user's home directory.",
     "Path scope: local filesystem paths are available to tools; read/search and file-modifying tools may request user approval for external directories on demand.",
     `Model: ${runtimeContext.model}`
-  ], "Environment summary: the following runtime details define the local date, paths, platform, and model for this turn.");
+  ]);
+}
+
+function getGitStatusSection(runtimeContext: PromptRuntimeContext) {
+  const gitStatus = runtimeContext.gitStatus;
+  if (!gitStatus) {
+    return null;
+  }
+
+  const statusLines = gitStatus.statusShort
+    ? [
+        gitStatus.statusShort,
+        ...(gitStatus.truncatedStatusLines > 0
+          ? [`... ${gitStatus.truncatedStatusLines} more changed file(s) omitted.`]
+          : [])
+      ]
+    : ["(working tree clean)"];
+
+  return promptFormatting.buildSection("Git repository", [
+    "This workspace is a git repository. Snapshot taken at session start; it does not auto-update, so run git status when you need the current state.",
+    `Current branch: ${gitStatus.branch}`,
+    "",
+    "Status:",
+    ...statusLines,
+    "",
+    "Recent commits:",
+    gitStatus.recentCommits || "(no commits)"
+  ]);
 }
 
 function getLanguageSection(options: PromptBuildOptions) {
@@ -100,8 +123,6 @@ function getLanguageSection(options: PromptBuildOptions) {
   }
 
   return [
-    `Language summary: all user-facing communication should stay in ${options.languagePreference} while code and identifiers remain unchanged.`,
-    "",
     "# Language",
     `Always respond in ${options.languagePreference}. Use ${options.languagePreference} for explanations, comments, and user-facing communication. Keep code and identifiers unchanged.`
   ].join("\n");
@@ -109,8 +130,6 @@ function getLanguageSection(options: PromptBuildOptions) {
 
 function getToolResultSummaryReminderSection() {
   return [
-    "Tool result summary: carry forward important tool facts in your own words instead of relying on raw output alone.",
-    "",
     "# Tool result handling",
     "When tool outputs contain important facts for later steps, summarize and carry them forward in your own words."
   ].join("\n");
@@ -123,6 +142,7 @@ export const DYNAMIC_PROMPT_SECTIONS: PromptSection[] = [
   ),
   turnPromptSection("memory", (runtimeContext) => getMemorySection(runtimeContext)),
   turnPromptSection("environment", (runtimeContext) => getRuntimeEnvironmentSection(runtimeContext)),
+  sessionPromptSection("git_status", (runtimeContext) => getGitStatusSection(runtimeContext)),
   sessionPromptSection("language", (_runtimeContext, options) => getLanguageSection(options)),
   sessionPromptSection("summarize_tool_results", () => getToolResultSummaryReminderSection())
 ];

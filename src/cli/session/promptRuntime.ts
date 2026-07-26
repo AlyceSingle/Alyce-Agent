@@ -29,6 +29,10 @@ import {
 import type { AgentQuerySource } from "../../core/agent/querySource.js";
 import type { UsageRecordInput } from "../../core/usage/types.js";
 import type { SessionId } from "../../core/session-history/types.js";
+import {
+  collectGitStatusContext,
+  type GitStatusPromptContext
+} from "../../core/startup/gitStatusContext.js";
 import { formatSystemDateTime, getSystemTimeZone } from "../../core/time/systemTime.js";
 import type {
   McpToolRuntime
@@ -245,10 +249,20 @@ export function createPromptRuntime(deps: PromptRuntimeDeps): PromptRuntime {
     openedPaths: getRecentOpenedSkillPaths()
   });
 
+  // git 快照按会话缓存：只在首次构建 prompt 时采集一次，保持 system prompt 稳定（利于前缀缓存）。
+  let gitStatusSnapshotPromise: Promise<GitStatusPromptContext | undefined> | undefined;
+  const getGitStatusSnapshot = () => {
+    gitStatusSnapshotPromise ??= collectGitStatusContext(config.paths.workspaceRoot)
+      .catch(() => undefined);
+    return gitStatusSnapshotPromise;
+  };
+
   const getPromptRuntimeContext = async (options: PromptRuntimeContextOptions = {}) => {
     const now = new Date();
     const workspaceRoot = options.workspaceRoot ?? config.paths.workspaceRoot;
+    const gitStatus = await getGitStatusSnapshot();
     return {
+      ...(gitStatus ? { gitStatus } : {}),
       model: options.model ?? getConnection().model,
       workspaceRoot,
       allowedRoots: options.allowedRoots ?? resolveAllowedRoots(

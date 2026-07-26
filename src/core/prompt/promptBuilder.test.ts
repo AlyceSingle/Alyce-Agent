@@ -6,20 +6,49 @@ import type { SkillPromptContext } from "../../skills/service.js";
 
 function runTests() {
   void Promise.all([
-    testDefaultSystemPromptStartsWithSummaryLine(),
+    testDefaultSystemPromptStartsWithIdentitySection(),
+    testDefaultSystemPromptHasNoSectionSummaryPreambles(),
     testToolListUpdatesAcrossBuilds(),
     testDefaultSystemPromptShowsAvailableSkills(),
-    testDefaultSystemPromptShowsOptionalSectionSummaries(),
+    testDefaultSystemPromptShowsOptionalSections(),
     testDefaultSystemPromptGuidesLongRunningServers(),
     testDefaultSystemPromptGuidesInteractivePtyUse(),
-    testEffectiveSystemPromptSummarizesAdditionalInstructions(),
-    testDefaultSystemPromptUsesEnglishAuthoredText()
+    testEffectiveSystemPromptAppendsAdditionalInstructions(),
+    testDefaultSystemPromptUsesEnglishAuthoredText(),
+    testGitStatusSectionRendersWhenSnapshotPresent()
   ]).then(() => {
     console.log("promptBuilder tests passed");
   }).catch((error) => {
     console.error(error);
     process.exitCode = 1;
   });
+}
+
+async function testGitStatusSectionRendersWhenSnapshotPresent() {
+  const withGit = await buildDefaultSystemPrompt(
+    {
+      ...createRuntimeContext(["Read"]),
+      gitStatus: {
+        branch: "feature/login",
+        statusShort: " M src/app.ts",
+        recentCommits: "abc1234 Fix login flow",
+        truncatedStatusLines: 0
+      }
+    },
+    {},
+    new PromptSectionResolver()
+  );
+  assert.match(withGit, /^# Git repository$/m);
+  assert.match(withGit, /Current branch: feature\/login/);
+  assert.match(withGit, /M src\/app\.ts/);
+  assert.match(withGit, /abc1234 Fix login flow/);
+
+  const withoutGit = await buildDefaultSystemPrompt(
+    createRuntimeContext(["Read"]),
+    {},
+    new PromptSectionResolver()
+  );
+  assert.doesNotMatch(withoutGit, /^# Git repository$/m);
 }
 
 function createRuntimeContext(
@@ -43,7 +72,7 @@ function createRuntimeContext(
   };
 }
 
-async function testDefaultSystemPromptStartsWithSummaryLine() {
+async function testDefaultSystemPromptStartsWithIdentitySection() {
   const prompt = await buildDefaultSystemPrompt(
     createRuntimeContext(["Read"]),
     {},
@@ -51,10 +80,22 @@ async function testDefaultSystemPromptStartsWithSummaryLine() {
   );
 
   const firstNonEmptyLine = prompt.split(/\r?\n/).find((line) => line.trim().length > 0);
-  assert.equal(firstNonEmptyLine, 'Identity summary: you are "Alyce", the interactive terminal assistant responsible for helping the user complete practical tasks.');
-  assert.match(prompt, /System summary:/);
-  assert.match(prompt, /Time summary:/);
-  assert.match(prompt, /Tool result summary:/);
+  assert.equal(firstNonEmptyLine, "# Identity");
+  assert.match(prompt, /You are "Alyce", an interactive terminal assistant/);
+  assert.match(prompt, /^# System$/m);
+  assert.match(prompt, /^# Current time$/m);
+  assert.match(prompt, /^# Tool result handling$/m);
+}
+
+// 段落一律以 # 标题开头，不再重复一行 summary 前缀。
+async function testDefaultSystemPromptHasNoSectionSummaryPreambles() {
+  const prompt = await buildDefaultSystemPrompt(
+    createRuntimeContext(["Read", "SkillTool"]),
+    { personaPreset: "alyce", languagePreference: "Simplified Chinese" },
+    new PromptSectionResolver()
+  );
+
+  assert.doesNotMatch(prompt, /^[A-Z][A-Za-z ]* summary:/m);
 }
 
 async function testDefaultSystemPromptUsesEnglishAuthoredText() {
@@ -133,14 +174,13 @@ async function testDefaultSystemPromptShowsAvailableSkills() {
     new PromptSectionResolver()
   );
 
-  assert.match(prompt, /Skills summary:/);
-  assert.match(prompt, /# Available skills/);
+  assert.match(prompt, /^# Available skills$/m);
   assert.match(prompt, /\$<skill-name>/);
   assert.match(prompt, /code-review \[project\]/);
   assert.match(prompt, /Use when the user asks for a review/);
 }
 
-async function testDefaultSystemPromptShowsOptionalSectionSummaries() {
+async function testDefaultSystemPromptShowsOptionalSections() {
   const prompt = await buildDefaultSystemPrompt(
     {
       ...createRuntimeContext(["SkillTool"]),
@@ -157,12 +197,14 @@ async function testDefaultSystemPromptShowsOptionalSectionSummaries() {
     new PromptSectionResolver()
   );
 
-  assert.match(prompt, /Persona preset summary:/);
-  assert.match(prompt, /Memory summary:/);
-  assert.match(prompt, /Language summary:/);
+  assert.match(prompt, /^# Persona Preset$/m);
+  assert.match(prompt, /^# Memory$/m);
+  assert.match(prompt, /^# Language$/m);
+  assert.match(prompt, /Branch: feature\/system-summary/);
+  assert.match(prompt, /Always respond in Simplified Chinese/);
 }
 
-async function testEffectiveSystemPromptSummarizesAdditionalInstructions() {
+async function testEffectiveSystemPromptAppendsAdditionalInstructions() {
   const prompt = await buildEffectiveSystemPrompt(
     createRuntimeContext(["Read"]),
     {
@@ -171,9 +213,9 @@ async function testEffectiveSystemPromptSummarizesAdditionalInstructions() {
     new PromptSectionResolver()
   );
 
-  assert.match(prompt, /Additional instructions summary:/);
   assert.match(prompt, /# Additional Instructions/);
   assert.match(prompt, /# Extra Constraints/);
+  assert.match(prompt, /Follow the extra rules\./);
 }
 
 runTests();
