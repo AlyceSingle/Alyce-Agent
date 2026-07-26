@@ -12,6 +12,8 @@ export interface NativeCommandResult {
   timedOut: boolean;
   stdout: string;
   stderr: string;
+  stdoutTruncated: boolean;
+  stderrTruncated: boolean;
   durationMs: number;
   error?: string;
 }
@@ -62,6 +64,8 @@ export async function runNativeCommandWithTimeout(
     const stderrChunks: Buffer[] = [];
     let stdoutByteLength = 0;
     let stderrByteLength = 0;
+    let stdoutTruncated = false;
+    let stderrTruncated = false;
     let settled = false;
     let timedOut = false;
     let killedByAbort = false;
@@ -78,7 +82,12 @@ export async function runNativeCommandWithTimeout(
       options.abortSignal?.removeEventListener("abort", abort);
     };
 
-    const finish = (result: Omit<NativeCommandResult, "durationMs" | "stdout" | "stderr">) => {
+    const finish = (
+      result: Omit<
+        NativeCommandResult,
+        "durationMs" | "stdout" | "stderr" | "stdoutTruncated" | "stderrTruncated"
+      >
+    ) => {
       if (settled) {
         return;
       }
@@ -89,6 +98,8 @@ export async function runNativeCommandWithTimeout(
         ...result,
         stdout: decodeCapturedOutput(stdoutChunks),
         stderr: decodeCapturedOutput(stderrChunks),
+        stdoutTruncated,
+        stderrTruncated,
         durationMs: Date.now() - startedAt
       });
     };
@@ -120,11 +131,15 @@ export async function runNativeCommandWithTimeout(
     };
 
     child.stdout?.on("data", (chunk: Buffer | string) => {
-      stdoutByteLength = appendOutputChunk(stdoutChunks, stdoutByteLength, chunk, maxOutputBytes);
+      const appended = appendOutputChunk(stdoutChunks, stdoutByteLength, chunk, maxOutputBytes);
+      stdoutByteLength = appended.byteLength;
+      stdoutTruncated = stdoutTruncated || appended.truncated;
     });
 
     child.stderr?.on("data", (chunk: Buffer | string) => {
-      stderrByteLength = appendOutputChunk(stderrChunks, stderrByteLength, chunk, maxOutputBytes);
+      const appended = appendOutputChunk(stderrChunks, stderrByteLength, chunk, maxOutputBytes);
+      stderrByteLength = appended.byteLength;
+      stderrTruncated = stderrTruncated || appended.truncated;
     });
 
     child.on("error", (error) => {
@@ -179,16 +194,19 @@ function appendOutputChunk(
   currentLength: number,
   chunk: Buffer | string,
   maxOutputBytes: number
-): number {
+): { byteLength: number; truncated: boolean } {
+  const buffer = toOutputBuffer(chunk);
   if (currentLength >= maxOutputBytes) {
-    return currentLength;
+    return { byteLength: currentLength, truncated: buffer.length > 0 };
   }
 
-  const buffer = toOutputBuffer(chunk);
   const remaining = maxOutputBytes - currentLength;
   const next = buffer.length > remaining ? buffer.subarray(0, remaining) : buffer;
   chunks.push(next);
-  return currentLength + next.length;
+  return {
+    byteLength: currentLength + next.length,
+    truncated: next.length < buffer.length
+  };
 }
 
 function createFailedResult(startedAt: number, error: string): NativeCommandResult {
@@ -198,6 +216,8 @@ function createFailedResult(startedAt: number, error: string): NativeCommandResu
     timedOut: false,
     stdout: "",
     stderr: "",
+    stdoutTruncated: false,
+    stderrTruncated: false,
     durationMs: Date.now() - startedAt,
     error
   };

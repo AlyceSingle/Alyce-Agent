@@ -67,7 +67,13 @@ export async function executeGlobTool(
     throw new Error(buildRipgrepErrorMessage("Glob", outcome.exitCode, outcome.stderr));
   }
 
-  const matches = splitRipgrepLines(outcome.stdout).map((matchedPath) =>
+  const rawMatches = splitRipgrepLines(outcome.stdout);
+  if (outcome.stdoutTruncated) {
+    // The byte cap can cut the final line mid-way; drop it rather than
+    // surface a partial filename.
+    rawMatches.pop();
+  }
+  const matches = rawMatches.map((matchedPath) =>
     normalizeMatchedPath(matchedPath, searchRoot.absolutePath)
   );
   const sortedMatches = await sortWorkspaceRelativePathsByModifiedTime(
@@ -76,7 +82,7 @@ export async function executeGlobTool(
     searchRoot.allowedRoots,
     searchRoot.absolutePath
   );
-  const truncated = sortedMatches.length > DEFAULT_GLOB_LIMIT;
+  const truncated = sortedMatches.length > DEFAULT_GLOB_LIMIT || outcome.stdoutTruncated;
   const filenames = sortedMatches.slice(0, DEFAULT_GLOB_LIMIT);
 
   return {

@@ -9,6 +9,7 @@ import {
   SENSITIVE_RIPGREP_EXCLUDE_GLOBS
 } from "../internal/filePermissions.js";
 import {
+  resolveRipgrepMaxOutputBytes,
   runRipgrep,
   sortWorkspaceRelativePathsByModifiedTime,
   splitRipgrepLines
@@ -70,7 +71,12 @@ export const GrepOutputSchema = z
     numLines: z.number().optional(),
     numMatches: z.number().optional(),
     appliedLimit: z.number().optional(),
-    appliedOffset: z.number().optional()
+    appliedOffset: z.number().optional(),
+    outputTruncated: z
+      .boolean()
+      .optional()
+      .describe("Set when raw search output hit the byte limit; results are incomplete."),
+    truncationNotice: z.string().optional()
   })
   .strict();
 
@@ -155,6 +161,17 @@ export async function executeGrepTool(
   }
 
   const rawResults = splitRipgrepLines(outcome.stdout);
+  if (outcome.stdoutTruncated) {
+    // The byte cap can cut the final line mid-way; drop it rather than
+    // surface a partial match or filename.
+    rawResults.pop();
+  }
+  const truncationFields = outcome.stdoutTruncated
+    ? {
+        outputTruncated: true,
+        truncationNotice: `Raw search output exceeded the ${resolveRipgrepMaxOutputBytes()} byte limit and was truncated; results are incomplete. Narrow the pattern, path, or glob filter.`
+      }
+    : {};
 
   if (outputMode === "content") {
     const pagedResults = applyHeadLimit(rawResults, headLimit, offset);
@@ -165,7 +182,8 @@ export async function executeGrepTool(
       content: truncate(pagedResults.items.join("\n")),
       numLines: pagedResults.items.length,
       ...(pagedResults.appliedLimit !== undefined ? { appliedLimit: pagedResults.appliedLimit } : {}),
-      ...(offset > 0 ? { appliedOffset: offset } : {})
+      ...(offset > 0 ? { appliedOffset: offset } : {}),
+      ...truncationFields
     };
   }
 
@@ -196,7 +214,8 @@ export async function executeGrepTool(
       content: truncate(pagedResults.items.join("\n")),
       numMatches: totalMatches,
       ...(pagedResults.appliedLimit !== undefined ? { appliedLimit: pagedResults.appliedLimit } : {}),
-      ...(offset > 0 ? { appliedOffset: offset } : {})
+      ...(offset > 0 ? { appliedOffset: offset } : {}),
+      ...truncationFields
     };
   }
 
@@ -213,7 +232,8 @@ export async function executeGrepTool(
     numFiles: pagedMatches.items.length,
     filenames: pagedMatches.items,
     ...(pagedMatches.appliedLimit !== undefined ? { appliedLimit: pagedMatches.appliedLimit } : {}),
-    ...(offset > 0 ? { appliedOffset: offset } : {})
+    ...(offset > 0 ? { appliedOffset: offset } : {}),
+    ...truncationFields
   };
 }
 

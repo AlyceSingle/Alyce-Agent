@@ -224,6 +224,10 @@ DuckDuckGo HTML is kept as a no-key fallback, but it can still be blocked or rat
 - `ALYCE_WEB_FETCH_HONEST_USER_AGENT` — optional transparent user agent override used for Wikimedia-like sites and challenge fallback. Include a contact URL for sites that require one.
 - `ALYCE_WEB_FETCH_ACCEPT_LANGUAGE` — optional `Accept-Language` header for `WebFetch`.
 
+### Optional Search Tool Settings
+
+- `ALYCE_RIPGREP_MAX_OUTPUT_BYTES` — maximum bytes of raw ripgrep output buffered by `Grep` and `Glob` before truncation. Defaults to `20971520` (20 MB). Truncated searches report `outputTruncated` so the agent can narrow the query.
+
 ## Skills
 
 Alyce discovers local skills from:

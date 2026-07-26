@@ -10,6 +10,8 @@ async function runTests() {
   await testInvalidArgvReturnsErrorResult();
   await testSpawnSynchronousErrorReturnsErrorResult();
   await testTimeoutReturnsTimedOutResult();
+  await testTruncatesOutputBeyondMaxBytes();
+  await testDoesNotFlagTruncationWithinMaxBytes();
   await testRunsWindowsCmdFileWithSpaces();
   console.log("nativeCommandRunner tests passed");
 }
@@ -62,6 +64,30 @@ async function testTimeoutReturnsTimedOutResult() {
   assert.notEqual(result.exitCode, 0);
   assert.equal(result.timedOut, true);
   assert.equal(result.error, "timeout");
+}
+
+async function testTruncatesOutputBeyondMaxBytes() {
+  const result = await runNativeCommandWithTimeout(
+    [process.execPath, "-e", "process.stdout.write('x'.repeat(64 * 1024))"],
+    { timeoutMs: 10_000, maxOutputBytes: 1_024 }
+  );
+
+  assert.equal(result.exitCode, 0);
+  assert.equal(result.stdout.length, 1_024);
+  assert.equal(result.stdoutTruncated, true);
+  assert.equal(result.stderrTruncated, false);
+}
+
+async function testDoesNotFlagTruncationWithinMaxBytes() {
+  const result = await runNativeCommandWithTimeout(
+    [process.execPath, "-e", "process.stdout.write('exact-fit')"],
+    { timeoutMs: 10_000, maxOutputBytes: 1_024 }
+  );
+
+  assert.equal(result.exitCode, 0);
+  assert.equal(result.stdout, "exact-fit");
+  assert.equal(result.stdoutTruncated, false);
+  assert.equal(result.stderrTruncated, false);
 }
 
 async function testRunsWindowsCmdFileWithSpaces() {
