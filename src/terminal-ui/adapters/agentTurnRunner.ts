@@ -107,6 +107,8 @@ export interface AgentTurnHost {
   isExitRequestedAfterTurn: () => boolean;
   clearExitRequestedAfterTurn: () => void;
   finishExit: () => void;
+  /** 轮次结束后发出下一条排队输入；队列为空时是空操作。 */
+  flushQueuedInput: () => void;
   setDraftInputValue: (value: string) => void;
 }
 
@@ -809,6 +811,10 @@ export async function runAgentUserTurn(host: AgentTurnHost, userInput: string): 
     if (host.isExitRequestedAfterTurn() && host.getActiveTurn() === null && !host.store.getState().isLoading) {
       host.clearExitRequestedAfterTurn();
       host.finishExit();
+      return;
     }
+
+    // 退出优先于队列：只有确定不退出时才发出下一条排队输入。
+    host.flushQueuedInput();
   }
 }

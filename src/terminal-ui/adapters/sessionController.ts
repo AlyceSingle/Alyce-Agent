@@ -22,6 +22,8 @@ import type {
 import {
   appendMessage,
   closeDialog,
+  dequeueInput,
+  enqueueInput,
   getActiveDialog,
   openConnectProviderDialog,
   openSessionPickerDialog,
@@ -640,6 +642,81 @@ export function createSessionController(
     isDirectoryAlreadyAllowed
   });
 
+  // submit 的主体：命令解析 + 连接检查 + Agent turn。
+  // 抽成命名函数，让轮次结束后的队列 flush 能复用同一条路径。
+  const runSubmittedInput = async (normalized: string) => {
+    flushPendingDiagnosticContextMessages();
+    setDraftInputValue("");
+
+    const parsedCommand = parseReplCommand(normalized);
+    try {
+      if (await handleCommand(parsedCommand)) {
+        return;
+      }
+    } catch (error) {
+      appendUiMessage(createErrorMessage(`Command failed: ${getErrorMessage(error)}`));
+      store.updateState((state) => setStatusText(state, t("status.error")));
+      return;
+    }
+
+    if (!runtime.hasConnectionConfig()) {
+      store.updateState((state) =>
+        openConnectProviderDialog(state)
+      );
+      appendUiMessage(
+        createErrorMessage("Connection is incomplete. Run /connect and fill provider/model details.")
+      );
+      return;
+    }
+
+    // 命令与连接检查已通过：进入解耦后的 Agent turn 主路径。
+    await runAgentUserTurn(
+      {
+        store,
+        runtime,
+        appendUiMessage,
+        upsertPagedMessageCache,
+        upsertTurnEphemeralMessage,
+        resetTurnEphemeralMessages,
+        turnEphemeralMessageIds,
+        requestApproval,
+        askUserQuestions,
+        getTodos,
+        setTodoItems,
+        flushPendingDiagnosticContextMessages,
+        finalizeTurnFileChangesForRewind,
+        appendPostEditSummary,
+        rememberRewindPoint,
+        rollbackRuntimeConversationToCheckpoint,
+        syncBackgroundProcesses,
+        setActiveTurn: (checkpoint) => {
+          activeTurn = checkpoint;
+        },
+        getActiveTurn: () => activeTurn,
+        isExitRequestedAfterTurn: () => exitRequestedAfterTurn,
+        clearExitRequestedAfterTurn: () => {
+          exitRequestedAfterTurn = false;
+        },
+        finishExit,
+        flushQueuedInput,
+        setDraftInputValue
+      },
+      normalized
+    );
+  };
+
+  // 轮次结束后取出队首一条发出。只取一条：它会重新进入 isLoading，
+  // 其余的由下一轮结束时继续 flush，避免递归加深与错序。
+  const flushQueuedInput = () => {
+    const next = store.getState().queuedInputs[0];
+    if (next === undefined) {
+      return;
+    }
+
+    store.updateState((state) => dequeueInput(state));
+    void runSubmittedInput(next);
+  };
+
   return {
     initialize: () => {
       syncDiagnosticsRegistrySettings();
@@ -686,68 +763,14 @@ export function createSessionController(
         return;
       }
 
+      // 轮次运行中不丢弃输入：排队，等本轮结束后由 flushQueuedInput 依次发出。
       if (store.getState().isLoading) {
-        appendUiMessage(createSystemMessage("A turn is already running.", "Busy"));
+        store.updateState((state) => enqueueInput(state, normalized));
+        setDraftInputValue("");
         return;
       }
 
-      flushPendingDiagnosticContextMessages();
-      setDraftInputValue("");
-
-      const parsedCommand = parseReplCommand(normalized);
-      try {
-        if (await handleCommand(parsedCommand)) {
-          return;
-        }
-      } catch (error) {
-        appendUiMessage(createErrorMessage(`Command failed: ${getErrorMessage(error)}`));
-        store.updateState((state) => setStatusText(state, t("status.error")));
-        return;
-      }
-
-      if (!runtime.hasConnectionConfig()) {
-        store.updateState((state) =>
-          openConnectProviderDialog(state)
-        );
-        appendUiMessage(
-          createErrorMessage("Connection is incomplete. Run /connect and fill provider/model details.")
-        );
-        return;
-      }
-
-      // 命令与连接检查已通过：进入解耦后的 Agent turn 主路径。
-      await runAgentUserTurn(
-        {
-          store,
-          runtime,
-          appendUiMessage,
-          upsertPagedMessageCache,
-          upsertTurnEphemeralMessage,
-          resetTurnEphemeralMessages,
-          turnEphemeralMessageIds,
-          requestApproval,
-          askUserQuestions,
-          getTodos,
-          setTodoItems,
-          flushPendingDiagnosticContextMessages,
-          finalizeTurnFileChangesForRewind,
-          appendPostEditSummary,
-          rememberRewindPoint,
-          rollbackRuntimeConversationToCheckpoint,
-          syncBackgroundProcesses,
-          setActiveTurn: (checkpoint) => {
-            activeTurn = checkpoint;
-          },
-          getActiveTurn: () => activeTurn,
-          isExitRequestedAfterTurn: () => exitRequestedAfterTurn,
-          clearExitRequestedAfterTurn: () => {
-            exitRequestedAfterTurn = false;
-          },
-          finishExit,
-          setDraftInputValue
-        },
-        normalized
-      );
+      await runSubmittedInput(normalized);
     },
     setDraftInput: (value) => {
       setDraftInputValue(value);

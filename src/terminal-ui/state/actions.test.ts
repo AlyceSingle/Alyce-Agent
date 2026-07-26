@@ -1,7 +1,10 @@
 import assert from "node:assert/strict";
 import type { SessionSettingsState } from "../../config/runtime.js";
 import {
+  clearQueuedInputs,
   createInitialTerminalUiState,
+  dequeueInput,
+  enqueueInput,
   openSettingsDialog,
   openConnectProviderDialog,
   openModelPickerDialog,
@@ -111,7 +114,43 @@ function runTests() {
   testUpdateModelPickerDialogState();
   testPrependMessagesAddsUniqueMessagesAtTop();
   testPrependMessagesPreservesSelectedMessage();
+  testInputQueueStartsEmpty();
+  testEnqueueInputPreservesOrder();
+  testDequeueInputTakesFromTheFront();
+  testClearQueuedInputs();
   console.log("actions tests passed");
+}
+
+function testInputQueueStartsEmpty() {
+  assert.deepEqual(createInitialState().queuedInputs, []);
+}
+
+function testEnqueueInputPreservesOrder() {
+  const state = enqueueInput(enqueueInput(createInitialState(), "first"), "second");
+
+  assert.deepEqual(state.queuedInputs, ["first", "second"]);
+}
+
+function testDequeueInputTakesFromTheFront() {
+  const queued = enqueueInput(enqueueInput(createInitialState(), "first"), "second");
+  const afterFirst = dequeueInput(queued);
+
+  assert.deepEqual(afterFirst.queuedInputs, ["second"]);
+
+  const afterSecond = dequeueInput(afterFirst);
+  assert.deepEqual(afterSecond.queuedInputs, []);
+
+  // 队列已空时保持同一引用，避免无意义的重渲染。
+  assert.equal(dequeueInput(afterSecond), afterSecond);
+}
+
+function testClearQueuedInputs() {
+  const queued = enqueueInput(createInitialState(), "only");
+
+  assert.deepEqual(clearQueuedInputs(queued).queuedInputs, []);
+
+  const empty = createInitialState();
+  assert.equal(clearQueuedInputs(empty), empty);
 }
 
 function createInitialState() {

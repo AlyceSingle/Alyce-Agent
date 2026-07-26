@@ -41,6 +41,7 @@ export function createInitialTerminalUiState(options: {
     settingsState: options.settingsState,
     requestPatchCount: options.requestPatchCount,
     draftInput: "",
+    queuedInputs: [],
     isLoading: false,
     statusText: connectionReady ? "Idle" : "Setup required",
     planModeEnabled: options.planModeEnabled ?? false,
@@ -141,6 +142,35 @@ export function setDraftInput(state: TerminalUiState, draftInput: string): Termi
   return {
     ...state,
     draftInput
+  };
+}
+
+export function enqueueInput(state: TerminalUiState, input: string): TerminalUiState {
+  return {
+    ...state,
+    queuedInputs: [...state.queuedInputs, input]
+  };
+}
+
+export function dequeueInput(state: TerminalUiState): TerminalUiState {
+  if (state.queuedInputs.length === 0) {
+    return state;
+  }
+
+  return {
+    ...state,
+    queuedInputs: state.queuedInputs.slice(1)
+  };
+}
+
+export function clearQueuedInputs(state: TerminalUiState): TerminalUiState {
+  if (state.queuedInputs.length === 0) {
+    return state;
+  }
+
+  return {
+    ...state,
+    queuedInputs: []
   };
 }
 

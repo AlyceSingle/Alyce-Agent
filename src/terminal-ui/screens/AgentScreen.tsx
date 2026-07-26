@@ -454,10 +454,8 @@ export function AgentScreen(props: { controller: SessionController }) {
               : "Resolve the active panel above"
         } before typing.`
       : undefined;
-  const promptDisabledPlaceholder =
-    isLoading && !hasDialog
-      ? getInputLockedPlaceholder()
-      : undefined;
+  // 轮次运行中不再锁输入：继续打字会排队，在轮次结束后发出。
+  const promptDisabledPlaceholder = undefined;
 
   const overlay =
     activeDialog?.type === "permission" ? (
@@ -595,7 +593,7 @@ export function AgentScreen(props: { controller: SessionController }) {
         <AgentPromptDock
           controller={props.controller}
           terminalWidth={terminalWidth}
-          disabled={isLoading || hasDialog}
+          disabled={hasDialog}
           disabledReason={promptDisabledReason}
           disabledPlaceholder={promptDisabledPlaceholder}
           sublineText={`${formatCompactModelDisplay(connection.model)} | ${workspaceRoot}`}

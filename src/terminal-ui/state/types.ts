@@ -119,6 +119,8 @@ export interface TerminalUiState {
   settingsState: SessionSettingsState;
   requestPatchCount: number;
   draftInput: string;
+  /** 轮次运行期间提交的输入按顺序排队，在轮次结束后逐条发出。 */
+  queuedInputs: string[];
   isLoading: boolean;
   statusText: string;
   planModeEnabled: boolean;

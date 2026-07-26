@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import type { SessionSettingsState } from "../../config/runtime.js";
 import type { BackgroundProcessRecord } from "../../core/background-process/backgroundProcessTypes.js";
-import { createInitialTerminalUiState } from "../state/actions.js";
+import { createInitialTerminalUiState, setLoading } from "../state/actions.js";
 import { createTerminalUiStore } from "../state/store.js";
 import type { TerminalUiMessage } from "../state/types.js";
 import type { SessionRuntime } from "../../cli/sessionRuntime.js";
@@ -16,6 +16,9 @@ async function runTests() {
   testBackgroundProcessCountOnlyIncludesRunningProcesses();
   testParseAutoReviewDecision();
   testFormatPromptSkillSummary();
+  await testSubmitDuringTurnQueuesInsteadOfDiscarding();
+  await testQueuedInputsPreserveSubmissionOrder();
+  await testSubmitIgnoresBlankInputWhileQueueing();
   await testSettingsCommandOpensSessionSettings();
   await testSettingsConnectionCommandOpensConnectDialog();
   await testConnectCommandOpensInteractiveDialog();
@@ -191,6 +194,48 @@ function testFormatPromptSkillSummary() {
     }) ?? "",
     /requires MCP server 'github'/
   );
+}
+
+// 轮次运行中提交必须排队，不能像改造前那样直接丢弃。
+async function testSubmitDuringTurnQueuesInsteadOfDiscarding() {
+  const runtime = createRuntimeStub({});
+  const store = createTerminalUiStore(createInitialState());
+  const controller = createSessionController(runtime, store);
+
+  store.updateState((state) => setLoading(state, true));
+  controller.setDraftInput("queued while busy");
+
+  await controller.submit("queued while busy");
+
+  assert.deepEqual(store.getState().queuedInputs, ["queued while busy"]);
+  // 草稿要清空，否则用户会看到内容既在输入框又在队列里。
+  assert.equal(store.getState().draftInput, "");
+  // 排队不应该产生"A turn is already running."之类的噪音消息。
+  assert.equal(store.getState().messages.length, 0);
+}
+
+async function testQueuedInputsPreserveSubmissionOrder() {
+  const runtime = createRuntimeStub({});
+  const store = createTerminalUiStore(createInitialState());
+  const controller = createSessionController(runtime, store);
+
+  store.updateState((state) => setLoading(state, true));
+  await controller.submit("first");
+  await controller.submit("second");
+  await controller.submit("third");
+
+  assert.deepEqual(store.getState().queuedInputs, ["first", "second", "third"]);
+}
+
+async function testSubmitIgnoresBlankInputWhileQueueing() {
+  const runtime = createRuntimeStub({});
+  const store = createTerminalUiStore(createInitialState());
+  const controller = createSessionController(runtime, store);
+
+  store.updateState((state) => setLoading(state, true));
+  await controller.submit("   ");
+
+  assert.deepEqual(store.getState().queuedInputs, []);
 }
 
 async function testSettingsCommandOpensSessionSettings() {
