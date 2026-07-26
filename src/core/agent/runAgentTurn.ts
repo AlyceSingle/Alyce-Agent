@@ -342,9 +342,15 @@ function buildAgentTurnRequest(
   });
 }
 
+// 连续出现的这些只读工具会打包并行执行。写类、shell、MCP（有 schema 刷新副作用）
+// 与 Web 类（网络+审批频繁）保持串行。
 const PARALLEL_SAFE_TOOL_NAMES = new Set([
   "TaskList",
-  "TaskGet"
+  "TaskGet",
+  "Read",
+  "Grep",
+  "Glob",
+  "LSP"
 ]);
 const TOOL_SCHEMA_REFRESH_TOOL_NAMES = new Set([
   "McpStatus",
@@ -397,8 +403,13 @@ async function executeToolCalls(
       index += 1;
     }
 
+    // 并行执行，但审批弹窗通过互斥队列串行弹出，避免多个对话框叠在一起。
+    const batchOptions: AgentTurnOptions = {
+      ...options,
+      context: withSerializedApprovals(options.context)
+    };
     const batchResults = await Promise.all(batch.map((candidate) =>
-      executeSingleToolCall(candidate, options)
+      executeSingleToolCall(candidate, batchOptions)
     ));
     for (const result of batchResults) {
       toolMessages.push(result.toolMessage);
@@ -411,6 +422,21 @@ async function executeToolCalls(
     toolMessages,
     supplementalMessages,
     toolNames
+  };
+}
+
+// 把 requestApproval 包装成互斥队列：并行工具同时请求审批时，对话框一个一个弹。
+// 前一个审批的结果（无论允许/拒绝/异常）都不影响后续请求排队执行。
+export function withSerializedApprovals(context: ToolExecutionContext): ToolExecutionContext {
+  const originalRequestApproval = context.requestApproval;
+  let queue: Promise<unknown> = Promise.resolve();
+  return {
+    ...context,
+    requestApproval: (request) => {
+      const next = queue.then(() => originalRequestApproval(request));
+      queue = next.catch(() => undefined);
+      return next;
+    }
   };
 }
 

@@ -2,8 +2,8 @@ import assert from "node:assert/strict";
 import type OpenAI from "openai";
 import { TurnInterruptedError } from "../abort.js";
 import { getFunctionToolNames } from "../api/openaiFunctionTools.js";
-import { runAgentTurn } from "./runAgentTurn.js";
-import type { ToolExecutionContext } from "../../tools.js";
+import { runAgentTurn, withSerializedApprovals } from "./runAgentTurn.js";
+import type { ToolApprovalRequest, ToolExecutionContext } from "../../tools.js";
 import type { UsageRecordInput } from "../usage/types.js";
 import { ContextBudgetService } from "../context/contextBudget.js";
 
@@ -145,6 +145,8 @@ async function runTests() {
   await testToolSchemaRefreshFailureContinuesWithWarning();
   await testMaxStepsLeavesAnsweredToolCallPair();
   await testContextBudgetPublishesAfterFinalReply();
+  await testSerializedApprovalsNeverOverlap();
+  await testReadOnlyToolCallsRunAsParallelBatch();
   console.log("runAgentTurn tests passed");
 }
 
@@ -782,6 +784,141 @@ async function testContextBudgetPublishesAfterFinalReply() {
     `final budget should include assistant text: ${snapshots.join(",")}`
   );
   assert.equal(messages.at(-1)?.role, "assistant");
+}
+
+async function testSerializedApprovalsNeverOverlap() {
+  const controller = new AbortController();
+  let inFlight = 0;
+  let maxInFlight = 0;
+  let callCount = 0;
+  const context = createTestContext(controller.signal, {
+    requestApproval: async () => {
+      callCount += 1;
+      const callIndex = callCount;
+      inFlight += 1;
+      maxInFlight = Math.max(maxInFlight, inFlight);
+      await new Promise((resolve) => setTimeout(resolve, 10));
+      inFlight -= 1;
+      if (callIndex === 2) {
+        throw new Error("approval dialog crashed");
+      }
+      return true;
+    }
+  });
+  const wrapped = withSerializedApprovals(context);
+  const request: ToolApprovalRequest = {
+    kind: "file-read",
+    toolName: "Read",
+    title: "test",
+    summary: "test",
+    details: []
+  };
+
+  const results = await Promise.allSettled([
+    wrapped.requestApproval(request),
+    wrapped.requestApproval(request),
+    wrapped.requestApproval(request)
+  ]);
+
+  assert.equal(maxInFlight, 1, "approval prompts must never overlap");
+  assert.equal(results[0]?.status, "fulfilled");
+  assert.equal(results[1]?.status, "rejected");
+  // 第 2 个审批抛错后，队列不能卡死，第 3 个仍要执行。
+  assert.equal(results[2]?.status, "fulfilled");
+  assert.equal(callCount, 3);
+}
+
+async function testReadOnlyToolCallsRunAsParallelBatch() {
+  const controller = new AbortController();
+  const messages: OpenAI.Chat.Completions.ChatCompletionMessageParam[] = [
+    { role: "system", content: "system" },
+    { role: "user", content: "read files" }
+  ];
+  const events: string[] = [];
+  let requestCount = 0;
+  const client = {
+    chat: {
+      completions: {
+        create: async () => {
+          requestCount += 1;
+          if (requestCount === 1) {
+            return {
+              choices: [{
+                message: {
+                  role: "assistant",
+                  content: "",
+                  tool_calls: [
+                    {
+                      id: "call_1",
+                      type: "function",
+                      function: {
+                        name: "Read",
+                        arguments: JSON.stringify({ file_path: "package.json" })
+                      }
+                    },
+                    {
+                      id: "call_2",
+                      type: "function",
+                      function: {
+                        name: "Read",
+                        arguments: JSON.stringify({ file_path: "README.md" })
+                      }
+                    },
+                    {
+                      id: "call_3",
+                      type: "function",
+                      function: {
+                        name: "Glob",
+                        arguments: JSON.stringify({ pattern: "*.md" })
+                      }
+                    }
+                  ]
+                }
+              }]
+            };
+          }
+
+          return {
+            choices: [{
+              message: {
+                role: "assistant",
+                content: "done"
+              }
+            }]
+          };
+        }
+      }
+    }
+  } as unknown as OpenAI;
+
+  const reply = await runAgentTurn(client, messages, {
+    model: "gpt-test",
+    maxSteps: 2,
+    abortSignal: controller.signal,
+    context: createTestContext(controller.signal),
+    onToolCallStart: (toolName) => {
+      events.push(`start:${toolName}`);
+    },
+    onToolCallResult: (toolName) => {
+      events.push(`result:${toolName}`);
+    }
+  });
+
+  assert.equal(reply, "done");
+  // 并行批次：三个 start 全部先于任何 result 触发（串行模式下会是 start/result 交替）。
+  assert.deepEqual(events.slice(0, 3), ["start:Read", "start:Read", "start:Glob"]);
+  assert.equal(events.length, 6);
+
+  // tool 消息按原调用顺序回填，id 一一对应。
+  const toolMessages = messages.filter(
+    (message): message is OpenAI.Chat.Completions.ChatCompletionToolMessageParam =>
+      message.role === "tool"
+  );
+  assert.deepEqual(toolMessages.map((message) => message.tool_call_id), [
+    "call_1",
+    "call_2",
+    "call_3"
+  ]);
 }
 
 void runTests();
