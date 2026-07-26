@@ -13,6 +13,7 @@ function runTests() {
     testDefaultSystemPromptShowsOptionalSections(),
     testDefaultSystemPromptGuidesLongRunningServers(),
     testDefaultSystemPromptGuidesInteractivePtyUse(),
+    testGitWorkflowSectionFollowsShellAvailability(),
     testEffectiveSystemPromptAppendsAdditionalInstructions(),
     testDefaultSystemPromptUsesEnglishAuthoredText(),
     testGitStatusSectionRendersWhenSnapshotPresent()
@@ -131,6 +132,27 @@ async function testDefaultSystemPromptGuidesInteractivePtyUse() {
   assert.match(prompt, /Use PtyCreate/);
   assert.match(prompt, /interactive terminal programs/);
   assert.match(prompt, /ordinary one-shot commands/);
+}
+
+// git 需要 shell，没有 shell 工具时这一段不应出现。
+async function testGitWorkflowSectionFollowsShellAvailability() {
+  const withShell = await buildDefaultSystemPrompt(
+    createRuntimeContext(["Read", "Bash"]),
+    {},
+    new PromptSectionResolver()
+  );
+
+  assert.match(withShell, /^# Git workflow$/m);
+  assert.match(withShell, /Commit or push only when the user asks/);
+  assert.match(withShell, /git add -A/);
+
+  const withoutShell = await buildDefaultSystemPrompt(
+    createRuntimeContext(["Read"]),
+    {},
+    new PromptSectionResolver()
+  );
+
+  assert.doesNotMatch(withoutShell, /^# Git workflow$/m);
 }
 
 async function testToolListUpdatesAcrossBuilds() {

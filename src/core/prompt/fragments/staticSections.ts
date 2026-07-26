@@ -92,6 +92,21 @@ function getActionsSection() {
   ]);
 }
 
+// git 需要 shell 才能执行；没有 shell 工具时这一段是废话，直接省略。
+function getGitWorkflowSection(runtimeContext: PromptRuntimeContext) {
+  if (!hasTool(runtimeContext, "Bash") && !hasTool(runtimeContext, "PowerShell")) {
+    return null;
+  }
+
+  return promptFormatting.buildSection("Git workflow", [
+    "Commit or push only when the user asks for it. Finishing a task is not itself a reason to commit.",
+    "If the current branch is the repository's default branch, create a branch before committing.",
+    "Stage explicit file paths. Do not use git add -A or git commit -a: the working tree may hold unrelated work from the user or another session, and a broad stage would sweep it into your commit.",
+    "Match the repository's existing commit subject style; check recent history when unsure. Keep the subject to one short imperative line.",
+    "Do not skip hooks or signing with flags like --no-verify unless the user explicitly asks. If a hook fails, fix the underlying cause."
+  ]);
+}
+
 function getUsingToolsSection(runtimeContext: PromptRuntimeContext) {
   const providedToolGuidance: string[] = [];
 
@@ -232,6 +247,7 @@ export const STATIC_PROMPT_SECTIONS: PromptSection[] = [
   sessionPromptSection("system", () => getSystemSection()),
   sessionPromptSection("doing_tasks", () => getDoingTasksSection()),
   sessionPromptSection("actions", () => getActionsSection()),
+  turnPromptSection("git_workflow", (runtimeContext) => getGitWorkflowSection(runtimeContext)),
   turnPromptSection("using_tools", (runtimeContext) => getUsingToolsSection(runtimeContext)),
   sessionPromptSection("communication", () => getCommunicationSection())
 ];
