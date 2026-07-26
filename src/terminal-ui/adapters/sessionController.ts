@@ -20,7 +20,7 @@ import {
   type TurnDiffReport
 } from "../../core/diff/diffService.js";
 import type { FileHistoryRestoreResult } from "../../core/file-history/fileHistoryManager.js";
-import { formatDateTime, setLocale, t } from "../../i18n/index.js";
+import { setLocale, t } from "../../i18n/index.js";
 import { createPlanModeOverlayRules } from "../../core/planMode/planMode.js";
 import {
   createDefaultPermissionRuleSet,
@@ -77,8 +77,6 @@ import {
 } from "../../cli/sessionRuntime.js";
 import type {
   ApprovalMode,
-  RuntimeBootstrapReport,
-  RuntimePaths,
   SessionSettings
 } from "../../config/runtime.js";
 import type {
@@ -140,13 +138,29 @@ import {
   isEphemeralProgressMessage,
   shouldKeepUiMessage
 } from "./messageMapper.js";
+import {
+  AUTO_REVIEW_CONFIDENCE_THRESHOLD,
+  buildApprovalModePermissionRules,
+  buildAutoReviewPrompt,
+  parseAutoReviewDecision,
+  shouldSkipApprovalDialog
+} from "./sessionController/approvalPolicy.js";
+import {
+  formatRestoreConflictLines,
+  formatRuntimeBootstrapSummary,
+  formatSessionTime,
+  isFileRestoreAvailable,
+  isNotifiableBackgroundTask,
+  isVisibleBackgroundProcess,
+  isVisibleBackgroundTask,
+  waitForUiPaint
+} from "./sessionController/helpers.js";
 
 // SessionController 负责把 REPL/UI 事件翻译成会话运行时调用，并维护中断恢复状态。
 const MAX_REWIND_POINTS = 100;
 const PAGED_HISTORY_INITIAL_WINDOW = 240;
 const PAGED_HISTORY_CHUNK_SIZE = 120;
 const TASK_SYNC_INTERVAL_MS = 1000;
-const AUTO_REVIEW_CONFIDENCE_THRESHOLD = 0.72;
 
 // TurnCheckpoint 定义见 agentTurnRunner，避免 sessionController 与 turn 执行器类型漂移。
 
@@ -2905,259 +2919,6 @@ export function createSessionController(
       }
     }
   };
-}
-
-interface AutoReviewDecision {
-  decision: "approve" | "reject";
-  confidence: number;
-  reason: string;
-}
-
-function buildAutoReviewPrompt(options: {
-  request: ToolApprovalRequest;
-  permissionEvaluation: PermissionEvaluation;
-  userRequest: string;
-  approvalMode: ApprovalMode;
-}): string {
-  return [
-    "Review this pending Alyce permission request.",
-    "Return only strict JSON with keys decision, confidence, and reason.",
-    "",
-    JSON.stringify({
-      currentApprovalMode: options.approvalMode,
-      userRequest: options.userRequest,
-      request: {
-        kind: options.request.kind,
-        toolName: options.request.toolName,
-        title: options.request.title,
-        summary: options.request.summary,
-        details: options.request.details,
-        scope: options.request.scope,
-        permission: options.request.permission,
-        forceAsk: options.request.forceAsk === true
-      },
-      permissionEvaluation: {
-        action: options.permissionEvaluation.action,
-        permission: options.permissionEvaluation.permission,
-        pattern: options.permissionEvaluation.pattern,
-        reason: options.permissionEvaluation.reason
-      },
-      policy:
-        "Approve only if the request is necessary for the user request, low risk, and scoped. Reject destructive, secret-bearing, unrelated, broad, or ambiguous requests."
-    }, null, 2)
-  ].join("\n");
-}
-
-function parseAutoReviewDecision(output: string): AutoReviewDecision | null {
-  const normalized = output.trim().replace(/^```(?:json)?\s*/i, "").replace(/\s*```$/i, "");
-  const jsonCandidate = normalized.startsWith("{")
-    ? normalized
-    : normalized.match(/\{[\s\S]*\}/)?.[0];
-  if (!jsonCandidate) {
-    return null;
-  }
-
-  let parsed: unknown;
-  try {
-    parsed = JSON.parse(jsonCandidate);
-  } catch {
-    return null;
-  }
-
-  if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
-    return null;
-  }
-
-  const record = parsed as Record<string, unknown>;
-  const decision = record.decision;
-  const confidence = record.confidence;
-  const reason = record.reason;
-  if (decision !== "approve" && decision !== "reject") {
-    return null;
-  }
-
-  if (typeof confidence !== "number" || !Number.isFinite(confidence)) {
-    return null;
-  }
-
-  return {
-    decision,
-    confidence: Math.max(0, Math.min(1, confidence)),
-    reason: typeof reason === "string" && reason.trim().length > 0
-      ? reason.trim()
-      : "No reason provided."
-  };
-}
-
-function buildApprovalModePermissionRules(mode: ApprovalMode): PermissionRuleInput[] {
-  if (mode === "default" || mode === "auto-review") {
-    return [
-      {
-        permission: "file.write",
-        pattern: "workspace:*",
-        action: "allow",
-        scope: "session",
-        reason: `${mode} mode allows workspace file writes.`
-      },
-      {
-        permission: "file.edit",
-        pattern: "workspace:*",
-        action: "allow",
-        scope: "session",
-        reason: `${mode} mode allows workspace file edits.`
-      },
-      {
-        permission: "file.patch",
-        pattern: "workspace:*",
-        action: "allow",
-        scope: "session",
-        reason: `${mode} mode allows workspace patches.`
-      },
-      {
-        permission: "shell",
-        pattern: "*",
-        action: "allow",
-        scope: "session",
-        reason: `${mode} mode allows command execution.`
-      },
-      {
-        permission: "powershell",
-        pattern: "*",
-        action: "allow",
-        scope: "session",
-        reason: `${mode} mode allows command execution.`
-      }
-    ];
-  }
-
-  if (mode === "full-access") {
-    return [
-      {
-        permission: "*",
-        pattern: "*",
-        action: "allow",
-        scope: "session",
-        reason: "Full Access mode allows all permission requests."
-      }
-    ];
-  }
-
-  return [];
-}
-
-function formatSessionTime(value: string): string {
-  return formatDateTime(value);
-}
-
-function formatRestoreConflictLines(
-  conflicts: FileHistoryRestoreResult["conflicts"],
-  limit = 20
-): string[] {
-  const visibleConflicts = conflicts.slice(0, limit);
-  const lines = visibleConflicts.map((conflict) =>
-    `- ${formatRestoreConflictPath(conflict.absolutePath)}: ${formatRestoreConflictReason(conflict.reason)}`
-  );
-  const hiddenCount = conflicts.length - visibleConflicts.length;
-  if (hiddenCount > 0) {
-    lines.push(`- ... ${hiddenCount} more conflict(s)`);
-  }
-
-  return lines;
-}
-
-function formatRestoreConflictPath(absolutePath: string) {
-  const relative = path.relative(process.cwd(), absolutePath);
-  return relative && !relative.startsWith("..") && !path.isAbsolute(relative)
-    ? relative.replace(/\\/g, "/")
-    : absolutePath;
-}
-
-function formatRestoreConflictReason(reason: FileHistoryRestoreResult["conflicts"][number]["reason"]) {
-  switch (reason) {
-    case "current-file-missing":
-      return "current file is missing";
-    case "current-file-recreated":
-      return "path was recreated after the turn";
-    case "current-content-changed":
-      return "current content changed after the turn";
-  }
-}
-
-
-
-function formatRuntimeBootstrapSummary(
-  report: RuntimeBootstrapReport,
-  paths: RuntimePaths
-): string | null {
-  if (report.createdPaths.length === 0 && report.failedPaths.length === 0) {
-    return null;
-  }
-
-  const parts: string[] = [];
-  if (report.createdPaths.length > 0) {
-    parts.push(
-      `Runtime storage ready: ${report.createdPaths.length} path(s) initialized`,
-      `state: ${paths.workspaceRuntimeDirectory}`,
-      `user skills: ${paths.userSkillsDirectory}`,
-      `project assets load after /trust`
-    );
-  }
-
-  if (report.failedPaths.length > 0) {
-    parts.push(
-      `failed: ${report.failedPaths.length}`,
-      `details: ${report.failedPaths
-        .slice(0, 5)
-        .map((failure) => `- ${failure.path}: ${failure.error}`)
-        .join("; ")}`
-    );
-  }
-
-  return parts.join("; ");
-}
-
-
-
-function shouldSkipApprovalDialog(
-  permissionEvaluation: Pick<PermissionEvaluation, "action"> | null | undefined,
-  request: Pick<ToolApprovalRequest, "forceAsk">,
-  sessionApprovalMode: ApprovalMode
-): boolean {
-  if (permissionEvaluation?.action === "deny") {
-    return false;
-  }
-
-  if (sessionApprovalMode === "full-access") {
-    return true;
-  }
-
-  return permissionEvaluation?.action === "allow" && !request.forceAsk;
-}
-
-function isNotifiableBackgroundTask(task: Pick<SubagentTaskInfo, "agentType">): boolean {
-  return task.agentType !== "auto-reviewer";
-}
-
-function isVisibleBackgroundTask(task: Pick<SubagentTaskInfo, "agentType" | "status">): boolean {
-  return isNotifiableBackgroundTask(task) && task.status === "running";
-}
-
-function isVisibleBackgroundProcess(process: { status: string }): boolean {
-  return process.status === "running";
-}
-
-async function waitForUiPaint(): Promise<void> {
-  await new Promise<void>((resolve) => {
-    setImmediate(resolve);
-  });
-}
-
-function isFileRestoreAvailable(options: {
-  hasTrackedChanges: boolean;
-  canRestore: boolean;
-  alreadyRestored: boolean;
-}) {
-  return options.hasTrackedChanges && (options.canRestore || options.alreadyRestored);
 }
 
 export const __SESSION_CONTROLLER_TESTING__ = {
