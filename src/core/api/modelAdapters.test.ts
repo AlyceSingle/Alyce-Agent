@@ -20,6 +20,8 @@ async function runTests() {
   testGoogleNativeProviderWithoutBaseUrlIsAvailable();
   testAnthropicProviderWithBaseUrlUsesCompatibleAdapter();
   testAnthropicNativeRequestConvertsTools();
+  testAnthropicNativeRequestInlinesImagesAndPdfs();
+  testGoogleNativeRequestInlinesImagesAndPdfs();
   testAnthropicNativeResponseConvertsToolUse();
   testAnthropicNativeResponsePreservesThinking();
   testGoogleNativeRequestConvertsTools();
@@ -167,6 +169,67 @@ function testAnthropicNativeRequestConvertsTools() {
   assert.equal(request.system, "system prompt");
   assert.equal(request.messages[0]?.role, "user");
   assert.equal(request.tools?.[0]?.name, "Read");
+}
+
+function createMultimodalUserMessage(): OpenAI.Chat.Completions.ChatCompletionMessageParam {
+  return {
+    role: "user",
+    content: [
+      { type: "text", text: "Attached image: screenshot.png" },
+      {
+        type: "image_url",
+        image_url: { url: "data:image/png;base64,aGVsbG8=", detail: "auto" }
+      },
+      {
+        type: "file",
+        file: { filename: "doc.pdf", file_data: "data:application/pdf;base64,cGRm" }
+      }
+    ]
+  };
+}
+
+function testAnthropicNativeRequestInlinesImagesAndPdfs() {
+  const request = buildAnthropicRequest({
+    model: "claude-sonnet-4.6",
+    messages: [createMultimodalUserMessage()],
+    tools: []
+  }, createResolvedModel({
+    providerId: "anthropic",
+    modelId: "claude-sonnet-4.6",
+    kind: "anthropic",
+    apiKey: "test-key"
+  }));
+  const blocks = request.messages[0]?.content ?? [];
+
+  assert.equal(blocks.length, 3);
+  assert.deepEqual(blocks[0], { type: "text", text: "Attached image: screenshot.png" });
+  assert.deepEqual(blocks[1], {
+    type: "image",
+    source: { type: "base64", media_type: "image/png", data: "aGVsbG8=" }
+  });
+  assert.deepEqual(blocks[2], {
+    type: "document",
+    source: { type: "base64", media_type: "application/pdf", data: "cGRm" }
+  });
+}
+
+function testGoogleNativeRequestInlinesImagesAndPdfs() {
+  const request = buildGoogleRequest({
+    model: "gemini-3-flash",
+    messages: [createMultimodalUserMessage()],
+    tools: []
+  }, createResolvedModel({
+    providerId: "google",
+    modelId: "gemini-3-flash",
+    kind: "google",
+    apiKey: "test-key"
+  }));
+  const parts = request.contents[0]?.parts ?? [];
+
+  assert.equal(parts.length, 3);
+  assert.deepEqual(parts[0], { text: "Attached image: screenshot.png" });
+  assert.deepEqual(parts[1], { inlineData: { mimeType: "image/png", data: "aGVsbG8=" } });
+  assert.deepEqual(parts[2], { inlineData: { mimeType: "application/pdf", data: "cGRm" } });
 }
 
 function testAnthropicNativeResponseConvertsToolUse() {

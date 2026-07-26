@@ -8,6 +8,7 @@ import {
 } from "./openaiFunctionTools.js";
 import {
   createChatCompletionResponse,
+  extractMessageParts,
   extractMessageText,
   parseJsonObject,
   parseJsonResponse,
@@ -20,6 +21,8 @@ type AnthropicContentBlock =
   | { type: "text"; text: string }
   | { type: "thinking"; thinking: string }
   | { type: "redacted_thinking"; data: string }
+  | { type: "image"; source: { type: "base64"; media_type: string; data: string } | { type: "url"; url: string } }
+  | { type: "document"; source: { type: "base64"; media_type: string; data: string } }
   | { type: "tool_use"; id: string; name: string; input: JsonRecord }
   | { type: "tool_result"; tool_use_id: string; content: string };
 
@@ -126,9 +129,9 @@ export function buildAnthropicRequest(
     }
 
     if (message.role === "user") {
-      const text = extractMessageText(message.content);
-      appendAnthropicMessage(messages, "user", [
-        { type: "text", text: text || "(empty user message)" }
+      const blocks = toAnthropicUserBlocks(message.content);
+      appendAnthropicMessage(messages, "user", blocks.length > 0 ? blocks : [
+        { type: "text", text: "(empty user message)" }
       ]);
       continue;
     }
@@ -207,6 +210,33 @@ export function convertAnthropicResponse(
       ? { usage: toOpenAIUsage(inputTokens, outputTokens) }
       : {})
   });
+}
+
+function toAnthropicUserBlocks(content: unknown): AnthropicContentBlock[] {
+  const blocks: AnthropicContentBlock[] = [];
+  for (const part of extractMessageParts(content)) {
+    if (part.kind === "text") {
+      blocks.push({ type: "text", text: part.text });
+      continue;
+    }
+    if (part.kind === "image") {
+      blocks.push({
+        type: "image",
+        source: { type: "base64", media_type: part.mediaType, data: part.base64Data }
+      });
+      continue;
+    }
+    if (part.kind === "image-url") {
+      blocks.push({ type: "image", source: { type: "url", url: part.url } });
+      continue;
+    }
+    blocks.push({
+      type: "document",
+      source: { type: "base64", media_type: part.mediaType, data: part.base64Data }
+    });
+  }
+
+  return blocks;
 }
 
 function appendAnthropicMessage(

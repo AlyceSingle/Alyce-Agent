@@ -8,6 +8,7 @@ import {
 } from "./openaiFunctionTools.js";
 import {
   createChatCompletionResponse,
+  extractMessageParts,
   extractMessageText,
   parseJsonObject,
   parseJsonResponse,
@@ -17,6 +18,7 @@ import { asRecord as asRecordOrNull } from "../util/unknown.js";
 
 type GeminiPart =
   | { text: string; thought?: boolean }
+  | { inlineData: { mimeType: string; data: string } }
   | { functionCall: { name: string; args: JsonRecord } }
   | { functionResponse: { name: string; response: JsonRecord } };
 
@@ -138,8 +140,9 @@ export function buildGoogleRequest(
     }
 
     if (message.role === "user") {
-      appendGeminiContent(contents, "user", [
-        { text: extractMessageText(message.content) || "(empty user message)" }
+      const parts = toGeminiUserParts(message.content);
+      appendGeminiContent(contents, "user", parts.length > 0 ? parts : [
+        { text: "(empty user message)" }
       ]);
       continue;
     }
@@ -225,6 +228,24 @@ export function convertGoogleResponse(
         }
       : {})
   });
+}
+
+function toGeminiUserParts(content: unknown): GeminiPart[] {
+  const parts: GeminiPart[] = [];
+  for (const part of extractMessageParts(content)) {
+    if (part.kind === "text") {
+      parts.push({ text: part.text });
+      continue;
+    }
+    if (part.kind === "image" || part.kind === "file") {
+      parts.push({ inlineData: { mimeType: part.mediaType, data: part.base64Data } });
+      continue;
+    }
+    // Gemini inline requests cannot reference remote image URLs.
+    parts.push({ text: `(image at ${part.url} was not inlined; this provider only accepts embedded image data)` });
+  }
+
+  return parts;
 }
 
 function appendGeminiContent(

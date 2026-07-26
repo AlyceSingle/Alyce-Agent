@@ -25,6 +25,77 @@ export function extractMessageText(content: unknown): string {
     .join("\n");
 }
 
+export type NativeMessagePart =
+  | { kind: "text"; text: string }
+  | { kind: "image"; mediaType: string; base64Data: string }
+  | { kind: "image-url"; url: string }
+  | { kind: "file"; mediaType: string; base64Data: string; filename?: string };
+
+export function extractMessageParts(content: unknown): NativeMessagePart[] {
+  if (typeof content === "string") {
+    return content ? [{ kind: "text", text: content }] : [];
+  }
+
+  if (!Array.isArray(content)) {
+    return [];
+  }
+
+  const parts: NativeMessagePart[] = [];
+  for (const part of content) {
+    const record = asRecord(part);
+    if (!record) {
+      continue;
+    }
+
+    if (record.type === "image_url") {
+      const imageUrl = asRecord(record.image_url);
+      const url = imageUrl ? asString(imageUrl.url) : undefined;
+      if (!url) {
+        continue;
+      }
+      const parsed = parseBase64DataUrl(url);
+      if (parsed) {
+        parts.push({ kind: "image", mediaType: parsed.mediaType, base64Data: parsed.base64Data });
+      } else {
+        parts.push({ kind: "image-url", url });
+      }
+      continue;
+    }
+
+    if (record.type === "file") {
+      const file = asRecord(record.file);
+      const fileData = file ? asString(file.file_data) : undefined;
+      const parsed = fileData ? parseBase64DataUrl(fileData) : undefined;
+      if (parsed) {
+        const filename = file ? asString(file.filename) : undefined;
+        parts.push({
+          kind: "file",
+          mediaType: parsed.mediaType,
+          base64Data: parsed.base64Data,
+          ...(filename ? { filename } : {})
+        });
+      }
+      continue;
+    }
+
+    const text = asString(record.text) ?? asString(record.content);
+    if (text) {
+      parts.push({ kind: "text", text });
+    }
+  }
+
+  return parts;
+}
+
+export function parseBase64DataUrl(value: string): { mediaType: string; base64Data: string } | undefined {
+  const match = /^data:([^;,]+);base64,(.*)$/s.exec(value);
+  if (!match?.[1] || match[2] === undefined) {
+    return undefined;
+  }
+
+  return { mediaType: match[1], base64Data: match[2] };
+}
+
 export function parseJsonObject(value: string): JsonRecord {
   try {
     return asRecord(JSON.parse(value) as unknown) ?? {};
