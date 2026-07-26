@@ -10,6 +10,7 @@ import {
   createChatCompletionResponse,
   extractMessageParts,
   extractMessageText,
+  fetchWithHeadersTimeout,
   parseJsonObject,
   parseJsonResponse,
   toOpenAIUsage,
@@ -61,16 +62,15 @@ export function createAnthropicAdapter(
     sendChatCompletion: async (request, options) => {
       const anthropicRequest = buildAnthropicRequest(request, options.resolvedModel);
       const streaming = Boolean(options.streamHandlers);
-      const response = await fetch("https://api.anthropic.com/v1/messages", {
+      const response = await fetchWithHeadersTimeout("https://api.anthropic.com/v1/messages", {
         method: "POST",
         headers: {
           "content-type": "application/json",
           "anthropic-version": "2023-06-01",
           "x-api-key": options.resolvedModel.apiKey ?? ""
         },
-        body: JSON.stringify(streaming ? { ...anthropicRequest, stream: true } : anthropicRequest),
-        signal: options.abortSignal
-      });
+        body: JSON.stringify(streaming ? { ...anthropicRequest, stream: true } : anthropicRequest)
+      }, { signal: options.abortSignal });
       if (streaming && response.ok) {
         return consumeAnthropicMessageStream(response, {
           modelId: options.resolvedModel.modelId,

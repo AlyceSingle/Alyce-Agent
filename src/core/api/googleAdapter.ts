@@ -10,6 +10,7 @@ import {
   createChatCompletionResponse,
   extractMessageParts,
   extractMessageText,
+  fetchWithHeadersTimeout,
   parseJsonObject,
   parseJsonResponse,
   type JsonRecord
@@ -65,14 +66,13 @@ export function createGoogleAdapter(
         options.resolvedModel.apiKey ?? "",
         streaming
       );
-      const response = await fetch(endpoint, {
+      const response = await fetchWithHeadersTimeout(endpoint, {
         method: "POST",
         headers: {
           "content-type": "application/json"
         },
-        body: JSON.stringify(googleRequest),
-        signal: options.abortSignal
-      });
+        body: JSON.stringify(googleRequest)
+      }, { signal: options.abortSignal });
       if (streaming && response.ok) {
         return consumeGoogleGenerateContentStream(response, {
           modelId: options.resolvedModel.modelId,

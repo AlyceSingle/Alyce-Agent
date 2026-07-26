@@ -17,7 +17,9 @@ import type { ModelUsageEvent } from "../usage/types.js";
 import type { ChatCompletionStreamHandlers } from "./chatCompletionStream.js";
 import { consumeOpenAIChatCompletionStream } from "./chatCompletionStream.js";
 
-const RECONNECT_DELAY_MS = 10_000;
+const RECONNECT_BASE_DELAY_MS = 1_000;
+const RECONNECT_MAX_DELAY_MS = 60_000;
+const RETRY_AFTER_MAX_MS = 5 * 60_000;
 const MAX_RECONNECT_RETRIES = 7;
 const EMPTY_MODEL_RESPONSE_ERROR_CODE = "EMPTY_MODEL_RESPONSE";
 const NO_TEXT_OUTPUT_ERROR_CODE = "NO_TEXT_OUTPUT";
@@ -139,15 +141,16 @@ export async function sendChatCompletion(
       }
 
       retriesUsed += 1;
+      const retryDelayMs = computeReconnectDelayMs(retriesUsed, error);
       options.onReconnect?.({
         type: "scheduled",
         attempt: retriesUsed,
         maxRetries: MAX_RECONNECT_RETRIES,
-        retryDelayMs: RECONNECT_DELAY_MS,
+        retryDelayMs,
         errorMessage: getErrorMessage(error),
         statusCode: getErrorStatusCode(error)
       });
-      await waitForReconnect(RECONNECT_DELAY_MS, options.abortSignal);
+      await waitForReconnect(retryDelayMs, options.abortSignal);
     }
   }
 }
@@ -256,6 +259,71 @@ function getErrorStatusCode(error: unknown): number | undefined {
 
   const { status } = error as { status?: unknown };
   return typeof status === "number" ? status : undefined;
+}
+
+// 指数退避 + equal jitter；服务器给了 Retry-After 时优先照办（封顶 5 分钟）。
+export function computeReconnectDelayMs(
+  attempt: number,
+  error: unknown,
+  random: () => number = Math.random
+): number {
+  const retryAfterMs = getRetryAfterMs(error);
+  if (retryAfterMs !== undefined) {
+    return Math.min(retryAfterMs, RETRY_AFTER_MAX_MS);
+  }
+
+  const exponential = Math.min(
+    RECONNECT_BASE_DELAY_MS * 2 ** (Math.max(1, attempt) - 1),
+    RECONNECT_MAX_DELAY_MS
+  );
+  return Math.round(exponential / 2 + random() * (exponential / 2));
+}
+
+export function getRetryAfterMs(error: unknown): number | undefined {
+  if (!error || typeof error !== "object") {
+    return undefined;
+  }
+
+  const direct = (error as { retryAfterMs?: unknown }).retryAfterMs;
+  if (typeof direct === "number" && Number.isFinite(direct) && direct >= 0) {
+    return Math.round(direct);
+  }
+
+  return parseRetryAfterValue(getRetryAfterHeader((error as { headers?: unknown }).headers));
+}
+
+function getRetryAfterHeader(headers: unknown): string | undefined {
+  if (!headers || typeof headers !== "object") {
+    return undefined;
+  }
+
+  if (headers instanceof Headers) {
+    return headers.get("retry-after") ?? undefined;
+  }
+
+  const record = headers as Record<string, unknown>;
+  const key = Object.keys(record).find((entry) => entry.toLowerCase() === "retry-after");
+  const value = key !== undefined ? record[key] : undefined;
+  return typeof value === "string" ? value : undefined;
+}
+
+export function parseRetryAfterValue(value: string | undefined): number | undefined {
+  const normalized = value?.trim();
+  if (!normalized) {
+    return undefined;
+  }
+
+  const seconds = Number(normalized);
+  if (Number.isFinite(seconds) && seconds >= 0) {
+    return Math.round(seconds * 1000);
+  }
+
+  const dateMs = Date.parse(normalized);
+  if (!Number.isNaN(dateMs)) {
+    return Math.max(0, dateMs - Date.now());
+  }
+
+  return undefined;
 }
 
 function shouldRetryChatCompletionError(error: unknown): boolean {

@@ -156,12 +156,53 @@ export async function parseJsonResponse(response: Response): Promise<unknown> {
   const parsed = raw ? JSON.parse(raw) as unknown : {};
   if (!response.ok) {
     const message = extractProviderErrorMessage(parsed) ?? (raw || `HTTP ${response.status}`);
-    const error = new Error(message) as Error & { status?: number };
+    const error = new Error(message) as Error & { status?: number; headers?: Headers };
     error.status = response.status;
+    // 保留响应头，让重试逻辑能读取 Retry-After。
+    error.headers = response.headers;
     throw error;
   }
 
   return parsed;
+}
+
+export const NATIVE_FETCH_HEADERS_TIMEOUT_MS = 120_000;
+
+// 带"响应头超时"的 fetch：超过 timeoutMs 仍未收到响应头则失败（错误可重试）。
+// 响应头到达后计时器解除，正文/SSE 读取只受外部 abortSignal 控制。
+export async function fetchWithHeadersTimeout(
+  url: string,
+  init: Omit<RequestInit, "signal">,
+  options?: { signal?: AbortSignal; timeoutMs?: number }
+): Promise<Response> {
+  const timeoutMs = options?.timeoutMs ?? NATIVE_FETCH_HEADERS_TIMEOUT_MS;
+  const outerSignal = options?.signal;
+  const controller = new AbortController();
+  const timer = setTimeout(() => {
+    const timeoutError = new Error(
+      `No response headers received within ${Math.round(timeoutMs / 1000)}s (connection timed out)`
+    );
+    timeoutError.name = "ConnectionTimeoutError";
+    controller.abort(timeoutError);
+  }, timeoutMs);
+
+  const forwardAbort = () => {
+    controller.abort(outerSignal?.reason);
+  };
+  if (outerSignal) {
+    if (outerSignal.aborted) {
+      forwardAbort();
+    } else {
+      outerSignal.addEventListener("abort", forwardAbort, { once: true });
+    }
+  }
+
+  try {
+    return await fetch(url, { ...init, signal: controller.signal });
+  } finally {
+    clearTimeout(timer);
+    outerSignal?.removeEventListener("abort", forwardAbort);
+  }
 }
 
 export function extractProviderErrorMessage(value: unknown): string | undefined {
