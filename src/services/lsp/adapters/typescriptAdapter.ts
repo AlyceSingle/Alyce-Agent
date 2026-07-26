@@ -1,6 +1,7 @@
 import { existsSync, realpathSync, statSync } from "node:fs";
 import path from "node:path";
-import ts from "typescript";
+import type tsNamespace from "typescript";
+import { loadTypeScriptModule } from "./typescriptModule.js";
 import { isPathAllowed, toWorkspaceRelative } from "../../../tools/internal/pathSandbox.js";
 import { truncate } from "../../../tools/internal/values.js";
 import type {
@@ -31,18 +32,18 @@ const DEFAULT_MAX_CACHED_PROJECTS = 24;
 const DEFAULT_CACHE_ENTRY_IDLE_TTL_MS = 15 * 60_000;
 
 type TypeScriptProject = {
-  service: ts.LanguageService;
+  service: tsNamespace.LanguageService;
   workspaceRoot: string;
   allowedRoots: readonly string[];
   fileName: string;
   rootFileNames: string[];
   sourceVersions: Map<string, string>;
-  sourceFile: ts.SourceFile;
+  sourceFile: tsNamespace.SourceFile;
   sys: RestrictedTypeScriptSystem;
 };
 
 type CachedTypeScriptProject = {
-  service: ts.LanguageService;
+  service: tsNamespace.LanguageService;
   workspaceRoot: string;
   allowedRoots: readonly string[];
   rootFileNames: string[];
@@ -84,7 +85,7 @@ type RestrictedTypeScriptSystem = {
 
 type SpanLike = {
   fileName: string;
-  textSpan: ts.TextSpan;
+  textSpan: tsNamespace.TextSpan;
   kind?: string;
   name?: string;
   containerName?: string;
@@ -102,6 +103,11 @@ type TypeScriptDiagnosticIssue = {
   message: string;
   source?: string;
 };
+
+const loadedTypeScript = loadTypeScriptModule();
+// Every public adapter entry guards through requireTypeScriptModule(), so the
+// non-null assertion never leaks: internal helpers only run behind the guard.
+const ts = (loadedTypeScript?.module ?? null) as unknown as typeof tsNamespace;
 
 const projectCache = new Map<string, CachedTypeScriptProject>();
 const syncedVersionOffsets = new Map<string, number>();
@@ -134,7 +140,26 @@ function supportsOperation(operation: LspRuntimeOperation) {
   return SUPPORTED_OPERATION_SET.has(operation);
 }
 
+function requireTypeScriptModule() {
+  if (!loadedTypeScript) {
+    throw new Error(
+      "TypeScript backend is unavailable: no usable typescript module (>=5.0) was found. " +
+        "Install it in your project, for example: npm i -D typescript."
+    );
+  }
+}
+
 function getHealth(): LspRuntimeBackendHealth {
+  if (!loadedTypeScript) {
+    return {
+      backend: "typescript-language-service",
+      status: "unavailable",
+      checkedAt: new Date().toISOString(),
+      message:
+        "No usable typescript module (>=5.0) was found; TypeScript LSP features and diagnostics are disabled. Install typescript in your project to enable them."
+    };
+  }
+
   const snapshot = getCacheSnapshotForTesting();
   const atCapacity = snapshot.activeProjectCount >= snapshot.policy.maxProjects;
   const now = Date.now();
@@ -159,6 +184,7 @@ function getHealth(): LspRuntimeBackendHealth {
 }
 
 function execute(input: ResolvedLspRuntimeQueryInput): LspRuntimeQueryPayload {
+  requireTypeScriptModule();
   assertRegularFile(input.absolutePath, input.allowedRoots);
 
   const project = createTypeScriptProject({
@@ -190,6 +216,7 @@ function execute(input: ResolvedLspRuntimeQueryInput): LspRuntimeQueryPayload {
 }
 
 function getDiagnostics(input: ResolvedLspRuntimeFileInput): LspRuntimeDiagnosticsResult {
+  requireTypeScriptModule();
   assertRegularFile(input.absolutePath, input.allowedRoots);
   const project = createTypeScriptProject({
     fileName: input.absolutePath,
@@ -220,10 +247,16 @@ function getDiagnostics(input: ResolvedLspRuntimeFileInput): LspRuntimeDiagnosti
 }
 
 function syncFileChange(input: ResolvedLspRuntimeFileInput) {
+  if (!loadedTypeScript) {
+    return;
+  }
   bumpSyncedVersion(input.absolutePath);
 }
 
 function syncFileSave(input: ResolvedLspRuntimeFileInput) {
+  if (!loadedTypeScript) {
+    return;
+  }
   bumpSyncedVersion(input.absolutePath);
   if (!isTypeScriptLspSupportedFile(input.absolutePath)) {
     return;
@@ -241,6 +274,9 @@ function syncFileSave(input: ResolvedLspRuntimeFileInput) {
 }
 
 function syncFileClose(input: ResolvedLspRuntimeFileInput) {
+  if (!loadedTypeScript) {
+    return;
+  }
   const normalized = normalizeFileName(input.absolutePath);
   syncedVersionOffsets.delete(normalized);
 
@@ -286,7 +322,7 @@ function createCachedTypeScriptProject(options: {
     sourceVersions.set(normalizeFileName(fileName), getFileVersion(fileName, options.allowedRoots));
   }
 
-  const host: ts.LanguageServiceHost = {
+  const host: tsNamespace.LanguageServiceHost = {
     getCompilationSettings: () => config.options,
     getCurrentDirectory: () => config.currentDirectory,
     getDefaultLibFileName: (compilerOptions) => ts.getDefaultLibFilePath(compilerOptions),
@@ -492,14 +528,14 @@ function loadCompilerConfig(
       moduleResolution: ts.ModuleResolutionKind.NodeNext,
       skipLibCheck: true,
       target: ts.ScriptTarget.ES2022
-    } satisfies ts.CompilerOptions
+    } satisfies tsNamespace.CompilerOptions
   };
 }
 
 function ensureCompilerOptionsForTarget(
-  options: ts.CompilerOptions,
+  options: tsNamespace.CompilerOptions,
   fileName: string
-): ts.CompilerOptions {
+): tsNamespace.CompilerOptions {
   if (!isJavaScriptLikeFile(fileName) || options.allowJs) {
     return options;
   }
@@ -802,7 +838,7 @@ function formatSpans(
 
 function formatNavigationNode(
   project: TypeScriptProject,
-  node: ts.NavigationTree,
+  node: tsNamespace.NavigationTree,
   depth: number,
   budget: FormatBudget
 ): string[] {
@@ -827,7 +863,7 @@ function formatNavigationNode(
   return lines;
 }
 
-function countNavigationNodes(nodes: readonly ts.NavigationTree[]): number {
+function countNavigationNodes(nodes: readonly tsNamespace.NavigationTree[]): number {
   let count = 0;
   for (const node of nodes) {
     count += 1 + countNavigationNodes(node.childItems ?? []);
@@ -836,13 +872,13 @@ function countNavigationNodes(nodes: readonly ts.NavigationTree[]): number {
   return count;
 }
 
-function formatCallItem(project: TypeScriptProject, item: ts.CallHierarchyItem) {
+function formatCallItem(project: TypeScriptProject, item: tsNamespace.CallHierarchyItem) {
   const location = getLineAndCharacter(project, item.file, item.selectionSpan.start);
   const container = item.containerName ? ` in ${item.containerName}` : "";
   return `${item.name} (${formatKind(item.kind)}) - ${formatPath(project.workspaceRoot, item.file)}:${location.line}:${location.character}${container}`;
 }
 
-function getPosition(sourceFile: ts.SourceFile, line: number, character: number) {
+function getPosition(sourceFile: tsNamespace.SourceFile, line: number, character: number) {
   const lineStarts = sourceFile.getLineStarts();
   const lineIndex = line - 1;
   if (lineIndex < 0 || lineIndex >= lineStarts.length) {
@@ -881,7 +917,7 @@ function createSourceFileFromDisk(project: TypeScriptProject, fileName: string) 
 }
 
 function collectDiagnostics(options: {
-  service: ts.LanguageService;
+  service: tsNamespace.LanguageService;
   targetFileName: string;
   rootFileNames: string[];
   allowedRoots: readonly string[];
@@ -891,7 +927,7 @@ function collectDiagnostics(options: {
     options.targetFileName,
     true
   );
-  const projectDiagnostics: ts.Diagnostic[] = [];
+  const projectDiagnostics: tsNamespace.Diagnostic[] = [];
   const target = normalizeFileName(options.targetFileName);
   let filesWithDiagnostics = 0;
   let scannedFiles = 0;
@@ -924,7 +960,7 @@ function collectDiagnostics(options: {
 }
 
 function getDiagnosticsForFile(
-  service: ts.LanguageService,
+  service: tsNamespace.LanguageService,
   fileName: string,
   includeSuggestions: boolean
 ) {
@@ -966,19 +1002,19 @@ function getFileVersion(fileName: string, allowedRoots: readonly string[]) {
   }
 }
 
-function formatCompilerDiagnostic(diagnostic: ts.Diagnostic) {
+function formatCompilerDiagnostic(diagnostic: tsNamespace.Diagnostic) {
   return ts.flattenDiagnosticMessageText(diagnostic.messageText, "\n");
 }
 
 function isDiagnosticInAllowedRoots(
-  diagnostic: ts.Diagnostic,
+  diagnostic: tsNamespace.Diagnostic,
   allowedRoots: readonly string[]
 ) {
   return !diagnostic.file || isAllowedExistingPath(allowedRoots, diagnostic.file.fileName);
 }
 
 function formatDiagnosticIssue(
-  diagnostic: ts.Diagnostic,
+  diagnostic: tsNamespace.Diagnostic,
   workspaceRoot: string,
   fallbackFileName: string
 ): TypeScriptDiagnosticIssue {
@@ -999,7 +1035,7 @@ function formatDiagnosticIssue(
   };
 }
 
-function formatDiagnosticSeverity(category: ts.DiagnosticCategory): TypeScriptDiagnosticSeverity {
+function formatDiagnosticSeverity(category: tsNamespace.DiagnosticCategory): TypeScriptDiagnosticSeverity {
   switch (category) {
     case ts.DiagnosticCategory.Error:
       return "error";
@@ -1099,7 +1135,7 @@ function appendLimitNotice(
 function formatCallSites(
   project: TypeScriptProject,
   fileName: string,
-  spans: readonly ts.TextSpan[]
+  spans: readonly tsNamespace.TextSpan[]
 ) {
   const displaySpans = spans.slice(0, MAX_CALL_SITE_LOCATIONS);
   const sites = displaySpans.map((span) => {

@@ -26,6 +26,7 @@ async function runTests() {
   await testMissingMcpConfigIsReportedAsUnconfigured();
   await testRipgrepUnavailableFails();
   await testRipgrepFallsBackToBundledWithWarning();
+  await testTypeScriptBackendMissingWarns();
   await testSnapshotDiagnosticsWarnsWhenGitTreeUnavailable();
   await testSnapshotDiagnosticsFailsWhenGitTreeAndOverlayUnavailable();
   await testProviderPluginDiagnosticsWarn();
@@ -282,6 +283,27 @@ async function testRipgrepFallsBackToBundledWithWarning() {
   assert.equal(check.status, "warn");
   assert.match(check.summary, /bundled/i);
   assert.ok(check.details?.some((detail) => detail.includes("rg.mjs")));
+}
+
+async function testTypeScriptBackendMissingWarns() {
+  const workspaceRoot = await createWorkspace({ includeDist: true });
+  const input = createDoctorInput(workspaceRoot, {
+    connection: createConnectionState(workspaceRoot, { apiKey: "test-key" })
+  });
+
+  const report = await runDoctorDiagnostics(input, {
+    env: { OPENAI_API_KEY: "test-key" },
+    nodeVersion: "20.10.0",
+    stdinIsTTY: true,
+    stdoutIsTTY: true,
+    runCommand: fakeCommandRunner,
+    describeTypeScript: () => null
+  });
+
+  const check = findCheck(report.checks, "tool.typescript");
+  assert.equal(check.status, "warn");
+  assert.match(check.summary, /disabled/i);
+  assert.ok(check.suggestion?.includes("typescript"));
 }
 
 async function testOldNodeVersionFails() {

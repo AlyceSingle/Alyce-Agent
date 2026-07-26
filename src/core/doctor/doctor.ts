@@ -15,6 +15,11 @@ import { resolveModelProfile } from "../providers/resolveModel.js";
 import type { ResolvedModelProfile } from "../providers/types.js";
 import { runNativeCommandWithTimeout } from "../../tools/internal/nativeCommandRunner.js";
 import { resolveBundledRgScript } from "../../tools/internal/resolveRipgrep.js";
+import {
+  describeTypeScriptResolution,
+  MIN_SUPPORTED_TYPESCRIPT_VERSION,
+  type TypeScriptResolutionInfo
+} from "../../services/lsp/adapters/typescriptModule.js";
 
 export type DoctorCheckStatus = "ok" | "warn" | "fail" | "skipped";
 
@@ -85,6 +90,7 @@ export interface DoctorOptions {
   now?: Date;
   runCommand?: (command: string, args: string[]) => Promise<DoctorCommandResult>;
   resolveBundledRipgrep?: () => string | null;
+  describeTypeScript?: () => TypeScriptResolutionInfo | null;
 }
 
 const REQUIRED_NODE_VERSION = "20.10.0";
@@ -111,6 +117,7 @@ export async function runDoctorDiagnostics(
   checks.push(await checkSkills(input.paths, input.projectTrust));
   checks.push(checkProviderPlugins(input.providerPluginDiagnostics ?? []));
   checks.push(await checkRipgrep(runCommand, options.resolveBundledRipgrep ?? resolveBundledRgScript));
+  checks.push(checkTypeScriptBackend(options.describeTypeScript ?? describeTypeScriptResolution));
   checks.push(await checkExecutable("git", ["--version"], "git", "Install Git and ensure git is on PATH.", runCommand, "warn"));
   checks.push(await checkAlyceDirectoryWritable(input.paths.workspaceRuntimeDirectory));
   checks.push(checkSnapshotStore(input.snapshotDiagnostics));
@@ -719,6 +726,46 @@ async function checkRipgrep(
       result.stderr.trim()
     ].filter((detail): detail is string => Boolean(detail)),
     suggestion: "Install ripgrep and ensure rg is on PATH."
+  };
+}
+
+function checkTypeScriptBackend(
+  describeTypeScript: () => TypeScriptResolutionInfo | null
+): DoctorCheck {
+  let resolution: TypeScriptResolutionInfo | null;
+  try {
+    resolution = describeTypeScript();
+  } catch {
+    resolution = null;
+  }
+
+  if (resolution?.supported) {
+    return {
+      id: "tool.typescript",
+      title: "TypeScript backend",
+      status: "ok",
+      summary: `typescript ${resolution.version} (${resolution.source})`,
+      details: [resolution.modulePath]
+    };
+  }
+
+  if (resolution) {
+    return {
+      id: "tool.typescript",
+      title: "TypeScript backend",
+      status: "warn",
+      summary: `typescript ${resolution.version ?? "unknown"} (${resolution.source}) is below the minimum supported version ${MIN_SUPPORTED_TYPESCRIPT_VERSION}; TypeScript LSP features and diagnostics are disabled.`,
+      details: [resolution.modulePath],
+      suggestion: `Install typescript >=${MIN_SUPPORTED_TYPESCRIPT_VERSION} in your project, for example: npm i -D typescript.`
+    };
+  }
+
+  return {
+    id: "tool.typescript",
+    title: "TypeScript backend",
+    status: "warn",
+    summary: "No typescript module was found; TypeScript LSP features and diagnostics are disabled.",
+    suggestion: "Install typescript in your project, for example: npm i -D typescript."
   };
 }
 
