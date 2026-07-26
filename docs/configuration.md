@@ -149,6 +149,8 @@ Built-in preset defaults:
 
 Optional model price metadata can be added per model with `inputCostPerMillionTokens` and `outputCostPerMillionTokens`. `/usage` uses these values for estimated cost; models without both values are shown as tokens only.
 
+Prompt caching: the native Anthropic channel automatically marks the system prompt and the latest message as cache breakpoints, so multi-turn sessions reuse the cached prefix. `/usage` shows cache-read tokens and the hit rate, and the estimated cost prices cached reads at `cachedInputCostPerMillionTokens` when configured (falling back to 10% of the input price on Anthropic and 50% elsewhere; Anthropic cache writes are billed at 1.25x input).
+
 Per-model sampling and reasoning options:
 
 - `temperature`: sampling temperature (`0`–`2`) used when Alyce does not pass an explicit one. Set it to `null` to omit the parameter entirely for models that reject it. Alyce also omits `temperature` automatically for known reasoning model families (`o1`/`o3`/`o4`-style and `gpt-5`-style ids).

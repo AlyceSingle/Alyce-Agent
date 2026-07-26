@@ -118,6 +118,9 @@ export function resolveModelProfile(
     ...(modelProfile.outputCostPerMillionTokens !== undefined
       ? { outputCostPerMillionTokens: modelProfile.outputCostPerMillionTokens }
       : {}),
+    ...(modelProfile.cachedInputCostPerMillionTokens !== undefined
+      ? { cachedInputCostPerMillionTokens: modelProfile.cachedInputCostPerMillionTokens }
+      : {}),
     ...(modelProfile.temperature !== undefined
       ? { temperature: modelProfile.temperature }
       : {}),

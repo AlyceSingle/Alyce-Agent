@@ -34,6 +34,7 @@ export const ConnectionConfigFileSchema = z
         maxOutputTokens: z.number().int().positive().optional(),
         inputCostPerMillionTokens: z.number().nonnegative().optional(),
         outputCostPerMillionTokens: z.number().nonnegative().optional(),
+        cachedInputCostPerMillionTokens: z.number().nonnegative().optional(),
         temperature: z.number().min(0).max(2).nullable().optional(),
         reasoningEffort: z.union([
           z.literal("minimal"),

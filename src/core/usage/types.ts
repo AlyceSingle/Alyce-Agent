@@ -11,6 +11,10 @@ export interface ModelTokenUsage {
   prompt_tokens?: number;
   completion_tokens?: number;
   total_tokens?: number;
+  /** OpenAI 兼容字段：prompt_tokens 中命中缓存的部分。 */
+  prompt_tokens_details?: { cached_tokens?: number };
+  /** Anthropic 缓存写入 token（prompt_tokens 已包含，仅用于分账）。 */
+  cache_creation_tokens?: number;
 }
 
 export interface ModelUsageEvent {
@@ -34,6 +38,8 @@ export interface UsageTokens {
   input: number;
   output: number;
   total: number;
+  cacheRead: number;
+  cacheCreation: number;
   hasUsage: boolean;
 }
 
@@ -58,6 +64,8 @@ export interface UsageAggregate {
   inputTokens: number;
   outputTokens: number;
   totalTokens: number;
+  cacheReadTokens: number;
+  cacheCreationTokens: number;
   usageEventCount: number;
   durationMs: number;
   retryCount: number;

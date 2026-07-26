@@ -8,7 +8,43 @@ function runTests() {
   testUnknownPricingDisplaysTokensOnly();
   testMissingInputOutputSplitDoesNotEstimateCost();
   testSubagentUsageIsGrouped();
+  testCachedTokensDiscountCost();
   console.log("usageLedger tests passed");
+}
+
+function testCachedTokensDiscountCost() {
+  const ledger = new UsageLedger();
+  const event = ledger.recordEvent({
+    source: "main",
+    requestedModel: "anthropic/claude-sonnet-4.6",
+    resolvedModel: createResolvedModel({
+      providerId: "anthropic",
+      modelId: "claude-sonnet-4.6",
+      kind: "anthropic",
+      inputCostPerMillionTokens: 3,
+      outputCostPerMillionTokens: 15
+    }),
+    usage: {
+      prompt_tokens: 2_000_000,
+      completion_tokens: 0,
+      total_tokens: 2_000_000,
+      prompt_tokens_details: { cached_tokens: 1_000_000 },
+      cache_creation_tokens: 1_000_000
+    },
+    startedAt: "2026-07-26T00:00:00.000Z",
+    completedAt: "2026-07-26T00:00:01.000Z",
+    durationMs: 1_000,
+    retryCount: 0
+  });
+
+  // 全价 $6；缓存读 1M @ 0.3 + 缓存写 1M @ 3.75 = $4.05。
+  assert.equal(event.estimatedCostUsd?.toFixed(2), "4.05");
+  assert.equal(event.tokens.cacheRead, 1_000_000);
+  assert.equal(event.tokens.cacheCreation, 1_000_000);
+
+  const summary = ledger.getSummary();
+  assert.equal(summary.totals.cacheReadTokens, 1_000_000);
+  assert.equal(summary.totals.cacheCreationTokens, 1_000_000);
 }
 
 function testUsageLedgerAggregatesByProviderModel() {

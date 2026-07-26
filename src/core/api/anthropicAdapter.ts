@@ -20,14 +20,17 @@ import { asRecord as asRecordOrNull } from "../util/unknown.js";
 import { readServerSentEvents } from "./sseStream.js";
 import type { ChatCompletionStreamHandlers } from "./chatCompletionStream.js";
 
-type AnthropicContentBlock =
+type AnthropicCacheControl = { type: "ephemeral" };
+
+type AnthropicContentBlock = (
   | { type: "text"; text: string }
   | { type: "thinking"; thinking: string }
   | { type: "redacted_thinking"; data: string }
   | { type: "image"; source: { type: "base64"; media_type: string; data: string } | { type: "url"; url: string } }
   | { type: "document"; source: { type: "base64"; media_type: string; data: string } }
   | { type: "tool_use"; id: string; name: string; input: JsonRecord }
-  | { type: "tool_result"; tool_use_id: string; content: string };
+  | { type: "tool_result"; tool_use_id: string; content: string }
+) & { cache_control?: AnthropicCacheControl };
 
 type AnthropicMessage = {
   role: "user" | "assistant";
@@ -38,7 +41,7 @@ type AnthropicRequest = {
   model: string;
   max_tokens: number;
   messages: AnthropicMessage[];
-  system?: string;
+  system?: Array<{ type: "text"; text: string; cache_control?: AnthropicCacheControl }>;
   temperature?: number;
   thinking?: { type: "enabled"; budget_tokens: number };
   tools?: Array<{
@@ -161,6 +164,10 @@ export function buildAnthropicRequest(
     }
   }
 
+  // Prompt caching：system 块 + 最后一条消息各设一个缓存断点。
+  // system 断点覆盖 tools+system 前缀；末消息断点让下一轮请求命中整段对话历史。
+  applyCacheControlToLastBlock(messages[messages.length - 1]);
+
   const thinkingBudget = resolvedModel.thinkingBudgetTokens;
   const maxTokens = resolvedModel.maxOutputTokens ?? 4096;
   return {
@@ -169,7 +176,15 @@ export function buildAnthropicRequest(
       ? Math.max(maxTokens, thinkingBudget + THINKING_ANSWER_HEADROOM_TOKENS)
       : maxTokens,
     messages,
-    ...(system.length > 0 ? { system: system.join("\n\n") } : {}),
+    ...(system.length > 0
+      ? {
+          system: [{
+            type: "text" as const,
+            text: system.join("\n\n"),
+            cache_control: { type: "ephemeral" as const }
+          }]
+        }
+      : {}),
     // extended thinking 只兼容默认 temperature，这里不再透传。
     ...(thinkingBudget
       ? { thinking: { type: "enabled" as const, budget_tokens: thinkingBudget } }
@@ -220,7 +235,9 @@ export function convertAnthropicResponse(
   }
 
   const usage = asRecord(record.usage);
-  const inputTokens = numberValue(usage.input_tokens) + numberValue(usage.cache_creation_input_tokens) + numberValue(usage.cache_read_input_tokens);
+  const cacheReadTokens = numberValue(usage.cache_read_input_tokens);
+  const cacheCreationTokens = numberValue(usage.cache_creation_input_tokens);
+  const inputTokens = numberValue(usage.input_tokens) + cacheCreationTokens + cacheReadTokens;
   const outputTokens = numberValue(usage.output_tokens);
   return createChatCompletionResponse({
     id: typeof record.id === "string" ? record.id : "anthropic-message",
@@ -230,7 +247,7 @@ export function convertAnthropicResponse(
     finishReason: mapAnthropicStopReason(record.stop_reason),
     toolCalls,
     ...(inputTokens > 0 || outputTokens > 0
-      ? { usage: toOpenAIUsage(inputTokens, outputTokens) }
+      ? { usage: toOpenAIUsage(inputTokens, outputTokens, { cacheReadTokens, cacheCreationTokens }) }
       : {})
   });
 }
@@ -248,6 +265,8 @@ export async function consumeAnthropicMessageStream(
   let stopReason: unknown;
   let inputTokens = 0;
   let outputTokens = 0;
+  let cacheReadTokens = 0;
+  let cacheCreationTokens = 0;
   const textBlocks: string[] = [];
   const reasoningBlocks: string[] = [];
   const blockTypes = new Map<number, string>();
@@ -273,10 +292,9 @@ export async function consumeAnthropicMessageStream(
         model = message.model;
       }
       const usage = asRecord(message.usage);
-      inputTokens =
-        numberValue(usage.input_tokens) +
-        numberValue(usage.cache_creation_input_tokens) +
-        numberValue(usage.cache_read_input_tokens);
+      cacheReadTokens = numberValue(usage.cache_read_input_tokens);
+      cacheCreationTokens = numberValue(usage.cache_creation_input_tokens);
+      inputTokens = numberValue(usage.input_tokens) + cacheCreationTokens + cacheReadTokens;
       continue;
     }
 
@@ -354,7 +372,7 @@ export async function consumeAnthropicMessageStream(
     finishReason: mapAnthropicStopReason(stopReason),
     toolCalls,
     ...(inputTokens > 0 || outputTokens > 0
-      ? { usage: toOpenAIUsage(inputTokens, outputTokens) }
+      ? { usage: toOpenAIUsage(inputTokens, outputTokens, { cacheReadTokens, cacheCreationTokens }) }
       : {})
   });
 }
@@ -364,6 +382,22 @@ function parseLooseJson(value: string): unknown {
     return JSON.parse(value) as unknown;
   } catch {
     return undefined;
+  }
+}
+
+function applyCacheControlToLastBlock(message: AnthropicMessage | undefined) {
+  if (!message) {
+    return;
+  }
+
+  for (let index = message.content.length - 1; index >= 0; index -= 1) {
+    const block = message.content[index]!;
+    if (block.type === "thinking" || block.type === "redacted_thinking") {
+      continue;
+    }
+
+    block.cache_control = { type: "ephemeral" };
+    return;
   }
 }
 

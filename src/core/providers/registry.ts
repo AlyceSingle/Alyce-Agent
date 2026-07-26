@@ -235,6 +235,9 @@ function normalizeModelProfiles(
       ...(positiveNumber(value.outputCostPerMillionTokens) !== undefined
         ? { outputCostPerMillionTokens: positiveNumber(value.outputCostPerMillionTokens) }
         : {}),
+      ...(positiveNumber(value.cachedInputCostPerMillionTokens) !== undefined
+        ? { cachedInputCostPerMillionTokens: positiveNumber(value.cachedInputCostPerMillionTokens) }
+        : {}),
       ...(normalizeTemperature(value.temperature) !== undefined
         ? { temperature: normalizeTemperature(value.temperature) }
         : {}),

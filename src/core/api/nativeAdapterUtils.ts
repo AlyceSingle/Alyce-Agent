@@ -143,12 +143,26 @@ export function createChatCompletionResponse(options: {
   };
 }
 
-export function toOpenAIUsage(inputTokens: number, outputTokens: number): OpenAI.Completions.CompletionUsage {
-  return {
+export function toOpenAIUsage(
+  inputTokens: number,
+  outputTokens: number,
+  cacheTokens?: { cacheReadTokens?: number; cacheCreationTokens?: number }
+): OpenAI.Completions.CompletionUsage {
+  const cacheRead = cacheTokens?.cacheReadTokens ?? 0;
+  const cacheCreation = cacheTokens?.cacheCreationTokens ?? 0;
+  const usage: OpenAI.Completions.CompletionUsage & { cache_creation_tokens?: number } = {
     prompt_tokens: inputTokens,
     completion_tokens: outputTokens,
     total_tokens: inputTokens + outputTokens
   };
+  if (cacheRead > 0) {
+    usage.prompt_tokens_details = { cached_tokens: cacheRead };
+  }
+  if (cacheCreation > 0) {
+    usage.cache_creation_tokens = cacheCreation;
+  }
+
+  return usage;
 }
 
 export async function parseJsonResponse(response: Response): Promise<unknown> {

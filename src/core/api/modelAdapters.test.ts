@@ -32,6 +32,7 @@ async function runTests() {
   testAnthropicNativeRequestInlinesImagesAndPdfs();
   testGoogleNativeRequestInlinesImagesAndPdfs();
   testAnthropicNativeResponseConvertsToolUse();
+  testAnthropicNativeResponseSplitsCacheTokens();
   testAnthropicNativeResponsePreservesThinking();
   testGoogleNativeRequestConvertsTools();
   testGoogleNativeResponseConvertsFunctionCall();
@@ -182,9 +183,16 @@ function testAnthropicNativeRequestConvertsTools() {
 
   assert.equal(request.model, "claude-sonnet-4.6");
   assert.equal(request.max_tokens, 1234);
-  assert.equal(request.system, "system prompt");
+  assert.deepEqual(request.system, [{
+    type: "text",
+    text: "system prompt",
+    cache_control: { type: "ephemeral" }
+  }]);
   assert.equal(request.messages[0]?.role, "user");
   assert.equal(request.tools?.[0]?.name, "Read");
+  const lastMessage = request.messages[request.messages.length - 1];
+  const lastBlock = lastMessage?.content[lastMessage.content.length - 1];
+  assert.deepEqual(lastBlock?.cache_control, { type: "ephemeral" });
 }
 
 function createMultimodalUserMessage(): OpenAI.Chat.Completions.ChatCompletionMessageParam {
@@ -225,7 +233,8 @@ function testAnthropicNativeRequestInlinesImagesAndPdfs() {
   });
   assert.deepEqual(blocks[2], {
     type: "document",
-    source: { type: "base64", media_type: "application/pdf", data: "cGRm" }
+    source: { type: "base64", media_type: "application/pdf", data: "cGRm" },
+    cache_control: { type: "ephemeral" }
   });
 }
 
@@ -266,6 +275,29 @@ function testAnthropicNativeResponseConvertsToolUse() {
   assert.equal(response.choices[0]?.finish_reason, "tool_calls");
   assert.equal(getFunctionToolCallName(response.choices[0]?.message.tool_calls?.[0]), "Read");
   assert.equal(response.usage?.total_tokens, 15);
+}
+
+function testAnthropicNativeResponseSplitsCacheTokens() {
+  const response = convertAnthropicResponse({
+    id: "msg_1",
+    model: "claude-sonnet-4.6",
+    stop_reason: "end_turn",
+    content: [{ type: "text", text: "hi" }],
+    usage: {
+      input_tokens: 100,
+      cache_creation_input_tokens: 400,
+      cache_read_input_tokens: 1500,
+      output_tokens: 20
+    }
+  }, "claude-sonnet-4.6");
+
+  assert.deepEqual(response.usage, {
+    prompt_tokens: 2000,
+    completion_tokens: 20,
+    total_tokens: 2020,
+    prompt_tokens_details: { cached_tokens: 1500 },
+    cache_creation_tokens: 400
+  });
 }
 
 function testAnthropicNativeResponsePreservesThinking() {
@@ -456,7 +488,12 @@ async function testAnthropicStreamAssemblesResponse() {
     (message?.tool_calls?.[0] as { function?: { arguments?: string } })?.function?.arguments,
     "{\"path\":\"README.md\"}"
   );
-  assert.deepEqual(response.usage, { prompt_tokens: 10, completion_tokens: 11, total_tokens: 21 });
+  assert.deepEqual(response.usage, {
+    prompt_tokens: 10,
+    completion_tokens: 11,
+    total_tokens: 21,
+    prompt_tokens_details: { cached_tokens: 3 }
+  });
 }
 
 async function testGoogleStreamAssemblesResponse() {

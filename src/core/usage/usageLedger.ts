@@ -153,12 +153,16 @@ function normalizeUsageTokens(usage: ModelTokenUsage | null | undefined) {
   const input = normalizeTokenCount(usage?.prompt_tokens);
   const output = normalizeTokenCount(usage?.completion_tokens);
   const total = normalizeTokenCount(usage?.total_tokens) ?? ((input ?? 0) + (output ?? 0));
+  const cacheRead = normalizeTokenCount(usage?.prompt_tokens_details?.cached_tokens) ?? 0;
+  const cacheCreation = normalizeTokenCount(usage?.cache_creation_tokens) ?? 0;
   const hasUsage = input !== undefined || output !== undefined || usage?.total_tokens !== undefined;
 
   return {
     input: input ?? 0,
     output: output ?? 0,
     total,
+    cacheRead,
+    cacheCreation,
     hasUsage
   };
 }
@@ -170,6 +174,12 @@ function normalizeTokenCount(value: number | undefined): number | undefined {
 
   return Math.max(0, Math.trunc(value!));
 }
+
+// 未显式配置缓存单价时的默认折扣（相对 input 价）。
+const CACHE_READ_DISCOUNT_ANTHROPIC = 0.1;
+const CACHE_READ_DISCOUNT_DEFAULT = 0.5;
+// Anthropic 缓存写入按 1.25 倍 input 价计费。
+const CACHE_WRITE_MULTIPLIER_ANTHROPIC = 1.25;
 
 function estimateCostUsd(
   input: UsageRecordInput,
@@ -187,7 +197,22 @@ function estimateCostUsd(
     return undefined;
   }
 
-  return (tokens.input / 1_000_000) * inputPrice + (tokens.output / 1_000_000) * outputPrice;
+  const isAnthropic = input.resolvedModel?.kind === "anthropic";
+  const cacheReadPrice = input.resolvedModel?.cachedInputCostPerMillionTokens ??
+    inputPrice * (isAnthropic ? CACHE_READ_DISCOUNT_ANTHROPIC : CACHE_READ_DISCOUNT_DEFAULT);
+  const cacheWritePrice = isAnthropic
+    ? inputPrice * CACHE_WRITE_MULTIPLIER_ANTHROPIC
+    : inputPrice;
+  const cacheRead = Math.min(tokens.cacheRead, tokens.input);
+  const cacheCreation = Math.min(tokens.cacheCreation, tokens.input - cacheRead);
+  const uncachedInput = Math.max(0, tokens.input - cacheRead - cacheCreation);
+
+  return (
+    (uncachedInput / 1_000_000) * inputPrice +
+    (cacheRead / 1_000_000) * cacheReadPrice +
+    (cacheCreation / 1_000_000) * cacheWritePrice +
+    (tokens.output / 1_000_000) * outputPrice
+  );
 }
 
 function createEmptyAggregate(
@@ -202,6 +227,8 @@ function createEmptyAggregate(
     inputTokens: 0,
     outputTokens: 0,
     totalTokens: 0,
+    cacheReadTokens: 0,
+    cacheCreationTokens: 0,
     usageEventCount: 0,
     durationMs: 0,
     retryCount: 0,
@@ -231,6 +258,8 @@ function addEventToAggregate(aggregate: UsageAggregate, event: UsageEvent) {
   aggregate.inputTokens += event.tokens.input;
   aggregate.outputTokens += event.tokens.output;
   aggregate.totalTokens += event.tokens.total;
+  aggregate.cacheReadTokens += event.tokens.cacheRead;
+  aggregate.cacheCreationTokens += event.tokens.cacheCreation;
   aggregate.durationMs += Math.max(0, Math.trunc(event.durationMs));
   aggregate.retryCount += Math.max(0, Math.trunc(event.retryCount));
   if (event.tokens.hasUsage) {

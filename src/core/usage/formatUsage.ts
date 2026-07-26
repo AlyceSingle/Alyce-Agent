@@ -70,11 +70,22 @@ function formatAggregateInline(aggregate: UsageAggregate): string {
   return [
     `${formatTokenCount(aggregate.totalTokens)} tokens`,
     `${formatTokenCount(aggregate.inputTokens)} in`,
+    ...(aggregate.cacheReadTokens > 0
+      ? [`${formatTokenCount(aggregate.cacheReadTokens)} cached (${formatCacheHitRate(aggregate)})`]
+      : []),
     `${formatTokenCount(aggregate.outputTokens)} out`,
     `${aggregate.requestCount} request${aggregate.requestCount === 1 ? "" : "s"}`,
     formatDuration(aggregate.durationMs),
     `${aggregate.retryCount} retr${aggregate.retryCount === 1 ? "y" : "ies"}`
   ].join(", ");
+}
+
+function formatCacheHitRate(aggregate: UsageAggregate): string {
+  if (aggregate.inputTokens <= 0) {
+    return "0%";
+  }
+
+  return `${Math.round((aggregate.cacheReadTokens / aggregate.inputTokens) * 100)}%`;
 }
 
 function formatCostSummary(aggregate: UsageAggregate): string {

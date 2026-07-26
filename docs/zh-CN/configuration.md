@@ -119,6 +119,8 @@ API-key preset：`openai`、`anthropic`、`google`、`openrouter`、`deepseek`�
 
 模型可以在 `models` 里可选配置 `inputCostPerMillionTokens` 和 `outputCostPerMillionTokens`。`/usage` 只在两者都存在时估算成本；缺少价格元数据的模型只显示 tokens。
 
+Prompt caching：原生 Anthropic 通道会自动在 system 提示词和最新一条消息上设置缓存断点，多轮会话可复用缓存前缀。`/usage` 会显示缓存命中 token 数与命中率；估算成本时缓存读取按 `cachedInputCostPerMillionTokens`（未配置时 Anthropic 按 input 价 10%、其余按 50% 折算，Anthropic 缓存写入按 input 价 1.25 倍）计费。
+
 每个模型还支持采样与推理选项：
 
 - `temperature`：采样温度（`0`–`2`），在 Alyce 未显式传参时生效。设为 `null` 表示完全不发送该参数（部分模型不接受）。对已知的推理模型族（`o1`/`o3`/`o4` 风格与 `gpt-5` 风格的模型名），Alyce 会自动省略 `temperature`。

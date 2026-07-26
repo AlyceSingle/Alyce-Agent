@@ -24,6 +24,8 @@ export interface ModelProfile {
   maxOutputTokens?: number;
   inputCostPerMillionTokens?: number;
   outputCostPerMillionTokens?: number;
+  /** 缓存命中 token 的单价；未配置时按 provider 默认折扣估算（Anthropic 0.1x，其余 0.5x）。 */
+  cachedInputCostPerMillionTokens?: number;
   /** 采样温度。null 表示"不要发送 temperature 参数"（部分推理模型不接受该参数）。 */
   temperature?: number | null;
   /** OpenAI 兼容通道的 reasoning_effort 参数；设置后不再发送 temperature。 */
@@ -72,6 +74,7 @@ export interface ResolvedModelProfile {
   maxOutputTokens?: number;
   inputCostPerMillionTokens?: number;
   outputCostPerMillionTokens?: number;
+  cachedInputCostPerMillionTokens?: number;
   temperature?: number | null;
   reasoningEffort?: ReasoningEffort;
   thinkingBudgetTokens?: number;
