@@ -10,7 +10,7 @@
     "forceConsistentCasingInFileNames": true,
     "skipLibCheck": true,
     "incremental": true,
-    "tsBuildInfoFile": "dist/.tsbuildinfo",
+    "tsBuildInfoFile": "node_modules/.cache/alyce/tsconfig.tsbuildinfo",
     "rootDir": "src",
     "outDir": "dist",
     "resolveJsonModule": true
