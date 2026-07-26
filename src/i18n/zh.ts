@@ -7,6 +7,8 @@ const zh: Record<string, string> = {
   "todoPanel.prefix.pending": "[ ]",
 
   // ── TaskPanel ──
+  "queuedInputPanel.title": "待发送 ({count} 条排队中)",
+  "queuedInputPanel.hiddenInputs": "  +{count} 条更多排队输入",
   "taskPanel.title": "后台任务 ({count} 个运行中)",
   "taskPanel.prefix": "[>]",
   "taskPanel.hiddenTasks": "+{count} 个更多后台任务",
@@ -27,7 +29,6 @@ const zh: Record<string, string> = {
 
   // ── PromptInput ──
   "promptInput.placeholder.default": "让 Alyce 检查、编辑或解释一些内容...",
-  "promptInput.placeholder.locked": "Alyce 工作时输入已锁定。按 ESC 中断。",
   "promptInput.hint.escClear": "再按一次 Esc 清空输入。",
 
   // ── PermissionsDialog ──

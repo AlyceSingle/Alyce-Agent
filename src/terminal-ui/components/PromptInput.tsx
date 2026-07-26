@@ -17,10 +17,6 @@ import TextInput from "./TextInput.js";
 const PROMPT_INPUT_VIEWPORT_OFFSET = 8;
 const MAX_VISIBLE_SLASH_COMMAND_SUGGESTIONS = 10;
 
-export function getInputLockedPlaceholder(): string {
-  return t("promptInput.placeholder.locked");
-}
-
 const SLASH_COMMAND_SEARCH_INDEX = REPL_COMMAND_DEFINITIONS.map((command) => ({
   command,
   prefixes: Array.from(

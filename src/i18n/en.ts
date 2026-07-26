@@ -7,6 +7,8 @@ const en: Record<string, string> = {
   "todoPanel.prefix.pending": "[ ]",
 
   // ── TaskPanel ──
+  "queuedInputPanel.title": "Queued ({count} waiting to send)",
+  "queuedInputPanel.hiddenInputs": "  +{count} more queued input(s)",
   "taskPanel.title": "Background Tasks ({count} running)",
   "taskPanel.prefix": "[>]",
   "taskPanel.hiddenTasks": "+{count} more background task(s)",
@@ -27,7 +29,6 @@ const en: Record<string, string> = {
 
   // ── PromptInput ──
   "promptInput.placeholder.default": "Ask Alyce to inspect, edit, or explain something...",
-  "promptInput.placeholder.locked": "Input locked while Alyce is working. Press ESC to interrupt.",
   "promptInput.hint.escClear": "Press Esc again to clear input.",
 
   // ── PermissionsDialog ──

@@ -7,7 +7,8 @@ import useStdout from "../runtime/ink-runtime/hooks/use-stdout.js";
 import useTerminalSize from "../runtime/ink-runtime/hooks/use-terminal-size.js";
 import { FullscreenLayout } from "../components/FullscreenLayout.js";
 import { MessageList, type MessageListHandle } from "../components/MessageList.js";
-import { getInputLockedPlaceholder, PromptInput } from "../components/PromptInput.js";
+import { PromptInput } from "../components/PromptInput.js";
+import { QueuedInputPanel } from "../components/QueuedInputPanel.js";
 import { StatusBar } from "../components/StatusBar.js";
 import { TodoPanel } from "../components/TodoPanel.js";
 import { TaskPanel } from "../components/TaskPanel.js";
@@ -454,8 +455,6 @@ export function AgentScreen(props: { controller: SessionController }) {
               : "Resolve the active panel above"
         } before typing.`
       : undefined;
-  // 轮次运行中不再锁输入：继续打字会排队，在轮次结束后发出。
-  const promptDisabledPlaceholder = undefined;
 
   const overlay =
     activeDialog?.type === "permission" ? (
@@ -590,20 +589,29 @@ export function AgentScreen(props: { controller: SessionController }) {
       overlay={overlay}
       modal={modal}
       bottom={
-        <AgentPromptDock
-          controller={props.controller}
-          terminalWidth={terminalWidth}
-          disabled={hasDialog}
-          disabledReason={promptDisabledReason}
-          disabledPlaceholder={promptDisabledPlaceholder}
-          sublineText={`${formatCompactModelDisplay(connection.model)} | ${workspaceRoot}`}
-          onLayoutHeightChange={refreshPromptLayout}
-          onCtrlCCaptureChange={setCtrlCCapture}
-          onVerticalNavCaptureChange={setVerticalNavCapture}
-        />
+        <>
+          <QueuedInputSection />
+          <AgentPromptDock
+            controller={props.controller}
+            terminalWidth={terminalWidth}
+            disabled={hasDialog}
+            disabledReason={promptDisabledReason}
+            sublineText={`${formatCompactModelDisplay(connection.model)} | ${workspaceRoot}`}
+            onLayoutHeightChange={refreshPromptLayout}
+            onCtrlCCaptureChange={setCtrlCCapture}
+            onVerticalNavCaptureChange={setVerticalNavCapture}
+          />
+        </>
       }
     />
   );
+}
+
+// 单独订阅 queuedInputs：不要把它塞进 AgentPromptDock，那里刻意只跟踪 draftInput，
+// 多一个订阅就会让输入框随队列变化重渲染并抖动。
+function QueuedInputSection() {
+  const queuedInputs = useTerminalUiSelector((value) => value.queuedInputs);
+  return <QueuedInputPanel queuedInputs={queuedInputs} />;
 }
 
 type AgentPromptDockProps = {
