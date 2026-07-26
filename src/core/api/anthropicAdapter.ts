@@ -16,6 +16,8 @@ import {
   type JsonRecord
 } from "./nativeAdapterUtils.js";
 import { asRecord as asRecordOrNull } from "../util/unknown.js";
+import { readServerSentEvents } from "./sseStream.js";
+import type { ChatCompletionStreamHandlers } from "./chatCompletionStream.js";
 
 type AnthropicContentBlock =
   | { type: "text"; text: string }
@@ -54,6 +56,7 @@ export function createAnthropicAdapter(
     kind: resolvedModel.kind,
     sendChatCompletion: async (request, options) => {
       const anthropicRequest = buildAnthropicRequest(request, options.resolvedModel);
+      const streaming = Boolean(options.streamHandlers);
       const response = await fetch("https://api.anthropic.com/v1/messages", {
         method: "POST",
         headers: {
@@ -61,9 +64,16 @@ export function createAnthropicAdapter(
           "anthropic-version": "2023-06-01",
           "x-api-key": options.resolvedModel.apiKey ?? ""
         },
-        body: JSON.stringify(anthropicRequest),
+        body: JSON.stringify(streaming ? { ...anthropicRequest, stream: true } : anthropicRequest),
         signal: options.abortSignal
       });
+      if (streaming && response.ok) {
+        return consumeAnthropicMessageStream(response, {
+          modelId: options.resolvedModel.modelId,
+          handlers: options.streamHandlers,
+          abortSignal: options.abortSignal
+        });
+      }
       return convertAnthropicResponse(
         await parseJsonResponse(response),
         options.resolvedModel.modelId
@@ -210,6 +220,138 @@ export function convertAnthropicResponse(
       ? { usage: toOpenAIUsage(inputTokens, outputTokens) }
       : {})
   });
+}
+
+export async function consumeAnthropicMessageStream(
+  response: Response,
+  options: {
+    modelId: string;
+    handlers?: ChatCompletionStreamHandlers;
+    abortSignal?: AbortSignal;
+  }
+): Promise<OpenAI.Chat.Completions.ChatCompletion> {
+  let id = "anthropic-message";
+  let model = options.modelId;
+  let stopReason: unknown;
+  let inputTokens = 0;
+  let outputTokens = 0;
+  const textBlocks: string[] = [];
+  const reasoningBlocks: string[] = [];
+  const blockTypes = new Map<number, string>();
+  const toolCallsByIndex = new Map<number, { id: string; name: string; argumentsJson: string }>();
+
+  for await (const event of readServerSentEvents(response, options.abortSignal)) {
+    const payload = asRecord(parseLooseJson(event.data));
+    const type = typeof payload.type === "string" ? payload.type : event.event;
+
+    if (type === "error") {
+      const errorRecord = asRecord(payload.error);
+      throw new Error(
+        typeof errorRecord.message === "string" ? errorRecord.message : "Anthropic stream error"
+      );
+    }
+
+    if (type === "message_start") {
+      const message = asRecord(payload.message);
+      if (typeof message.id === "string") {
+        id = message.id;
+      }
+      if (typeof message.model === "string") {
+        model = message.model;
+      }
+      const usage = asRecord(message.usage);
+      inputTokens =
+        numberValue(usage.input_tokens) +
+        numberValue(usage.cache_creation_input_tokens) +
+        numberValue(usage.cache_read_input_tokens);
+      continue;
+    }
+
+    if (type === "content_block_start") {
+      const index = numberValue(payload.index);
+      const block = asRecord(payload.content_block);
+      const blockType = typeof block.type === "string" ? block.type : "text";
+      blockTypes.set(index, blockType);
+      if (blockType === "text") {
+        textBlocks.push("");
+      } else if (blockType === "thinking") {
+        reasoningBlocks.push("");
+      } else if (blockType === "tool_use") {
+        toolCallsByIndex.set(index, {
+          id: typeof block.id === "string" ? block.id : `tool_${toolCallsByIndex.size}`,
+          name: typeof block.name === "string" ? block.name : "tool",
+          argumentsJson: ""
+        });
+      }
+      continue;
+    }
+
+    if (type === "content_block_delta") {
+      const index = numberValue(payload.index);
+      const delta = asRecord(payload.delta);
+      if (delta.type === "text_delta" && typeof delta.text === "string") {
+        textBlocks[textBlocks.length - 1] = (textBlocks[textBlocks.length - 1] ?? "") + delta.text;
+        options.handlers?.onTextDelta?.(delta.text);
+        continue;
+      }
+      if (delta.type === "thinking_delta" && typeof delta.thinking === "string") {
+        reasoningBlocks[reasoningBlocks.length - 1] =
+          (reasoningBlocks[reasoningBlocks.length - 1] ?? "") + delta.thinking;
+        options.handlers?.onThinkingDelta?.(delta.thinking);
+        continue;
+      }
+      if (delta.type === "input_json_delta" && typeof delta.partial_json === "string") {
+        const toolCall = toolCallsByIndex.get(index);
+        if (toolCall) {
+          toolCall.argumentsJson += delta.partial_json;
+        }
+      }
+      continue;
+    }
+
+    if (type === "message_delta") {
+      const delta = asRecord(payload.delta);
+      if (delta.stop_reason !== undefined) {
+        stopReason = delta.stop_reason;
+      }
+      const usage = asRecord(payload.usage);
+      const streamedOutput = numberValue(usage.output_tokens);
+      if (streamedOutput > 0) {
+        outputTokens = streamedOutput;
+      }
+    }
+  }
+
+  const toolCalls: OpenAI.Chat.Completions.ChatCompletionMessageToolCall[] = [...toolCallsByIndex.entries()]
+    .sort((left, right) => left[0] - right[0])
+    .map(([, value]) => ({
+      id: value.id,
+      type: "function",
+      function: {
+        name: value.name,
+        arguments: value.argumentsJson || "{}"
+      }
+    }));
+
+  return createChatCompletionResponse({
+    id,
+    model,
+    content: textBlocks.filter(Boolean).join("\n"),
+    reasoningContent: reasoningBlocks.filter(Boolean).join("\n"),
+    finishReason: mapAnthropicStopReason(stopReason),
+    toolCalls,
+    ...(inputTokens > 0 || outputTokens > 0
+      ? { usage: toOpenAIUsage(inputTokens, outputTokens) }
+      : {})
+  });
+}
+
+function parseLooseJson(value: string): unknown {
+  try {
+    return JSON.parse(value) as unknown;
+  } catch {
+    return undefined;
+  }
 }
 
 function toAnthropicUserBlocks(content: unknown): AnthropicContentBlock[] {

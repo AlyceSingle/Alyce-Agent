@@ -42,7 +42,7 @@ export interface SendChatCompletionOptions extends ChatCompletionRequestOptions 
   abortSignal?: AbortSignal;
   onReconnect?: (event: ChatCompletionReconnectEvent) => void;
   onUsage?: (event: ModelUsageEvent) => void;
-  /** 文本/思考增量回调。传入后 OpenAI 兼容通道走 SSE；原生 Anthropic/Google 仍整包返回。 */
+  /** 文本/思考增量回调。传入后 OpenAI 兼容通道与原生 Anthropic/Google 通道均走 SSE 流式。 */
   streamHandlers?: ChatCompletionStreamHandlers;
 }
 

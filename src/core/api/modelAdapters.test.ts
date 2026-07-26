@@ -8,8 +8,17 @@ import {
 import { getFunctionToolCallName } from "./openaiFunctionTools.js";
 import { sendChatCompletion } from "./sendChatCompletion.js";
 import type { ResolvedModelProfile } from "../providers/types.js";
-import { buildAnthropicRequest, convertAnthropicResponse } from "./anthropicAdapter.js";
-import { buildGoogleRequest, convertGoogleResponse } from "./googleAdapter.js";
+import {
+  buildAnthropicRequest,
+  consumeAnthropicMessageStream,
+  convertAnthropicResponse
+} from "./anthropicAdapter.js";
+import {
+  buildGoogleGenerateContentUrl,
+  buildGoogleRequest,
+  consumeGoogleGenerateContentStream,
+  convertGoogleResponse
+} from "./googleAdapter.js";
 
 async function runTests() {
   await testAdapterRequestUsesProviderModelId();
@@ -27,6 +36,9 @@ async function runTests() {
   testGoogleNativeRequestConvertsTools();
   testGoogleNativeResponseConvertsFunctionCall();
   testGoogleNativeResponsePreservesThoughtParts();
+  await testAnthropicStreamAssemblesResponse();
+  await testGoogleStreamAssemblesResponse();
+  testGoogleStreamingUrlUsesSse();
   console.log("model adapter tests passed");
 }
 
@@ -344,6 +356,148 @@ function testGoogleNativeResponsePreservesThoughtParts() {
 
   assert.equal(response.choices[0]?.message.content, "answer");
   assert.equal(message?.reasoning_content, "Need a short answer.");
+}
+
+function createSseResponse(events: Array<{ event?: string; data: unknown }>): Response {
+  const payload = events
+    .map((entry) =>
+      (entry.event ? `event: ${entry.event}\n` : "") + `data: ${JSON.stringify(entry.data)}\n\n`)
+    .join("");
+  return new Response(payload, {
+    headers: { "content-type": "text/event-stream" }
+  });
+}
+
+async function testAnthropicStreamAssemblesResponse() {
+  const textDeltas: string[] = [];
+  const thinkingDeltas: string[] = [];
+  const response = await consumeAnthropicMessageStream(createSseResponse([
+    {
+      event: "message_start",
+      data: {
+        type: "message_start",
+        message: {
+          id: "msg_stream_1",
+          model: "claude-sonnet-4.6",
+          usage: { input_tokens: 7, cache_read_input_tokens: 3 }
+        }
+      }
+    },
+    {
+      event: "content_block_start",
+      data: { type: "content_block_start", index: 0, content_block: { type: "thinking" } }
+    },
+    {
+      event: "content_block_delta",
+      data: { type: "content_block_delta", index: 0, delta: { type: "thinking_delta", thinking: "hmm" } }
+    },
+    {
+      event: "content_block_start",
+      data: { type: "content_block_start", index: 1, content_block: { type: "text" } }
+    },
+    {
+      event: "content_block_delta",
+      data: { type: "content_block_delta", index: 1, delta: { type: "text_delta", text: "Hello " } }
+    },
+    {
+      event: "content_block_delta",
+      data: { type: "content_block_delta", index: 1, delta: { type: "text_delta", text: "world" } }
+    },
+    {
+      event: "content_block_start",
+      data: {
+        type: "content_block_start",
+        index: 2,
+        content_block: { type: "tool_use", id: "toolu_9", name: "Read" }
+      }
+    },
+    {
+      event: "content_block_delta",
+      data: {
+        type: "content_block_delta",
+        index: 2,
+        delta: { type: "input_json_delta", partial_json: "{\"path\":" }
+      }
+    },
+    {
+      event: "content_block_delta",
+      data: {
+        type: "content_block_delta",
+        index: 2,
+        delta: { type: "input_json_delta", partial_json: "\"README.md\"}" }
+      }
+    },
+    {
+      event: "message_delta",
+      data: { type: "message_delta", delta: { stop_reason: "tool_use" }, usage: { output_tokens: 11 } }
+    },
+    { event: "message_stop", data: { type: "message_stop" } }
+  ]), {
+    modelId: "claude-sonnet-4.6",
+    handlers: {
+      onTextDelta: (text) => textDeltas.push(text),
+      onThinkingDelta: (text) => thinkingDeltas.push(text)
+    }
+  });
+  const message = response.choices[0]?.message;
+
+  assert.deepEqual(textDeltas, ["Hello ", "world"]);
+  assert.deepEqual(thinkingDeltas, ["hmm"]);
+  assert.equal(response.id, "msg_stream_1");
+  assert.equal(message?.content, "Hello world");
+  assert.equal((message as unknown as Record<string, unknown>)?.reasoning_content, "hmm");
+  assert.equal(response.choices[0]?.finish_reason, "tool_calls");
+  assert.equal(getFunctionToolCallName(message?.tool_calls?.[0]), "Read");
+  assert.equal(
+    (message?.tool_calls?.[0] as { function?: { arguments?: string } })?.function?.arguments,
+    "{\"path\":\"README.md\"}"
+  );
+  assert.deepEqual(response.usage, { prompt_tokens: 10, completion_tokens: 11, total_tokens: 21 });
+}
+
+async function testGoogleStreamAssemblesResponse() {
+  const textDeltas: string[] = [];
+  const response = await consumeGoogleGenerateContentStream(createSseResponse([
+    {
+      data: {
+        candidates: [{ content: { parts: [{ text: "Need a plan.", thought: true }, { text: "Hel" }] } }]
+      }
+    },
+    {
+      data: {
+        candidates: [{
+          finishReason: "STOP",
+          content: {
+            parts: [
+              { text: "lo" },
+              { functionCall: { name: "Read", args: { path: "README.md" } } }
+            ]
+          }
+        }],
+        usageMetadata: { promptTokenCount: 4, candidatesTokenCount: 6, totalTokenCount: 10 }
+      }
+    }
+  ]), {
+    modelId: "gemini-3-flash",
+    handlers: {
+      onTextDelta: (text) => textDeltas.push(text)
+    }
+  });
+  const message = response.choices[0]?.message;
+
+  assert.deepEqual(textDeltas, ["Hel", "lo"]);
+  assert.equal(message?.content, "Hello");
+  assert.equal((message as unknown as Record<string, unknown>)?.reasoning_content, "Need a plan.");
+  assert.equal(getFunctionToolCallName(message?.tool_calls?.[0]), "Read");
+  assert.deepEqual(response.usage, { prompt_tokens: 4, completion_tokens: 6, total_tokens: 10 });
+}
+
+function testGoogleStreamingUrlUsesSse() {
+  const url = buildGoogleGenerateContentUrl("gemini-3-flash", "test-key", true);
+
+  assert.match(url, /:streamGenerateContent\?/);
+  assert.match(url, /alt=sse/);
+  assert.match(buildGoogleGenerateContentUrl("gemini-3-flash", "test-key"), /:generateContent\?/);
 }
 
 function createResolvedModel(

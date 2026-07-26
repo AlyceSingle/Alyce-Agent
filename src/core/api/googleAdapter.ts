@@ -15,6 +15,8 @@ import {
   type JsonRecord
 } from "./nativeAdapterUtils.js";
 import { asRecord as asRecordOrNull } from "../util/unknown.js";
+import { readServerSentEvents } from "./sseStream.js";
+import type { ChatCompletionStreamHandlers } from "./chatCompletionStream.js";
 
 type GeminiPart =
   | { text: string; thought?: boolean }
@@ -53,9 +55,11 @@ export function createGoogleAdapter(
     kind: resolvedModel.kind,
     sendChatCompletion: async (request, options) => {
       const googleRequest = buildGoogleRequest(request, options.resolvedModel);
+      const streaming = Boolean(options.streamHandlers);
       const endpoint = buildGoogleGenerateContentUrl(
         options.resolvedModel.modelId,
-        options.resolvedModel.apiKey ?? ""
+        options.resolvedModel.apiKey ?? "",
+        streaming
       );
       const response = await fetch(endpoint, {
         method: "POST",
@@ -65,6 +69,13 @@ export function createGoogleAdapter(
         body: JSON.stringify(googleRequest),
         signal: options.abortSignal
       });
+      if (streaming && response.ok) {
+        return consumeGoogleGenerateContentStream(response, {
+          modelId: options.resolvedModel.modelId,
+          handlers: options.streamHandlers,
+          abortSignal: options.abortSignal
+        });
+      }
       return convertGoogleResponse(
         await parseJsonResponse(response),
         options.resolvedModel.modelId
@@ -73,11 +84,15 @@ export function createGoogleAdapter(
   };
 }
 
-export function buildGoogleGenerateContentUrl(modelId: string, apiKey: string): string {
+export function buildGoogleGenerateContentUrl(modelId: string, apiKey: string, streaming = false): string {
   const normalizedModelId = modelId.replace(/^models\//, "");
+  const method = streaming ? "streamGenerateContent" : "generateContent";
   const url = new URL(
-    `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(normalizedModelId)}:generateContent`
+    `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(normalizedModelId)}:${method}`
   );
+  if (streaming) {
+    url.searchParams.set("alt", "sse");
+  }
   url.searchParams.set("key", apiKey);
   return url.toString();
 }
@@ -228,6 +243,97 @@ export function convertGoogleResponse(
         }
       : {})
   });
+}
+
+export async function consumeGoogleGenerateContentStream(
+  response: Response,
+  options: {
+    modelId: string;
+    handlers?: ChatCompletionStreamHandlers;
+    abortSignal?: AbortSignal;
+  }
+): Promise<OpenAI.Chat.Completions.ChatCompletion> {
+  let content = "";
+  let reasoningContent = "";
+  let finishReason: unknown;
+  let inputTokens = 0;
+  let outputTokens = 0;
+  let totalTokens = 0;
+  const toolCalls: OpenAI.Chat.Completions.ChatCompletionMessageToolCall[] = [];
+
+  for await (const event of readServerSentEvents(response, options.abortSignal)) {
+    const payload = asRecord(parseLooseJson(event.data));
+    const candidates = Array.isArray(payload.candidates) ? payload.candidates : [];
+    const firstCandidate = asRecord(candidates[0]);
+    if (firstCandidate.finishReason !== undefined) {
+      finishReason = firstCandidate.finishReason;
+    }
+
+    const usage = asRecord(payload.usageMetadata);
+    if (numberValue(usage.promptTokenCount) > 0) {
+      inputTokens = numberValue(usage.promptTokenCount);
+    }
+    if (numberValue(usage.candidatesTokenCount) > 0) {
+      outputTokens = numberValue(usage.candidatesTokenCount);
+    }
+    if (numberValue(usage.totalTokenCount) > 0) {
+      totalTokens = numberValue(usage.totalTokenCount);
+    }
+
+    const candidateContent = asRecord(firstCandidate.content);
+    const parts = Array.isArray(candidateContent.parts) ? candidateContent.parts : [];
+    for (const part of parts) {
+      const partRecord = asRecord(part);
+      if (typeof partRecord.text === "string" && partRecord.text.length > 0) {
+        if (partRecord.thought === true) {
+          reasoningContent += partRecord.text;
+          options.handlers?.onThinkingDelta?.(partRecord.text);
+        } else {
+          content += partRecord.text;
+          options.handlers?.onTextDelta?.(partRecord.text);
+        }
+        continue;
+      }
+
+      const functionCall = asRecord(partRecord.functionCall);
+      if (typeof functionCall.name === "string") {
+        toolCalls.push({
+          id: `gemini_${toolCalls.length}_${functionCall.name}`,
+          type: "function",
+          function: {
+            name: functionCall.name,
+            arguments: JSON.stringify(functionCall.args ?? {})
+          }
+        });
+      }
+    }
+  }
+
+  return createChatCompletionResponse({
+    id: "gemini-generate-content",
+    model: options.modelId,
+    content,
+    reasoningContent,
+    finishReason: mapGoogleFinishReason(finishReason),
+    toolCalls,
+    ...(inputTokens > 0 || outputTokens > 0 || totalTokens > 0
+      ? {
+          usage: {
+            prompt_tokens: inputTokens,
+            completion_tokens: outputTokens,
+            total_tokens: totalTokens || inputTokens + outputTokens
+          }
+        }
+      : {})
+  });
+}
+
+function parseLooseJson(value: string): unknown {
+  try {
+    return JSON.parse(value) as unknown;
+  } catch {
+    return undefined;
+  }
 }
 
 function toGeminiUserParts(content: unknown): GeminiPart[] {
