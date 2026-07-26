@@ -378,6 +378,44 @@ const POWERSHELL_READ_ONLY_PREFIXES = [
 ];
 
 const CHAIN_PATTERN = /(?:;|&&|\|\||\r|\n)/;
+
+/**
+ * 复合命令检测。**必须跑在原始字符串上**：normalizeCommand 会把 `\s+` 压成单空格，
+ * 所以换行到那一步已经消失，CHAIN_PATTERN 里的 `\r|\n` 分支实际是死代码。
+ *
+ * 覆盖换行、`;`、`&&`、`||`、后台/分隔用的单个 `&`（排除 `2>&1` 与 `&&`）、
+ * 以及命令替换 `$(...)` 和反引号。单个 `|` 不算：只读命令之间的管道是允许的。
+ */
+const COMPOUND_COMMAND_PATTERN = /[\r\n;]|&&|\|\||(?<![>&])&(?!&)|\$\(|`/;
+
+function isCompoundCommand(command: string): boolean {
+  return COMPOUND_COMMAND_PATTERN.test(command);
+}
+
+/**
+ * 复合命令无法按单条命令可靠分类：`ls -la; rm x` 的真实风险是 `rm x` 的风险，
+ * 而规则匹配只会看到开头的 `ls`。这里不猜，一律要求显式审批。
+ */
+function escalateCompoundCommand(
+  analysis: CommandSafetyAnalysis,
+  compound: boolean
+): CommandSafetyAnalysis {
+  if (!compound || analysis.action === "deny" || analysis.forceAsk) {
+    return analysis;
+  }
+
+  return {
+    ...analysis,
+    forceAsk: true,
+    reasons: [
+      ...analysis.reasons,
+      "Command chains or substitutes multiple commands, so its full effect cannot be classified from the leading command alone."
+    ],
+    possibleWrites: analysis.possibleWrites.includes("unknown")
+      ? analysis.possibleWrites
+      : [...analysis.possibleWrites, "unknown"]
+  };
+}
 const PIPE_PATTERN = /\|/;
 const REDIRECT_PATTERN = /(^|[^>])>(?!\s*&\d)|>>/;
 
@@ -386,6 +424,8 @@ export function analyzeCommandSafety(
   command: string
 ): CommandSafetyAnalysis {
   const normalizedCommand = normalizeCommand(command);
+  // 必须用原始 command：normalizeCommand 会把换行压成空格。
+  const compound = isCompoundCommand(command);
   const writePaths = analyzeCommandWritePaths(dialect, command);
   const denyRule = findMatchingRule(
     normalizedCommand,
@@ -403,7 +443,7 @@ export function analyzeCommandSafety(
     return buildAnalysis(dialect, normalizedCommand, rule, writePaths);
   }
 
-  if (isSafeReadOnlyCommand(dialect, normalizedCommand)) {
+  if (!compound && isSafeReadOnlyCommand(dialect, normalizedCommand)) {
     return {
       dialect,
       normalizedCommand,
@@ -422,7 +462,7 @@ export function analyzeCommandSafety(
     };
   }
 
-  return {
+  return escalateCompoundCommand({
     dialect,
     normalizedCommand,
     category: "unknown",
@@ -437,7 +477,7 @@ export function analyzeCommandSafety(
     usesDynamicExpression: writePaths.usesDynamicExpression,
     ruleRecommendation: "Use an exact command rule only after reviewing the command.",
     permissionPattern: normalizedCommand
-  };
+  }, compound);
 }
 
 export function formatCommandSafetyDetails(analysis: CommandSafetyAnalysis): string[] {

@@ -7,6 +7,8 @@ import {
 
 function runTests() {
   testBashReadOnlyCommand();
+  testCompoundCommandsAreNeverSafeReadOnly();
+  testCompoundDetectionDoesNotFlagOrdinaryReadOnlyCommands();
   testBashRecursiveDeleteForcesAsk();
   testBashCurlPipeShellIsDenied();
   testBashInterpreterInlineForcesExactRule();
@@ -33,6 +35,57 @@ function runTests() {
   testPowerShellWindowsPackageManagerCmdBuildIsBuildTest();
   testSafetyDetailsMentionForceAsk();
   console.log("commandSafety tests passed");
+}
+
+// normalizeCommand 会把换行压成空格，所以链式检测必须跑在原始字符串上。
+// 否则 "ls -la\nrm important.db" 会被判成 safe-read-only：既跳过 Plan Mode 的
+// 硬阻断，又在审批框里显示“预期无写入”。
+function testCompoundCommandsAreNeverSafeReadOnly() {
+  const compoundCommands = [
+    "ls -la\nrm important.db",
+    "ls -la\r\nrm important.db",
+    "ls -la; rm important.db",
+    "ls && rm important.db",
+    "ls || rm important.db",
+    "ls & python3 deploy.py",
+    "echo $(python3 deploy.py)",
+    "echo `python3 deploy.py`"
+  ];
+
+  for (const command of compoundCommands) {
+    const analysis = analyzeCommandSafety("shell", command);
+    assert.notEqual(
+      analysis.category,
+      "safe-read-only",
+      `${JSON.stringify(command)} must not be classified safe-read-only`
+    );
+    assert.equal(
+      analysis.forceAsk,
+      true,
+      `${JSON.stringify(command)} must force an approval prompt`
+    );
+  }
+}
+
+// 反向保护：普通只读命令（含只读管道与 2>&1）不能因为这个改动开始弹窗。
+function testCompoundDetectionDoesNotFlagOrdinaryReadOnlyCommands() {
+  const readOnlyCommands = [
+    "ls -la",
+    "git status",
+    "cat package.json",
+    "git log | head -20",
+    "ls 2>&1"
+  ];
+
+  for (const command of readOnlyCommands) {
+    const analysis = analyzeCommandSafety("shell", command);
+    assert.equal(
+      analysis.category,
+      "safe-read-only",
+      `${JSON.stringify(command)} should stay safe-read-only`
+    );
+    assert.equal(analysis.forceAsk, false, `${JSON.stringify(command)} should not force a prompt`);
+  }
 }
 
 function testBashReadOnlyCommand() {
