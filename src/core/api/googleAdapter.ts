@@ -43,6 +43,10 @@ type GeminiRequest = {
   generationConfig?: {
     temperature?: number;
     maxOutputTokens?: number;
+    thinkingConfig?: {
+      thinkingBudget: number;
+      includeThoughts?: boolean;
+    };
   };
 };
 
@@ -180,7 +184,15 @@ export function buildGoogleRequest(
     ...(request.tool_choice ? { toolConfig: convertGoogleToolConfig(request.tool_choice) } : {}),
     generationConfig: {
       ...(typeof request.temperature === "number" ? { temperature: request.temperature } : {}),
-      ...(resolvedModel.maxOutputTokens ? { maxOutputTokens: resolvedModel.maxOutputTokens } : {})
+      ...(resolvedModel.maxOutputTokens ? { maxOutputTokens: resolvedModel.maxOutputTokens } : {}),
+      ...(resolvedModel.thinkingBudgetTokens
+        ? {
+            thinkingConfig: {
+              thinkingBudget: resolvedModel.thinkingBudgetTokens,
+              includeThoughts: true
+            }
+          }
+        : {})
     }
   };
 }

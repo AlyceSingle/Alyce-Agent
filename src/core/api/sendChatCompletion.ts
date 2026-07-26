@@ -46,16 +46,45 @@ export interface SendChatCompletionOptions extends ChatCompletionRequestOptions 
   streamHandlers?: ChatCompletionStreamHandlers;
 }
 
+// 模型名匹配这些模式时不发送 temperature（推理模型只接受默认值，显式传参会直接报错）。
+const TEMPERATURE_UNSUPPORTED_MODEL_PATTERNS = [
+  /^o[0-9](?:-|$)/i,
+  /^gpt-5/i
+];
+
+function modelRejectsTemperature(resolvedModel: ResolvedModelProfile | undefined): boolean {
+  if (!resolvedModel) {
+    return false;
+  }
+  if (resolvedModel.temperature === null || resolvedModel.reasoningEffort !== undefined) {
+    return true;
+  }
+
+  return TEMPERATURE_UNSUPPORTED_MODEL_PATTERNS.some((pattern) => pattern.test(resolvedModel.modelId));
+}
+
 export function buildPatchedChatCompletionRequest(
   options: ChatCompletionRequestOptions & {
     resolvedModel?: ResolvedModelProfile;
     requestPatches?: RequestPatchOperation[];
   }
 ) {
+  const profileTemperature = options.resolvedModel?.temperature;
   const baseRequest = buildChatCompletionRequest({
     ...options,
-    model: options.resolvedModel?.modelId ?? options.model
+    model: options.resolvedModel?.modelId ?? options.model,
+    temperature: options.temperature ??
+      (typeof profileTemperature === "number" ? profileTemperature : undefined)
   });
+
+  if (modelRejectsTemperature(options.resolvedModel)) {
+    delete baseRequest.temperature;
+  }
+
+  if (options.resolvedModel?.reasoningEffort) {
+    baseRequest.reasoning_effort = options.resolvedModel.reasoningEffort;
+  }
+
   return applyRequestPatchOperations(baseRequest, options.requestPatches ?? []);
 }
 

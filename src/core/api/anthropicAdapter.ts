@@ -39,6 +39,7 @@ type AnthropicRequest = {
   messages: AnthropicMessage[];
   system?: string;
   temperature?: number;
+  thinking?: { type: "enabled"; budget_tokens: number };
   tools?: Array<{
     name: string;
     description?: string;
@@ -46,6 +47,9 @@ type AnthropicRequest = {
   }>;
   tool_choice?: unknown;
 };
+
+// thinking 预算之外至少给回答留这么多输出空间。
+const THINKING_ANSWER_HEADROOM_TOKENS = 1024;
 
 export function createAnthropicAdapter(
   resolvedModel: ResolvedModelProfile
@@ -157,12 +161,21 @@ export function buildAnthropicRequest(
     }
   }
 
+  const thinkingBudget = resolvedModel.thinkingBudgetTokens;
+  const maxTokens = resolvedModel.maxOutputTokens ?? 4096;
   return {
     model: resolvedModel.modelId,
-    max_tokens: resolvedModel.maxOutputTokens ?? 4096,
+    max_tokens: thinkingBudget
+      ? Math.max(maxTokens, thinkingBudget + THINKING_ANSWER_HEADROOM_TOKENS)
+      : maxTokens,
     messages,
     ...(system.length > 0 ? { system: system.join("\n\n") } : {}),
-    ...(typeof request.temperature === "number" ? { temperature: request.temperature } : {}),
+    // extended thinking 只兼容默认 temperature，这里不再透传。
+    ...(thinkingBudget
+      ? { thinking: { type: "enabled" as const, budget_tokens: thinkingBudget } }
+      : typeof request.temperature === "number"
+        ? { temperature: request.temperature }
+        : {}),
     ...(getFunctionTools(request.tools).length > 0
       ? { tools: getFunctionTools(request.tools).map(convertAnthropicTool) }
       : {}),

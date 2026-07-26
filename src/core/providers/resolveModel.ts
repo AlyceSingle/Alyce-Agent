@@ -117,6 +117,15 @@ export function resolveModelProfile(
       : {}),
     ...(modelProfile.outputCostPerMillionTokens !== undefined
       ? { outputCostPerMillionTokens: modelProfile.outputCostPerMillionTokens }
+      : {}),
+    ...(modelProfile.temperature !== undefined
+      ? { temperature: modelProfile.temperature }
+      : {}),
+    ...(modelProfile.reasoningEffort !== undefined
+      ? { reasoningEffort: modelProfile.reasoningEffort }
+      : {}),
+    ...(modelProfile.thinkingBudgetTokens !== undefined
+      ? { thinkingBudgetTokens: modelProfile.thinkingBudgetTokens }
       : {})
   };
 }

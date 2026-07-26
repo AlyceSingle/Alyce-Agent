@@ -149,6 +149,20 @@ Built-in preset defaults:
 
 Optional model price metadata can be added per model with `inputCostPerMillionTokens` and `outputCostPerMillionTokens`. `/usage` uses these values for estimated cost; models without both values are shown as tokens only.
 
+Per-model sampling and reasoning options:
+
+- `temperature`: sampling temperature (`0`–`2`) used when Alyce does not pass an explicit one. Set it to `null` to omit the parameter entirely for models that reject it. Alyce also omits `temperature` automatically for known reasoning model families (`o1`/`o3`/`o4`-style and `gpt-5`-style ids).
+- `reasoningEffort`: `"minimal" | "low" | "medium" | "high"`. Sent as `reasoning_effort` on OpenAI-compatible channels; setting it also stops `temperature` from being sent.
+- `thinkingBudgetTokens`: enables extended thinking with this token budget on the native Anthropic channel (`thinking.budget_tokens`; `max_tokens` is raised above the budget automatically) and on the native Gemini channel (`generationConfig.thinkingConfig`). Thinking output streams into the collapsible thinking view.
+
+```json
+"models": {
+  "o3-mini": { "reasoningEffort": "high" },
+  "claude-sonnet-4.6": { "thinkingBudgetTokens": 8000 },
+  "gpt-4.1": { "temperature": 0.7 }
+}
+```
+
 ### Experimental Connectors and Provider Plugins
 
 GitHub Copilot and Codex / ChatGPT account connectors are visible in `/connect`, but still marked experimental. They use local browser/device OAuth-style flows and store tokens only in `~/.alyce/auth.json`. They do not require an Alyce server, public callback domain, or certificate. They are intentionally isolated from stable API-key providers because these account flows can break when upstream platforms change.

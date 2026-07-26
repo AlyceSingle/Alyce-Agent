@@ -6,7 +6,7 @@ import {
   type ChatCompletionAdapter
 } from "./modelAdapters.js";
 import { getFunctionToolCallName } from "./openaiFunctionTools.js";
-import { sendChatCompletion } from "./sendChatCompletion.js";
+import { buildPatchedChatCompletionRequest, sendChatCompletion } from "./sendChatCompletion.js";
 import type { ResolvedModelProfile } from "../providers/types.js";
 import {
   buildAnthropicRequest,
@@ -39,6 +39,10 @@ async function runTests() {
   await testAnthropicStreamAssemblesResponse();
   await testGoogleStreamAssemblesResponse();
   testGoogleStreamingUrlUsesSse();
+  testTemperatureResolutionFromModelProfile();
+  testReasoningModelOmitsTemperature();
+  testAnthropicThinkingBudget();
+  testGoogleThinkingBudget();
   console.log("model adapter tests passed");
 }
 
@@ -500,6 +504,121 @@ function testGoogleStreamingUrlUsesSse() {
   assert.match(buildGoogleGenerateContentUrl("gemini-3-flash", "test-key"), /:generateContent\?/);
 }
 
+function testTemperatureResolutionFromModelProfile() {
+  const base = {
+    model: "gpt-4.1",
+    messages: [{ role: "user" as const, content: "hi" }],
+    tools: []
+  };
+
+  const withProfileTemperature = buildPatchedChatCompletionRequest({
+    ...base,
+    resolvedModel: createResolvedModel({
+      providerId: "openai",
+      modelId: "gpt-4.1",
+      kind: "openai",
+      temperature: 0.7
+    })
+  });
+  assert.equal(withProfileTemperature.temperature, 0.7);
+
+  const withExplicitTemperature = buildPatchedChatCompletionRequest({
+    ...base,
+    temperature: 0.5,
+    resolvedModel: createResolvedModel({
+      providerId: "openai",
+      modelId: "gpt-4.1",
+      kind: "openai",
+      temperature: 0.7
+    })
+  });
+  assert.equal(withExplicitTemperature.temperature, 0.5);
+
+  const withNullTemperature = buildPatchedChatCompletionRequest({
+    ...base,
+    temperature: 0.5,
+    resolvedModel: createResolvedModel({
+      providerId: "openai",
+      modelId: "gpt-4.1",
+      kind: "openai",
+      temperature: null
+    })
+  });
+  assert.equal("temperature" in withNullTemperature, false);
+
+  const withDefault = buildPatchedChatCompletionRequest(base);
+  assert.equal(withDefault.temperature, 0.2);
+}
+
+function testReasoningModelOmitsTemperature() {
+  const base = {
+    model: "o3-mini",
+    messages: [{ role: "user" as const, content: "hi" }],
+    tools: []
+  };
+
+  const oSeries = buildPatchedChatCompletionRequest({
+    ...base,
+    resolvedModel: createResolvedModel({
+      providerId: "openai",
+      modelId: "o3-mini",
+      kind: "openai"
+    })
+  });
+  assert.equal("temperature" in oSeries, false);
+
+  const withEffort = buildPatchedChatCompletionRequest({
+    ...base,
+    resolvedModel: createResolvedModel({
+      providerId: "openai",
+      modelId: "gpt-5.2",
+      kind: "openai",
+      reasoningEffort: "high"
+    })
+  });
+  assert.equal("temperature" in withEffort, false);
+  assert.equal(withEffort.reasoning_effort, "high");
+}
+
+function testAnthropicThinkingBudget() {
+  const request = buildAnthropicRequest({
+    model: "claude-sonnet-4.6",
+    messages: [{ role: "user", content: "hi" }],
+    tools: [],
+    temperature: 0.2
+  }, createResolvedModel({
+    providerId: "anthropic",
+    modelId: "claude-sonnet-4.6",
+    kind: "anthropic",
+    apiKey: "test-key",
+    maxOutputTokens: 4096,
+    thinkingBudgetTokens: 8000
+  }));
+
+  assert.deepEqual(request.thinking, { type: "enabled", budget_tokens: 8000 });
+  assert.equal("temperature" in request, false);
+  assert.equal(request.max_tokens, 9024);
+}
+
+function testGoogleThinkingBudget() {
+  const request = buildGoogleRequest({
+    model: "gemini-3-flash",
+    messages: [{ role: "user", content: "hi" }],
+    tools: []
+  }, createResolvedModel({
+    providerId: "google",
+    modelId: "gemini-3-flash",
+    kind: "google",
+    apiKey: "test-key",
+    thinkingBudgetTokens: 2048
+  }));
+
+  assert.deepEqual(request.generationConfig?.thinkingConfig, {
+    thinkingBudget: 2048,
+    includeThoughts: true
+  });
+}
+
 function createResolvedModel(
   input: Pick<ResolvedModelProfile, "providerId" | "modelId" | "kind"> &
     Partial<ResolvedModelProfile>
@@ -530,6 +649,11 @@ function createResolvedModel(
       ? { contextWindowMatchedPattern: input.contextWindowMatchedPattern }
       : {}),
     ...(input.maxOutputTokens !== undefined ? { maxOutputTokens: input.maxOutputTokens } : {}),
+    ...(input.temperature !== undefined ? { temperature: input.temperature } : {}),
+    ...(input.reasoningEffort !== undefined ? { reasoningEffort: input.reasoningEffort } : {}),
+    ...(input.thinkingBudgetTokens !== undefined
+      ? { thinkingBudgetTokens: input.thinkingBudgetTokens }
+      : {}),
     ...(input.inputCostPerMillionTokens !== undefined
       ? { inputCostPerMillionTokens: input.inputCostPerMillionTokens }
       : {}),

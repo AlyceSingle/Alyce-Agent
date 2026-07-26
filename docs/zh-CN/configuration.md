@@ -119,6 +119,20 @@ API-key preset：`openai`、`anthropic`、`google`、`openrouter`、`deepseek`�
 
 模型可以在 `models` 里可选配置 `inputCostPerMillionTokens` 和 `outputCostPerMillionTokens`。`/usage` 只在两者都存在时估算成本；缺少价格元数据的模型只显示 tokens。
 
+每个模型还支持采样与推理选项：
+
+- `temperature`：采样温度（`0`–`2`），在 Alyce 未显式传参时生效。设为 `null` 表示完全不发送该参数（部分模型不接受）。对已知的推理模型族（`o1`/`o3`/`o4` 风格与 `gpt-5` 风格的模型名），Alyce 会自动省略 `temperature`。
+- `reasoningEffort`：`"minimal" | "low" | "medium" | "high"`。在 OpenAI 兼容通道以 `reasoning_effort` 发送；设置后同样不再发送 `temperature`。
+- `thinkingBudgetTokens`：思考 token 预算。原生 Anthropic 通道启用 extended thinking（`thinking.budget_tokens`，`max_tokens` 会自动抬高到预算之上）；原生 Gemini 通道写入 `generationConfig.thinkingConfig`。思考内容会流式进入可折叠的 thinking 视图。
+
+```json
+"models": {
+  "o3-mini": { "reasoningEffort": "high" },
+  "claude-sonnet-4.6": { "thinkingBudgetTokens": 8000 },
+  "gpt-4.1": { "temperature": 0.7 }
+}
+```
+
 ### 实验连接器与 Provider 插件
 
 GitHub Copilot 和 Codex / ChatGPT 账号连接器会显示在 `/connect` 中，但仍标记为实验功能。这些连接器使用本机浏览器/device OAuth 风格流程，token 只保存在 `~/.alyce/auth.json`。不需要 Alyce 提供服务器、公网回调域名或证书。它们和稳定 API-key provider 隔离，因为账号登录流程可能随上游平台变化而失效。

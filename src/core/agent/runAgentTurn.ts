@@ -103,7 +103,6 @@ export async function runAgentTurn(
           messages,
           tools: activeTools,
           toolChoice: "auto",
-          temperature: 0.2,
           messageTimestampsEnabled: options.messageTimestampsEnabled,
           requestPatches: options.requestPatches,
           abortSignal: options.abortSignal,
@@ -338,7 +337,6 @@ function buildAgentTurnRequest(
     messages,
     tools,
     toolChoice: "auto",
-    temperature: 0.2,
     messageTimestampsEnabled: options.messageTimestampsEnabled,
     requestPatches: options.requestPatches
   });

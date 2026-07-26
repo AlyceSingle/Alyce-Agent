@@ -16,12 +16,20 @@ export interface ModelRef {
   modelId: ModelId;
 }
 
+export type ReasoningEffort = "minimal" | "low" | "medium" | "high";
+
 export interface ModelProfile {
   label?: string;
   contextWindow?: number;
   maxOutputTokens?: number;
   inputCostPerMillionTokens?: number;
   outputCostPerMillionTokens?: number;
+  /** 采样温度。null 表示"不要发送 temperature 参数"（部分推理模型不接受该参数）。 */
+  temperature?: number | null;
+  /** OpenAI 兼容通道的 reasoning_effort 参数；设置后不再发送 temperature。 */
+  reasoningEffort?: ReasoningEffort;
+  /** Anthropic extended thinking / Gemini thinkingConfig 的思考 token 预算。 */
+  thinkingBudgetTokens?: number;
 }
 
 export interface ProviderProfile {
@@ -64,4 +72,7 @@ export interface ResolvedModelProfile {
   maxOutputTokens?: number;
   inputCostPerMillionTokens?: number;
   outputCostPerMillionTokens?: number;
+  temperature?: number | null;
+  reasoningEffort?: ReasoningEffort;
+  thinkingBudgetTokens?: number;
 }

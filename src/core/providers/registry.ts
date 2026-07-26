@@ -234,6 +234,15 @@ function normalizeModelProfiles(
         : {}),
       ...(positiveNumber(value.outputCostPerMillionTokens) !== undefined
         ? { outputCostPerMillionTokens: positiveNumber(value.outputCostPerMillionTokens) }
+        : {}),
+      ...(normalizeTemperature(value.temperature) !== undefined
+        ? { temperature: normalizeTemperature(value.temperature) }
+        : {}),
+      ...(value.reasoningEffort && REASONING_EFFORTS.has(value.reasoningEffort)
+        ? { reasoningEffort: value.reasoningEffort }
+        : {}),
+      ...(positiveInteger(value.thinkingBudgetTokens) !== undefined
+        ? { thinkingBudgetTokens: positiveInteger(value.thinkingBudgetTokens) }
         : {})
     };
     models[modelId] = profile;
@@ -306,6 +315,19 @@ function parseModelRefOrDefault(
 
 function normalizeProviderKind(value: ProviderKind | undefined): ProviderKind | undefined {
   return value && PROVIDER_KINDS.has(value) ? value : undefined;
+}
+
+const REASONING_EFFORTS = new Set(["minimal", "low", "medium", "high"]);
+
+function normalizeTemperature(value: number | null | undefined): number | null | undefined {
+  if (value === null) {
+    return null;
+  }
+  if (value === undefined || !Number.isFinite(value)) {
+    return undefined;
+  }
+
+  return value >= 0 && value <= 2 ? value : undefined;
 }
 
 function positiveInteger(value: number | undefined): number | undefined {
