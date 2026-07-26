@@ -1,15 +1,13 @@
+export { loadRuntimeConfig } from "./load.js";
+export { getRuntimePaths, resolveDirectoryInput } from "./paths.js";
+export { buildConnectionConfigState, saveConnectionConfig } from "./connection.js";
 export {
-  buildConnectionConfigState,
   buildSessionSettingsState,
-  getRuntimePaths,
-  loadRuntimeConfig,
   normalizeAdditionalDirectories,
   normalizeApprovalMode,
   normalizeSnapshotSettings,
-  resolveDirectoryInput,
-  saveConnectionConfig,
   saveUserSessionSettings
-} from "./runtime/index.js";
+} from "./sessionSettings.js";
 
 export type {
   ApprovalMode,
@@ -30,4 +28,4 @@ export type {
   SnapshotEngine,
   SnapshotRuntimeConfig,
   UiLocale
-} from "./runtime/index.js";
+} from "./types.js";
