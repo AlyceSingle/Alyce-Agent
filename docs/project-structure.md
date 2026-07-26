@@ -90,11 +90,14 @@ Local skills live under `./.alyce/skills/**/SKILL.md` or `~/.alyce/skills/**/SKI
 
 ### Terminal UI
 
-An interactive interface built with React + Ink.
+An interactive interface built with React on a vendored Ink-derived renderer.
 - `adapters/`: Bridge between runtime events and UI state.
 - `components/`: Visual components (inputs, dialogs, status bar, etc.).
 - `screens/`: Top-level screen components.
 - `state/`: UI state management logic.
+- `runtime/`: The vendored renderer and TypeScript Yoga port. This is forked
+  source, not the npm `ink` package — see
+  [Vendored Terminal Runtime](vendored-runtime.md) before editing it.
 
 ## Quick Reference for Developers
 

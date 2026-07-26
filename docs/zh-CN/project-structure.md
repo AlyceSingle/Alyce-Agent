@@ -90,11 +90,14 @@ src/tools/registry.ts
 
 ### 终端 UI (Terminal UI)
 
-基于 React + Ink 构建的交互界面。
+基于 React 和一份内置的 Ink 衍生渲染器构建的交互界面。
 - `adapters/`: 运行时事件与 UI 状态的转换层。
 - `components/`: 各种 UI 组件（输入框、弹窗、状态栏等）。
 - `screens/`: 顶层页面组件。
 - `state/`: UI 状态管理逻辑。
+- `runtime/`: 内置的渲染器与 TypeScript 版 Yoga。这是 fork 出来自行维护的源码，
+  不是 npm 上的 `ink` 包——修改前请先读
+  [内置终端渲染运行时](vendored-runtime.md)。
 
 ## 开发速查表
 

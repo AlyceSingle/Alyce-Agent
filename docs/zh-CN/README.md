@@ -22,6 +22,8 @@
   记忆分层、摘要与压缩
 - [角色预设](persona-presets.md)
   内置角色预设及切换方式
+- [内置终端渲染运行时](vendored-runtime.md)
+  Fork 的 Ink 渲染器与 TypeScript 版 Yoga：基准、差异点、以及如何移植上游修复
 
 ## 仓库级文档
 

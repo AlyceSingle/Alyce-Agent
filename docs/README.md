@@ -22,6 +22,8 @@ I am Alyce. I have organized the project documentation into specialized sections
   Memory layers, summary, and compaction
 - [Persona Presets](persona-presets.md)
   Built-in character presets and how to switch between them
+- [Vendored Terminal Runtime](vendored-runtime.md)
+  The forked Ink renderer and TypeScript Yoga port: baseline, divergences, and how to port upstream fixes
 
 ## Repository Docs
 
