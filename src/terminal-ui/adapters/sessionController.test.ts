@@ -19,6 +19,9 @@ async function runTests() {
   await testSubmitDuringTurnQueuesInsteadOfDiscarding();
   await testQueuedInputsPreserveSubmissionOrder();
   await testSubmitIgnoresBlankInputWhileQueueing();
+  await testInterruptCancelsQueueAndEchoesIt();
+  await testWithdrawQueuedInputReturnsLastToDraft();
+  await testWithdrawQueuedInputIsNoopOnEmptyQueue();
   await testSettingsCommandOpensSessionSettings();
   await testSettingsConnectionCommandOpensConnectDialog();
   await testConnectCommandOpensInteractiveDialog();
@@ -235,6 +238,54 @@ async function testSubmitIgnoresBlankInputWhileQueueing() {
   store.updateState((state) => setLoading(state, true));
   await controller.submit("   ");
 
+  assert.deepEqual(store.getState().queuedInputs, []);
+}
+
+// 中断的语义是"停下"：队列不能继续发，但内容要回显出来，不能静默丢失。
+async function testInterruptCancelsQueueAndEchoesIt() {
+  const runtime = createRuntimeStub({});
+  const store = createTerminalUiStore(createInitialState());
+  const controller = createSessionController(runtime, store);
+
+  store.updateState((state) => setLoading(state, true));
+  await controller.submit("first queued");
+  await controller.submit("second\nqueued");
+
+  controller.interrupt();
+
+  assert.deepEqual(store.getState().queuedInputs, []);
+
+  const echo = store.getState().messages.at(-1);
+  assert.match(echo?.content ?? "", /Cancelled 2 queued input\(s\)/);
+  assert.match(echo?.content ?? "", /1\. first queued/);
+  // 回显里的多行输入要压成单行。
+  assert.match(echo?.content ?? "", /2\. second queued/);
+}
+
+async function testWithdrawQueuedInputReturnsLastToDraft() {
+  const runtime = createRuntimeStub({});
+  const store = createTerminalUiStore(createInitialState());
+  const controller = createSessionController(runtime, store);
+
+  store.updateState((state) => setLoading(state, true));
+  await controller.submit("keep me");
+  await controller.submit("take me back");
+
+  controller.withdrawQueuedInput();
+
+  assert.deepEqual(store.getState().queuedInputs, ["keep me"]);
+  assert.equal(store.getState().draftInput, "take me back");
+}
+
+async function testWithdrawQueuedInputIsNoopOnEmptyQueue() {
+  const runtime = createRuntimeStub({});
+  const store = createTerminalUiStore(createInitialState());
+  const controller = createSessionController(runtime, store);
+
+  controller.setDraftInput("untouched");
+  controller.withdrawQueuedInput();
+
+  assert.equal(store.getState().draftInput, "untouched");
   assert.deepEqual(store.getState().queuedInputs, []);
 }
 

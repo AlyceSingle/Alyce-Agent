@@ -7,7 +7,9 @@ export const DEFAULT_BINDINGS: KeybindingBlock[] = [
     bindings: {
       "ctrl+q": "app:quit",
       "ctrl+x": "app:openSettings",
-      escape: "app:escape"
+      escape: "app:escape",
+      // 用 alt+backspace 而不是裸 backspace：后者要和 PromptInput 的本地输入缓冲抢按键。
+      "alt+backspace": "queue:withdrawLast"
     }
   },
   {

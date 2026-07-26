@@ -8,6 +8,7 @@ import { getErrorMessage } from "../../core/util/error.js";
 import { setLocale, t } from "../../i18n/index.js";
 import { parseReplCommand } from "../../cli/commandRouter.js";
 import { formatCurrentModelDisplay } from "../../cli/modelCommand.js";
+import { formatQueuedInputPreview } from "../components/QueuedInputPanel.js";
 import { getLspDiagnosticRegistry } from "../../services/lsp/LspDiagnosticRegistry.js";
 import { type SessionRuntime } from "../../cli/sessionRuntime.js";
 import type {
@@ -21,6 +22,7 @@ import type {
 } from "../../tools/types.js";
 import {
   appendMessage,
+  clearQueuedInputs,
   closeDialog,
   dequeueInput,
   enqueueInput,
@@ -103,6 +105,8 @@ export interface SessionController {
   togglePlanMode: () => Promise<void>;
   loadOlderSessionMessages: (visibleMessageId: string | null) => void;
   interrupt: () => void;
+  /** 撤回队尾一条排队输入并填回草稿；队列为空时是空操作。 */
+  withdrawQueuedInput: () => void;
   openRewindSelector: () => void;
   restoreRewindPoint: (pointId: string, mode: RewindRestoreMode) => Promise<void>;
   respondToApproval: (decision: PermissionDecision) => void;
@@ -705,6 +709,41 @@ export function createSessionController(
     );
   };
 
+  // 中断意味着“停下”，让队列继续发出会违背直觉。清空队列，但把被取消的内容
+  // 回显到消息流，这样内容不会静默丢失、用户可以复制回来。
+  const cancelQueuedInputs = () => {
+    const queuedInputs = store.getState().queuedInputs;
+    if (queuedInputs.length === 0) {
+      return;
+    }
+
+    store.updateState((state) => clearQueuedInputs(state));
+    appendUiMessage(
+      createSystemMessage(
+        [
+          `Cancelled ${queuedInputs.length} queued input(s):`,
+          ...queuedInputs.map((input, index) => `${index + 1}. ${formatQueuedInputPreview(input)}`)
+        ].join("\n"),
+        "Queue"
+      )
+    );
+  };
+
+  // 撤回队尾一条并填回草稿：改完可以再发，而不是直接丢掉。
+  const withdrawLastQueuedInput = () => {
+    const queuedInputs = store.getState().queuedInputs;
+    const last = queuedInputs.at(-1);
+    if (last === undefined) {
+      return;
+    }
+
+    store.updateState((state) => clearQueuedInputs(state));
+    for (const input of queuedInputs.slice(0, -1)) {
+      store.updateState((state) => enqueueInput(state, input));
+    }
+    setDraftInputValue(last);
+  };
+
   // 轮次结束后取出队首一条发出。只取一条：它会重新进入 isLoading，
   // 其余的由下一轮结束时继续 flush，避免递归加深与错序。
   const flushQueuedInput = () => {
@@ -714,7 +753,14 @@ export function createSessionController(
     }
 
     store.updateState((state) => dequeueInput(state));
-    void runSubmittedInput(next);
+    void runSubmittedInput(next).finally(() => {
+      // 斜杠命令、命令报错、连接未配置这三条路径都不会进入 agent turn，
+      // agentTurnRunner 的 finally 因此不会触发，队列会卡死在这里。
+      // 只要发完仍未进入运行态，就继续发下一条。
+      if (!store.getState().isLoading) {
+        flushQueuedInput();
+      }
+    });
   };
 
   return {
@@ -787,6 +833,9 @@ export function createSessionController(
       loadOlderSessionMessages(visibleMessageId);
     },
     interrupt: () => {
+      // 即使没有活跃轮次也要清队列：用户按 Esc 的意图就是“别再继续了”。
+      cancelQueuedInputs();
+
       if (!activeTurn || activeTurn.controller.signal.aborted) {
         return;
       }
@@ -794,6 +843,9 @@ export function createSessionController(
       activeTurn.userCancelled = true;
       activeTurn.controller.abort("user-cancel");
       store.updateState((state) => setStatusText(state, "Interrupting..."));
+    },
+    withdrawQueuedInput: () => {
+      withdrawLastQueuedInput();
     },
     openRewindSelector: () => {
       openRewindSelector();

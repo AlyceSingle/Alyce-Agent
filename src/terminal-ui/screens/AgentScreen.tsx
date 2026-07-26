@@ -345,6 +345,14 @@ export function AgentScreen(props: { controller: SessionController }) {
 
       triggerHistoryEscape();
     },
+    "queue:withdrawLast": () => {
+      // 草稿非空时不撤回：填回队尾内容会覆盖用户正在打的字。
+      if (store.getState().draftInput.length > 0) {
+        return;
+      }
+
+      props.controller.withdrawQueuedInput();
+    },
     "conversation:previousMessage": () => {
       // 多行输入编辑中 up/down 留给光标，不切换会话消息（否则大段粘贴后上移会抖/移不动）。
       if (captureVerticalNavRef.current) {
@@ -424,7 +432,14 @@ export function AgentScreen(props: { controller: SessionController }) {
     }
 
     // 运行中按“退出类”快捷键时，优先做安全中断，避免当前轮次还没清理完就离开 UI。
+    // interrupt 内部会一并取消排队输入，所以运行中不需要单独处理队列。
     if (isLoading) {
+      props.controller.interrupt();
+      return;
+    }
+
+    // 非运行态但仍有排队输入时，先取消队列，不要直接退出把它们静默丢掉。
+    if (store.getState().queuedInputs.length > 0) {
       props.controller.interrupt();
       return;
     }

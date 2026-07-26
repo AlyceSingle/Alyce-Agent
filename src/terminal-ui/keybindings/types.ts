@@ -4,6 +4,7 @@ export type TerminalUiAction =
   | "app:quit"
   | "app:openSettings"
   | "app:escape"
+  | "queue:withdrawLast"
   | "conversation:previousMessage"
   | "conversation:nextMessage"
   | "scroll:lineUp"
