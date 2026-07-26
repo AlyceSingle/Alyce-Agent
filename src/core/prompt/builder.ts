@@ -1,4 +1,4 @@
-import { DYNAMIC_PROMPT_SECTIONS, STATIC_PROMPT_SECTIONS, SYSTEM_PROMPT_DYNAMIC_BOUNDARY } from "./sections.js";
+import { DYNAMIC_PROMPT_SECTIONS, STATIC_PROMPT_SECTIONS } from "./sections.js";
 import { PromptSectionResolver } from "./sectionResolver.js";
 import type { PromptBuildOptions, PromptRuntimeContext } from "./types.js";
 
@@ -26,7 +26,6 @@ export async function buildDefaultSystemPrompt(
 
   const sections = [
     ...staticParts.filter(nonEmpty),
-    SYSTEM_PROMPT_DYNAMIC_BOUNDARY,
     ...dynamicParts.filter(nonEmpty)
   ];
 
