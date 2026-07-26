@@ -1,14 +1,9 @@
-import { randomUUID } from "node:crypto";
-import { promises as fs } from "node:fs";
-import os from "node:os";
-import path from "node:path";
 import process from "node:process";
 import { createBackgroundDiagnosticsMessage } from "../../core/api/generatedMessages.js";
 import {
   runAgentUserTurn,
   type TurnCheckpoint
 } from "./agentTurnRunner.js";
-import { throwIfAborted, TurnInterruptedError } from "../../core/abort.js";
 import { getErrorMessage } from "../../core/util/error.js";
 import { formatDoctorReport, runDoctorDiagnostics } from "../../core/doctor/doctor.js";
 import {
@@ -38,12 +33,8 @@ import type {
   ApprovalMode,
   SessionSettings
 } from "../../config/runtime.js";
+import type { McpElicitationResponse } from "../../mcp/types.js";
 import type {
-  McpElicitationRequest,
-  McpElicitationResponse
-} from "../../mcp/types.js";
-import type {
-  AskUserQuestionRequest,
   AskUserQuestionResponse,
   TodoItem
 } from "../../tools/types.js";
@@ -52,9 +43,7 @@ import {
   closeDialog,
   getActiveDialog,
   openConnectProviderDialog,
-  openMcpElicitationDialog,
   openPermissionsDialog,
-  openQuestionDialog,
   openSessionPickerDialog,
   openSettingsDialog,
   prependMessages,
@@ -92,6 +81,8 @@ import {
 } from "./sessionController/approvalPolicy.js";
 import { createApprovalFlowController } from "./sessionController/approvalFlow.js";
 import { createBackgroundActivitySync } from "./sessionController/backgroundActivity.js";
+import { createDirectoryAccessHelpers } from "./sessionController/directoryAccess.js";
+import { createInteractiveDialogController } from "./sessionController/interactiveDialogs.js";
 import { createProviderConnectionController } from "./sessionController/providerConnection.js";
 import { createRewindController } from "./sessionController/rewindController.js";
 import {
@@ -177,8 +168,6 @@ export function createSessionController(
 ): SessionController {
   let exitHandler: (() => void) | null = null;
   let exitRequestedAfterTurn = false;
-  let pendingQuestionResolver: ((response: AskUserQuestionResponse | null) => void) | null = null;
-  let pendingMcpElicitationResolver: ((response: McpElicitationResponse) => void) | null = null;
   let activeTurn: TurnCheckpoint | null = null;
   let sessionHistoryPaging: SessionHistoryPagingState | null = null;
   const turnEphemeralMessageIds = new Map<"thinking" | "progress", string>();
@@ -574,121 +563,17 @@ export function createSessionController(
     store.updateState((state) => openSessionPickerDialog(state, sessions));
   };
 
-  const askUserQuestions = async (
-    request: AskUserQuestionRequest,
-    options: { signal?: AbortSignal } = {}
-  ) => {
-    if (hasPendingApproval() || pendingQuestionResolver || pendingMcpElicitationResolver) {
-      throw new Error("Another interactive dialog is already pending.");
-    }
-
-    store.updateState((state) => openQuestionDialog(state, request));
-
-    return new Promise<AskUserQuestionResponse>((resolve, reject) => {
-      const cleanup = () => {
-        options.signal?.removeEventListener("abort", handleAbort);
-      };
-
-      const settle = (response: AskUserQuestionResponse | null) => {
-        pendingQuestionResolver = null;
-        cleanup();
-        setDialogClosed();
-
-        if (!response) {
-          if (activeTurn && !activeTurn.controller.signal.aborted) {
-            activeTurn.userCancelled = true;
-            activeTurn.controller.abort("user-cancel");
-          }
-          reject(new TurnInterruptedError("user-cancel", "Request interrupted by user"));
-          return;
-        }
-
-        resolve(response);
-      };
-
-      const handleAbort = () => {
-        if (!pendingQuestionResolver) {
-          cleanup();
-          return;
-        }
-
-        pendingQuestionResolver = null;
-        cleanup();
-        setDialogClosed();
-        reject(new TurnInterruptedError("user-cancel", "Request interrupted by user"));
-      };
-
-      if (options.signal?.aborted) {
-        handleAbort();
-        return;
-      }
-
-      pendingQuestionResolver = settle;
-      options.signal?.addEventListener("abort", handleAbort, { once: true });
-    });
-  };
-
-  const requestMcpElicitation = async (
-    request: McpElicitationRequest,
-    options: { signal?: AbortSignal; timeoutMs?: number } = {}
-  ) => {
-    if (hasPendingApproval() || pendingQuestionResolver || pendingMcpElicitationResolver) {
-      throw new Error("Another interactive dialog is already pending.");
-    }
-
-    store.updateState((state) => openMcpElicitationDialog(state, request));
-
-    return new Promise<McpElicitationResponse>((resolve, reject) => {
-      let timeout: NodeJS.Timeout | null = null;
-      const cleanup = () => {
-        options.signal?.removeEventListener("abort", handleAbort);
-        if (timeout) {
-          clearTimeout(timeout);
-          timeout = null;
-        }
-      };
-
-      const settle = (response: McpElicitationResponse) => {
-        pendingMcpElicitationResolver = null;
-        cleanup();
-        setDialogClosed();
-        resolve(response);
-      };
-
-      const handleAbort = () => {
-        if (!pendingMcpElicitationResolver) {
-          cleanup();
-          return;
-        }
-
-        pendingMcpElicitationResolver = null;
-        cleanup();
-        setDialogClosed();
-        reject(new TurnInterruptedError("user-cancel", "Request interrupted by user"));
-      };
-
-      if (options.timeoutMs && options.timeoutMs > 0) {
-        timeout = setTimeout(() => {
-          if (!pendingMcpElicitationResolver) {
-            return;
-          }
-
-          pendingMcpElicitationResolver = null;
-          cleanup();
-          setDialogClosed();
-          resolve({ action: "cancel" });
-        }, options.timeoutMs);
-      }
-
-      if (options.signal?.aborted) {
-        handleAbort();
-        return;
-      }
-
-      pendingMcpElicitationResolver = settle;
-      options.signal?.addEventListener("abort", handleAbort, { once: true });
-    });
-  };
+  const {
+    askUserQuestions,
+    requestMcpElicitation,
+    respondToQuestion,
+    respondToMcpElicitation
+  } = createInteractiveDialogController({
+    store,
+    setDialogClosed,
+    hasPendingApproval,
+    getActiveTurn: () => activeTurn
+  });
 
   runtime.setMcpInteractionHandlers({
     requestElicitation: requestMcpElicitation,
@@ -702,64 +587,13 @@ export function createSessionController(
     }
   });
 
-  const resolveAdditionalDirectory = async (directory: string): Promise<string> => {
-    const normalized = directory.trim();
-    if (!normalized) {
-      throw new Error("Directory path is required.");
-    }
-
-    const absolutePath = resolveDirectoryInput(normalized, runtime.workspaceRoot);
-    let stats;
-    try {
-      stats = await fs.stat(absolutePath);
-    } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
-      throw new Error(`Directory not found: ${absolutePath}. ${message}`);
-    }
-
-    if (!stats.isDirectory()) {
-      throw new Error(`Path is not a directory: ${absolutePath}`);
-    }
-
-    return absolutePath;
-  };
-
-  const resolveDirectoryInput = (directory: string, workspaceRoot: string): string => {
-    const normalized = directory.trim();
-    if (normalized === "~") {
-      return path.resolve(os.homedir());
-    }
-
-    if (normalized.startsWith("~/") || normalized.startsWith("~\\")) {
-      return path.resolve(path.join(os.homedir(), normalized.slice(2)));
-    }
-
-    return path.resolve(workspaceRoot, normalized);
-  };
-
-  const normalizePathForComparison = (directory: string) => {
-    const normalized = path.resolve(directory);
-    return process.platform === "win32" ? normalized.toLowerCase() : normalized;
-  };
-
-  const dedupeDirectories = (directories: string[]) => {
-    const deduped = new Map<string, string>();
-    for (const directory of directories) {
-      const absolutePath = path.resolve(directory);
-      const key = normalizePathForComparison(absolutePath);
-      if (!deduped.has(key)) {
-        deduped.set(key, absolutePath);
-      }
-    }
-
-    return [...deduped.values()];
-  };
-
-  const buildAccessScopeSnapshot = () => {
-    return [
-      "Workspace: " + runtime.workspaceRoot
-    ];
-  };
+  const {
+    resolveAdditionalDirectory,
+    normalizePathForComparison,
+    dedupeDirectories,
+    buildAccessScopeSnapshot,
+    isDirectoryAlreadyAllowed
+  } = createDirectoryAccessHelpers({ runtime });
 
   const setPlanModeFromUi = async (enabled: boolean) => {
     const wasEnabled = runtime.getPlanModeState().enabled;
@@ -782,13 +616,6 @@ export function createSessionController(
         state.enabled
       )
     );
-  };
-
-  const isDirectoryAlreadyAllowed = (directory: string) => {
-    const targetKey = normalizePathForComparison(directory);
-    return runtime
-      .getAllowedRoots()
-      .some((allowedRoot) => normalizePathForComparison(allowedRoot) === targetKey);
   };
 
   const formatDiffView = async (
@@ -1369,10 +1196,10 @@ export function createSessionController(
       resolvePendingApproval(decision);
     },
     respondToQuestion: (response) => {
-      pendingQuestionResolver?.(response);
+      respondToQuestion(response);
     },
     respondToMcpElicitation: (response) => {
-      pendingMcpElicitationResolver?.(response);
+      respondToMcpElicitation(response);
     },
     openSettings: (section = "session", reason) => {
       if (section === "connection") {
