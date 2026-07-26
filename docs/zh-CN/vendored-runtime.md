@@ -23,14 +23,17 @@ Alyce 并不通过 npm 上的 `ink` 包渲染界面。`src/terminal-ui/runtime/`
 | 事项 | 结果 |
 |---|---|
 | 内置时间 | 2026-04-13 → 2026-04-15 的若干 "UI framework" 提交 |
-| `package.json` 里的 `ink` | `^5.1.0`，锁定在 5.2.1 |
-| `ink` 是否真被引用 | **否**——`dist/app.js` 中零引用；`src/` 里唯一命中是 `hooks/use-input.ts` 的一段 JSDoc 示例 |
-| `yoga-layout` | 仅作为 Ink 的传递依赖存在；渲染器实际使用 TS 移植版 |
+| `package.json` 里的 `ink` | 已移除——内置渲染器已完全取代它 |
+| `yoga-layout` | 随 Ink 一并移除；渲染器使用 TS 移植版 |
 | Yoga 移植上游 | https://github.com/facebook/yoga（版本未记录） |
 
 内置渲染器保留了 Ink 的模块划分——`dom`、`output`、`styles`、`reconciler`、`render-node-to-output`、`squash-text-nodes`、`log-update`、`measure-text`、`colorize`、`render-border`、`get-max-width`、`instances`、`devtools` 在上游都存在且职责相同——但它不是任何一个已发布版本的副本。它包含 ink 5.2.1 没有的能力（ScrollBox、选区、鼠标与终端焦点事件），说明其来源比 `package.json` 里锁定的版本更新。
 
-> 因此 `package.json` 里声明的 `ink` 依赖实际上是多余的。移除它属于会影响发版的打包改动，所以这里选择保留并在此说明，而不是悄悄删掉。
+### 依赖备注
+
+`ink` 依赖在无人引用后已被移除。移除过程暴露出一个值得记住的隐患：内置渲染器直接 import 了 `@alcalzone/ansi-tokenize`，但这个包此前只是作为 Ink 的传递依赖存在，于是删掉 Ink 就导致构建失败。现在它已被声明为直接依赖。
+
+这条教训可以推广——引入内置代码时，它 import 的包必须声明为本项目的一等依赖，而不能继承自"这段代码是从哪个包里复制出来的"。
 
 ## 目录结构
 

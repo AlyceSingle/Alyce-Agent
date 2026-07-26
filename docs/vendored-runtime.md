@@ -35,9 +35,8 @@ re-sync. What can be verified today:
 | Fact | Value |
 |---|---|
 | Vendored in | commits dated 2026-04-13 → 2026-04-15 ("UI framework" series) |
-| `ink` in `package.json` | `^5.1.0`, locked at 5.2.1 |
-| `ink` actually imported | **No** — zero references in `dist/app.js`; the only match in `src/` is a JSDoc example in `hooks/use-input.ts` |
-| `yoga-layout` | present only as Ink's transitive dependency; the renderer uses the TS port instead |
+| `ink` in `package.json` | removed — the vendored renderer replaced it entirely |
+| `yoga-layout` | gone with Ink; the renderer uses the TS port instead |
 | Yoga port upstream | https://github.com/facebook/yoga (version not recorded) |
 
 The vendored renderer keeps Ink's module decomposition — `dom`, `output`,
@@ -48,9 +47,17 @@ a copy of any single published release. It carries features absent from
 ink 5.2.1 (ScrollBox, selection, mouse and terminal-focus events), so it
 descends from a newer line than the version pinned in `package.json`.
 
-> The declared `ink` dependency is therefore dead weight. Removing it is a
-> packaging change with release implications, so it is left in place and noted
-> here rather than dropped silently.
+### Dependency footnote
+
+The `ink` dependency outlived its use and was dropped once nothing imported it.
+Removing it surfaced a latent problem worth remembering: the vendored renderer
+imports `@alcalzone/ansi-tokenize` directly, but that package was only present
+as one of Ink's transitive dependencies, so deleting Ink broke the build. It is
+now a direct dependency.
+
+The lesson generalizes — when vendored code is added, its imports must be
+declared as first-party dependencies, not inherited from whatever package the
+code was copied out of.
 
 ## Layout
 
