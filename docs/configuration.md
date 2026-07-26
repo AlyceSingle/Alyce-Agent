@@ -244,6 +244,21 @@ DuckDuckGo HTML is kept as a no-key fallback, but it can still be blocked or rat
 
 - `ALYCE_RIPGREP_MAX_OUTPUT_BYTES` — maximum bytes of raw ripgrep output buffered by `Grep` and `Glob` before truncation. Defaults to `20971520` (20 MB). Truncated searches report `outputTruncated` so the agent can narrow the query.
 
+## Project Instructions
+
+Alyce looks for a project convention file in the workspace root and injects it into the system prompt. It checks these names in order and uses the first one that exists and is not empty:
+
+1. `ALYCE.md`
+2. `AGENTS.md`
+3. `CLAUDE.md`
+
+Use it to tell Alyce how this project works: code style, build and test commands, directory layout, review expectations, anything you would otherwise repeat every session.
+
+- **Trust required.** Like project skills and project MCP servers, the file is only loaded once the workspace is trusted. Run `/trust` to allow it.
+- **Priority.** Project instructions rank above Alyce's own general defaults, but below your direct instructions in the conversation, approval requirements, and safety rules.
+- **Size limit.** Content beyond 12,000 characters is truncated, and the prompt says so. Keep the file focused; put long reference material in skills instead.
+- **Read once per session.** The file is read when the first prompt of a session is built. Edit it and restart, or run `/trust` again, to pick up changes.
+
 ## Skills
 
 Alyce discovers local skills from:

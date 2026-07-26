@@ -14,6 +14,8 @@ function runTests() {
     testDefaultSystemPromptGuidesLongRunningServers(),
     testDefaultSystemPromptGuidesInteractivePtyUse(),
     testGitWorkflowSectionFollowsShellAvailability(),
+    testProjectInstructionsSectionRendersWhenPresent(),
+    testProjectInstructionsSectionReportsTruncation(),
     testEffectiveSystemPromptAppendsAdditionalInstructions(),
     testDefaultSystemPromptUsesEnglishAuthoredText(),
     testGitStatusSectionRendersWhenSnapshotPresent()
@@ -153,6 +155,53 @@ async function testGitWorkflowSectionFollowsShellAvailability() {
   );
 
   assert.doesNotMatch(withoutShell, /^# Git workflow$/m);
+}
+
+async function testProjectInstructionsSectionRendersWhenPresent() {
+  const withInstructions = await buildDefaultSystemPrompt(
+    {
+      ...createRuntimeContext(["Read"]),
+      projectInstructions: {
+        fileName: "AGENTS.md",
+        content: "# Repository Guidelines\nUse two-space indentation.",
+        truncatedChars: 0
+      }
+    },
+    {},
+    new PromptSectionResolver()
+  );
+
+  assert.match(withInstructions, /^# Project Instructions$/m);
+  assert.match(withInstructions, /AGENTS\.md/);
+  assert.match(withInstructions, /Use two-space indentation\./);
+  // 优先级必须写清楚：高于通用默认做法，但不凌驾用户指令、审批与安全规则。
+  assert.match(withInstructions, /Follow it over your own general defaults/);
+  assert.match(withInstructions, /does not override the user's direct instructions/);
+
+  const withoutInstructions = await buildDefaultSystemPrompt(
+    createRuntimeContext(["Read"]),
+    {},
+    new PromptSectionResolver()
+  );
+
+  assert.doesNotMatch(withoutInstructions, /^# Project Instructions$/m);
+}
+
+async function testProjectInstructionsSectionReportsTruncation() {
+  const prompt = await buildDefaultSystemPrompt(
+    {
+      ...createRuntimeContext(["Read"]),
+      projectInstructions: {
+        fileName: "AGENTS.md",
+        content: "Head of the file.",
+        truncatedChars: 4_096
+      }
+    },
+    {},
+    new PromptSectionResolver()
+  );
+
+  assert.match(prompt, /truncated here; 4096 more character\(s\) were omitted/);
 }
 
 async function testToolListUpdatesAcrossBuilds() {

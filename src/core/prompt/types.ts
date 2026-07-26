@@ -1,6 +1,7 @@
 import type { MemoryPromptContext } from "../memory/types.js";
 import type { SkillPromptContext } from "../../skills/service.js";
 import type { GitStatusPromptContext } from "../startup/gitStatusContext.js";
+import type { ProjectInstructionsPromptContext } from "../startup/projectInstructionsContext.js";
 
 // 提示词运行时上下文：由当前会话状态与环境信息组成。
 export interface PromptRuntimeContext {
@@ -16,6 +17,8 @@ export interface PromptRuntimeContext {
   memory?: MemoryPromptContext;
   /** 会话启动时的 git 快照；非 git 仓库或采集失败时缺省。 */
   gitStatus?: GitStatusPromptContext;
+  /** 工作区根目录的项目约定文件；未信任项目、文件缺失或为空时缺省。 */
+  projectInstructions?: ProjectInstructionsPromptContext;
 }
 
 // 提示词构建可选覆盖项：语言偏好、自定义行为覆盖、整段覆盖、追加指令。

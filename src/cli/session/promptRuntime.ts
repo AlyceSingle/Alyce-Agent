@@ -33,6 +33,10 @@ import {
   collectGitStatusContext,
   type GitStatusPromptContext
 } from "../../core/startup/gitStatusContext.js";
+import {
+  collectProjectInstructionsContext,
+  type ProjectInstructionsPromptContext
+} from "../../core/startup/projectInstructionsContext.js";
 import { formatSystemDateTime, getSystemTimeZone } from "../../core/time/systemTime.js";
 import type {
   McpToolRuntime
@@ -257,12 +261,31 @@ export function createPromptRuntime(deps: PromptRuntimeDeps): PromptRuntime {
     return gitStatusSnapshotPromise;
   };
 
+  // 项目约定文件与 skills/MCP 一样属于项目级不可信资产：未信任时不加载。
+  // 同样按会话缓存，并在 /trust 改变信任状态时失效。
+  let projectInstructionsPromise:
+    | Promise<ProjectInstructionsPromptContext | undefined>
+    | undefined;
+  const getProjectInstructions = () => {
+    if (!getProjectTrusted()) {
+      return Promise.resolve(undefined);
+    }
+
+    projectInstructionsPromise ??= collectProjectInstructionsContext(config.paths.workspaceRoot)
+      .catch(() => undefined);
+    return projectInstructionsPromise;
+  };
+
   const getPromptRuntimeContext = async (options: PromptRuntimeContextOptions = {}) => {
     const now = new Date();
     const workspaceRoot = options.workspaceRoot ?? config.paths.workspaceRoot;
-    const gitStatus = await getGitStatusSnapshot();
+    const [gitStatus, projectInstructions] = await Promise.all([
+      getGitStatusSnapshot(),
+      getProjectInstructions()
+    ]);
     return {
       ...(gitStatus ? { gitStatus } : {}),
+      ...(projectInstructions ? { projectInstructions } : {}),
       model: options.model ?? getConnection().model,
       workspaceRoot,
       allowedRoots: options.allowedRoots ?? resolveAllowedRoots(
@@ -582,6 +605,9 @@ export function createPromptRuntime(deps: PromptRuntimeDeps): PromptRuntime {
     clearPromptCache: () => promptResolver.clearSessionCache(),
     setProjectTrusted: (trusted) => {
       skillService.setProjectTrusted(trusted);
+      // 信任状态变化后重新探测项目约定文件，并让缓存的会话段重建。
+      projectInstructionsPromise = undefined;
+      promptResolver.clearSessionCache();
     },
     close: () => {
       skillService.close();
