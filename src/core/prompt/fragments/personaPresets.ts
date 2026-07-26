@@ -84,5 +84,5 @@ export function buildBuiltinPersonaSection(preset?: string) {
     "",
     `## ${definition.title}`,
     ...promptFormatting.prependBullets(definition.instructions)
-  ], `Persona preset summary: ${resolvedPreset} is enabled as a style-only overlay and must not override system, safety, or task-completion rules.`);
+  ]);
 }

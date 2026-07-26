@@ -8,16 +8,13 @@ function prependBullets(items: ReadonlyArray<string | ReadonlyArray<string>>): s
 
 function buildSection(
   title: string,
-  items: ReadonlyArray<string | ReadonlyArray<string>>,
-  summary?: string
+  items: ReadonlyArray<string | ReadonlyArray<string>>
 ) {
-  const lines = summary ? [summary, "", `# ${title}`] : [`# ${title}`];
-  return [...lines, ...prependBullets(items)].join("\n");
+  return [`# ${title}`, ...prependBullets(items)].join("\n");
 }
 
-function buildSectionLines(title: string, lines: ReadonlyArray<string>, summary?: string) {
-  const sectionHeader = summary ? [summary, "", `# ${title}`] : [`# ${title}`];
-  return [...sectionHeader, ...lines].join("\n");
+function buildSectionLines(title: string, lines: ReadonlyArray<string>) {
+  return [`# ${title}`, ...lines].join("\n");
 }
 
 export const promptFormatting = {
