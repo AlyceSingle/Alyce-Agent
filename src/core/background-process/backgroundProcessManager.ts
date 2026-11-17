@@ -63,6 +63,7 @@ interface ManagedBackgroundProcess {
   startupSettled: boolean;
   stopRequested: boolean;
   resolveStartup: (record: BackgroundProcessRecord) => void;
+  spawned: boolean;
   exitPromise: Promise<void>;
   resolveExit: () => void;
 }
@@ -163,6 +164,7 @@ export class BackgroundProcessManager {
       startupTimer: null,
       startupSettled: false,
       stopRequested: false,
+      spawned: false,
       resolveStartup,
       exitPromise,
       resolveExit
@@ -321,6 +323,12 @@ export class BackgroundProcessManager {
   }
 
   private attachProcessListeners(entry: ManagedBackgroundProcess) {
+    entry.child.on("spawn", () => {
+      entry.spawned = true;
+      if (entry.record.status === "starting" && entry.startupTimer === null) {
+        this.markRunning(entry);
+      }
+    });
     entry.child.stdout?.on("data", (chunk: Buffer | string) => {
       this.handleOutput(entry, "stdout", chunk);
     });
@@ -347,7 +355,7 @@ export class BackgroundProcessManager {
   ) {
     const timeoutMs = normalizePositiveInteger(requestedTimeoutMs, this.defaultStartupTimeoutMs);
     entry.startupTimer = setTimeout(() => {
-      if (entry.record.status === "starting") {
+      if (entry.record.status === "starting" && entry.spawned) {
         entry.record.startupTimedOut = true;
         this.markRunning(entry);
       }

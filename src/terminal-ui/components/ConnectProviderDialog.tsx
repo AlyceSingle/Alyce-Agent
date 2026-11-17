@@ -583,7 +583,6 @@ export function ConnectProviderDialog(props: {
       >
         <Pane
           title={t("connectProvider.title")}
-          subtitle="esc"
           accentColor={terminalUiTheme.colors.chrome}
           footer={footer}
         >
